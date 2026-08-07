@@ -644,6 +644,11 @@ class BackupReplacersMixin:
                         ensure_ascii=True,
                         separators=(",", ":"),
                     ),
+                    excluded_models_json=json.dumps(
+                        item.excluded_models,
+                        ensure_ascii=True,
+                        separators=(",", ":"),
+                    ),
                     max_cost_usd=max(item.max_cost_usd, 0.0),
                     spent_cost_usd=max(item.spent_cost_usd, 0.0),
                     expires_at=parse_optional_datetime(item.expires_at),
@@ -666,9 +671,10 @@ class BackupReplacersMixin:
             channel_id = item.channel_id
             protocol_config_id = None
             if channel_id and split_runtime_channel_id(channel_id) is not None:
-                protocol_config_id = protocol_config_id_from_runtime_channel_id(
-                    channel_id
-                ).strip()[:80] or None
+                protocol_config_id = (
+                    protocol_config_id_from_runtime_channel_id(channel_id).strip()[:80]
+                    or None
+                )
             session.add(
                 RequestLogEntity(
                     request_id=item.request_id.strip()[:64] or uuid.uuid4().hex,

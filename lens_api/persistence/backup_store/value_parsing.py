@@ -29,12 +29,12 @@ def format_optional_datetime(value: datetime | None) -> str | None:
     return value.replace(tzinfo=UTC).isoformat()
 
 
-def load_allowed_models(raw_value: str | None) -> list[str]:
+def _load_model_list(raw_value: str | None, label: str) -> list[str]:
     if not raw_value:
         return []
     payload = json.loads(raw_value)
     if not isinstance(payload, list):
-        raise ValueError("Invalid gateway API key allowed models JSON")
+        raise ValueError(f"Invalid gateway API key {label} models JSON")
     models: list[str] = []
     seen: set[str] = set()
     for item in payload:
@@ -44,6 +44,14 @@ def load_allowed_models(raw_value: str | None) -> list[str]:
         seen.add(normalized)
         models.append(normalized)
     return models
+
+
+def load_allowed_models(raw_value: str | None) -> list[str]:
+    return _load_model_list(raw_value, "allowed")
+
+
+def load_excluded_models(raw_value: str | None) -> list[str]:
+    return _load_model_list(raw_value, "excluded")
 
 
 def load_weekdays(raw_value: str | None) -> list[int]:

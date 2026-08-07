@@ -161,6 +161,7 @@ export function GatewayApiKeyManager({ locale }: { locale: Locale }) {
             remark: item.remark,
             enabled,
             allowed_models: item.allowed_models,
+            excluded_models: item.excluded_models,
             max_cost_usd: item.max_cost_usd,
             expires_at: item.expires_at ?? null,
           } satisfies GatewayApiKeyPayload),
@@ -244,6 +245,16 @@ export function GatewayApiKeyManager({ locale }: { locale: Locale }) {
                       removingKeyId === item.id || togglingKeyId === item.id;
                     const expired = isGatewayKeyExpired(item);
                     const outOfBalance = isGatewayKeyOutOfBalance(item);
+                    const restrictMode =
+                      item.allowed_models.length > 0
+                        ? "allow"
+                        : item.excluded_models.length > 0
+                          ? "exclude"
+                          : "none";
+                    const restrictedModels =
+                      restrictMode === "allow"
+                        ? item.allowed_models
+                        : item.excluded_models;
                     return (
                       <TableRow key={item.id}>
                         <TableCell className="min-w-0">
@@ -348,18 +359,25 @@ export function GatewayApiKeyManager({ locale }: { locale: Locale }) {
                           {formatDateTime(locale, item.created_at, timeZone)}
                         </TableCell>
                         <TableCell className="min-w-0">
-                          {item.allowed_models.length > 0 ? (
-                            <div className="flex max-w-56 flex-wrap gap-1">
-                              {item.allowed_models
-                                .slice(0, 2)
-                                .map((modelName) => (
-                                  <Badge key={modelName} variant="outline">
-                                    {modelName}
-                                  </Badge>
-                                ))}
-                              {item.allowed_models.length > 2 ? (
+                          {restrictMode !== "none" ? (
+                            <div className="flex max-w-56 flex-wrap items-center gap-1">
+                              <Badge variant="outline">
+                                {restrictMode === "allow"
+                                  ? titleForLocale(
+                                      locale,
+                                      "仅允许",
+                                      "Allow only",
+                                    )
+                                  : titleForLocale(locale, "排除", "Exclude")}
+                              </Badge>
+                              {restrictedModels.slice(0, 2).map((modelName) => (
+                                <Badge key={modelName} variant="outline">
+                                  {modelName}
+                                </Badge>
+                              ))}
+                              {restrictedModels.length > 2 ? (
                                 <Badge variant="outline">
-                                  +{item.allowed_models.length - 2}
+                                  +{restrictedModels.length - 2}
                                 </Badge>
                               ) : null}
                             </div>

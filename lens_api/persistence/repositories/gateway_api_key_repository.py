@@ -71,6 +71,9 @@ class GatewayApiKeyRepository:
                 allowed_models_json=self._dump_gateway_key_models(
                     payload.allowed_models
                 ),
+                excluded_models_json=self._dump_gateway_key_models(
+                    payload.excluded_models
+                ),
                 max_cost_usd=max(float(payload.max_cost_usd), 0.0),
                 spent_cost_usd=0.0,
                 expires_at=self._parse_gateway_key_expires_at(payload.expires_at),
@@ -93,6 +96,9 @@ class GatewayApiKeyRepository:
             entity.enabled = 1 if payload.enabled else 0
             entity.allowed_models_json = self._dump_gateway_key_models(
                 payload.allowed_models
+            )
+            entity.excluded_models_json = self._dump_gateway_key_models(
+                payload.excluded_models
             )
             entity.max_cost_usd = max(float(payload.max_cost_usd), 0.0)
             entity.expires_at = self._parse_gateway_key_expires_at(payload.expires_at)
@@ -207,6 +213,7 @@ class GatewayApiKeyRepository:
             api_key=entity.api_key,
             enabled=bool(entity.enabled),
             allowed_models=cls._load_gateway_key_models(entity.allowed_models_json),
+            excluded_models=cls._load_gateway_key_models(entity.excluded_models_json),
             max_cost_usd=max(float(entity.max_cost_usd), 0.0),
             spent_cost_usd=max(float(entity.spent_cost_usd), 0.0),
             expires_at=cls._format_datetime(entity.expires_at),

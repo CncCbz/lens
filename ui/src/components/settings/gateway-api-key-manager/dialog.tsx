@@ -33,6 +33,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { Switch } from "@/components/ui/switch";
+import { SegmentedControl } from "@/components/ui/segmented-control";
 import { ApiError, type GatewayApiKey, apiRequest } from "@/lib/api";
 import type { Locale } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
@@ -80,11 +81,14 @@ export function GatewayApiKeyDialog({
 
   const editingKeyId = editingKey?.id ?? null;
 
-  const permissionSummary = !form.restrictModels
-    ? titleForLocale(locale, "全部当前模型组", "All current model groups")
-    : form.allowedModels.length > 0
-      ? form.allowedModels.join(", ")
-      : titleForLocale(locale, "请选择模型组", "Select model groups");
+  const selectedModels =
+    form.modelMode === "allow" ? form.allowedModels : form.excludedModels;
+  const permissionSummary =
+    form.modelMode === "none"
+      ? titleForLocale(locale, "全部当前模型组", "All current model groups")
+      : selectedModels.length > 0
+        ? selectedModels.join(", ")
+        : titleForLocale(locale, "请选择模型组", "Select model groups");
 
   function updateForm<K extends keyof GatewayApiKeyForm>(
     key: K,
@@ -93,15 +97,17 @@ export function GatewayApiKeyDialog({
     setForm((current) => ({ ...current, [key]: value }));
   }
 
-  function toggleAllowedModel(name: string) {
+  function toggleSelectedModel(name: string) {
     startTransition(() => {
       setForm((current) => {
-        const exists = current.allowedModels.includes(name);
+        const key =
+          current.modelMode === "allow" ? "allowedModels" : "excludedModels";
+        const exists = current[key].includes(name);
         return {
           ...current,
-          allowedModels: exists
-            ? current.allowedModels.filter((item) => item !== name)
-            : [...current.allowedModels, name].sort((left, right) =>
+          [key]: exists
+            ? current[key].filter((item) => item !== name)
+            : [...current[key], name].sort((left, right) =>
                 left.localeCompare(right),
               ),
         };
@@ -110,7 +116,7 @@ export function GatewayApiKeyDialog({
   }
 
   async function submit() {
-    if (form.restrictModels && form.allowedModels.length === 0) {
+    if (form.modelMode !== "none" && selectedModels.length === 0) {
       toast.error(
         titleForLocale(
           locale,
@@ -260,43 +266,29 @@ export function GatewayApiKeyDialog({
 
             <FieldSet>
               <FieldLegend variant="label">
-                {titleForLocale(locale, "允许模型组", "Allowed model groups")}
+                {titleForLocale(locale, "模型组权限", "Model group access")}
               </FieldLegend>
 
-              <Field
-                orientation="horizontal"
-                className="items-center justify-between rounded-lg border bg-muted/20 px-3 py-3"
-              >
-                <FieldContent>
-                  <FieldLabel className="w-auto">
-                    {titleForLocale(
-                      locale,
-                      "仅允许选定模型组",
-                      "Restrict to selected groups",
-                    )}
-                  </FieldLabel>
-                  <FieldDescription>
-                    {titleForLocale(
-                      locale,
-                      "关闭时可调用当前全部启用模型组",
-                      "Disabled means the key can use every enabled model group",
-                    )}
-                  </FieldDescription>
-                </FieldContent>
-                <Switch
-                  checked={form.restrictModels}
-                  onCheckedChange={(checked) => {
-                    startTransition(() => {
-                      setForm((current) => ({
-                        ...current,
-                        restrictModels: Boolean(checked),
-                      }));
-                    });
-                  }}
-                />
-              </Field>
+              <SegmentedControl
+                value={form.modelMode}
+                onValueChange={(value) => updateForm("modelMode", value)}
+                options={[
+                  {
+                    value: "none",
+                    label: titleForLocale(locale, "全部放行", "Allow all"),
+                  },
+                  {
+                    value: "allow",
+                    label: titleForLocale(locale, "仅允许以下", "Allow only"),
+                  },
+                  {
+                    value: "exclude",
+                    label: titleForLocale(locale, "排除以下", "Exclude"),
+                  },
+                ]}
+              />
 
-              <Field data-disabled={!form.restrictModels}>
+              <Field data-disabled={form.modelMode === "none"}>
                 <FieldLabel>
                   {titleForLocale(locale, "模型组", "Model groups")}
                 </FieldLabel>
@@ -306,7 +298,7 @@ export function GatewayApiKeyDialog({
                       type="button"
                       variant="outline"
                       className="w-full justify-between"
-                      disabled={!form.restrictModels}
+                      disabled={form.modelMode === "none"}
                     >
                       <span className="truncate text-left">
                         {permissionSummary}
@@ -348,14 +340,16 @@ export function GatewayApiKeyDialog({
                           )}
                         >
                           {modelGroupOptions.map((option) => {
-                            const checked = form.allowedModels.includes(
+                            const checked = selectedModels.includes(
                               option.name,
                             );
                             return (
                               <CommandItem
                                 key={option.name}
                                 value={`${option.name} ${protocolSummary(locale, option.protocols)} ${option.channelNames.join(" ")}`}
-                                onSelect={() => toggleAllowedModel(option.name)}
+                                onSelect={() =>
+                                  toggleSelectedModel(option.name)
+                                }
                                 className="items-start gap-3"
                               >
                                 <Checkbox
@@ -385,21 +379,21 @@ export function GatewayApiKeyDialog({
                   </PopoverContent>
                 </Popover>
                 <FieldDescription>
-                  {form.restrictModels
+                  {form.modelMode === "none"
                     ? titleForLocale(
-                        locale,
-                        "权限来源于当前启用模型组；留空将无法保存",
-                        "Permissions come from currently enabled model groups; choose at least one",
-                      )
-                    : titleForLocale(
                         locale,
                         "当前为全部放行模式",
                         "The key can currently access all model groups",
+                      )
+                    : titleForLocale(
+                        locale,
+                        "权限来源于当前启用模型组；留空将无法保存",
+                        "Permissions come from currently enabled model groups; choose at least one",
                       )}
                 </FieldDescription>
-                {form.restrictModels && form.allowedModels.length > 0 ? (
+                {form.modelMode !== "none" && selectedModels.length > 0 ? (
                   <div className="flex flex-wrap gap-1">
-                    {form.allowedModels.map((modelName) => (
+                    {selectedModels.map((modelName) => (
                       <Badge key={modelName} variant="outline">
                         {modelName}
                       </Badge>

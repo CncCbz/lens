@@ -10,11 +10,14 @@ import { PROTOCOL_LABELS } from "@/lib/protocols";
 import { titleForLocale, type Locale } from "@/lib/i18n";
 export { titleForLocale };
 
+export type GatewayApiKeyModelMode = "none" | "allow" | "exclude";
+
 export type GatewayApiKeyForm = {
   remark: string;
   enabled: boolean;
-  restrictModels: boolean;
+  modelMode: GatewayApiKeyModelMode;
   allowedModels: string[];
+  excludedModels: string[];
   maxCostUsd: string;
   expiresOn?: Date;
 };
@@ -29,8 +32,9 @@ export type GatewayModelGroupOption = {
 export const EMPTY_FORM: GatewayApiKeyForm = {
   remark: "",
   enabled: true,
-  restrictModels: false,
+  modelMode: "none",
   allowedModels: [],
+  excludedModels: [],
   maxCostUsd: "0",
   expiresOn: undefined,
 };
@@ -159,8 +163,14 @@ export function toGatewayApiKeyForm(
   return {
     remark: item.remark,
     enabled: item.enabled,
-    restrictModels: item.allowed_models.length > 0,
+    modelMode:
+      item.allowed_models.length > 0
+        ? "allow"
+        : item.excluded_models.length > 0
+          ? "exclude"
+          : "none",
     allowedModels: [...item.allowed_models],
+    excludedModels: [...item.excluded_models],
     maxCostUsd: String(item.max_cost_usd),
     expiresOn: expires.expiresOn,
   };
@@ -173,7 +183,8 @@ export function toGatewayApiKeyPayload(
   return {
     remark: form.remark.trim(),
     enabled: form.enabled,
-    allowed_models: form.restrictModels ? form.allowedModels : [],
+    allowed_models: form.modelMode === "allow" ? form.allowedModels : [],
+    excluded_models: form.modelMode === "exclude" ? form.excludedModels : [],
     max_cost_usd: Math.max(Number(form.maxCostUsd || "0") || 0, 0),
     expires_at: formatExpiresAt(form.expiresOn, timeZone),
   };

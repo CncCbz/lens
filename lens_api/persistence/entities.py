@@ -170,6 +170,9 @@ class GatewayApiKeyEntity(Base):
     api_key: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
     enabled: Mapped[int] = enabled_column()
     allowed_models_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    excluded_models_json: Mapped[str] = mapped_column(
+        Text, nullable=False, default="[]"
+    )
     max_cost_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     spent_cost_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     expires_at: Mapped[datetime | None] = mapped_column(nullable=True)
@@ -198,9 +201,7 @@ class RequestLogEntity(Base):
     channel_id: Mapped[str | None] = mapped_column(
         String(160), nullable=True, index=True
     )
-    protocol_config_id: Mapped[str | None] = mapped_column(
-        String(80), nullable=True
-    )
+    protocol_config_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
     channel_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
     gateway_key_id: Mapped[str | None] = mapped_column(
         String(80), nullable=True, index=True

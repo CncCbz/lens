@@ -126,14 +126,19 @@ def _is_gateway_key_expired(gateway_key: GatewayApiKey) -> bool:
 def _gateway_key_allows_model(
     gateway_key: GatewayApiKey, model_name: str | None
 ) -> bool:
-    if not gateway_key.allowed_models:
-        return True
     if not model_name:
         return True
-    normalized_allowed = {
-        item.strip().lower() for item in gateway_key.allowed_models if item.strip()
+    normalized_name = model_name.strip().lower()
+    if gateway_key.allowed_models:
+        normalized_allowed = {
+            item.strip().lower() for item in gateway_key.allowed_models if item.strip()
+        }
+        if normalized_name not in normalized_allowed:
+            return False
+    normalized_excluded = {
+        item.strip().lower() for item in gateway_key.excluded_models if item.strip()
     }
-    return model_name.strip().lower() in normalized_allowed
+    return normalized_name not in normalized_excluded
 
 
 async def public_branding() -> PublicBranding:

@@ -465,6 +465,7 @@ export type GatewayApiKey = {
   api_key: string;
   enabled: boolean;
   allowed_models: string[];
+  excluded_models: string[];
   max_cost_usd: number;
   spent_cost_usd: number;
   expires_at?: string | null;
@@ -476,6 +477,7 @@ export type GatewayApiKeyPayload = {
   remark: string;
   enabled: boolean;
   allowed_models: string[];
+  excluded_models: string[];
   max_cost_usd: number;
   expires_at?: string | null;
 };
@@ -569,6 +571,7 @@ export type ConfigBackupGatewayApiKey = {
   api_key: string;
   enabled: boolean;
   allowed_models: string[];
+  excluded_models: string[];
   max_cost_usd: number;
   spent_cost_usd: number;
   expires_at?: string | null;

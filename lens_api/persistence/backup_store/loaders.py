@@ -41,6 +41,7 @@ from .shared import (
 from .value_parsing import (
     format_optional_datetime,
     load_allowed_models,
+    load_excluded_models,
     load_weekdays,
     parse_attempts,
 )
@@ -477,6 +478,7 @@ class BackupLoadersMixin:
                 api_key=row.api_key,
                 enabled=bool(row.enabled),
                 allowed_models=load_allowed_models(row.allowed_models_json),
+                excluded_models=load_excluded_models(row.excluded_models_json),
                 max_cost_usd=max(row.max_cost_usd, 0.0),
                 spent_cost_usd=max(row.spent_cost_usd, 0.0),
                 expires_at=format_optional_datetime(row.expires_at),
