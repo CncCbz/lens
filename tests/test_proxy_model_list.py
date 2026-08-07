@@ -1,0 +1,1012 @@
+from __future__ import annotations
+
+import asyncio
+from email.utils import formatdate
+import json
+import time
+from collections.abc import AsyncIterator
+
+import httpx
+from starlette.background import BackgroundTask
+
+from lens_api.gateway.converters.chat_to_anthropic import (
+    anthropic_stream_to_chat_stream,
+    chat_stream_to_anthropic_stream,
+)
+from lens_api.gateway.converters.chat_to_gemini import gemini_stream_to_chat_stream
+from lens_api.gateway.converters.chat_to_responses import (
+    responses_stream_to_chat_stream,
+)
+import lens_api.gateway.router.gateway_router as gateway_router_module
+from lens_api.gateway.router import (
+    GatewayRouter,
+    RouteTarget,
+    decide_route_error,
+    parse_retry_after_seconds,
+)
+from lens_api.gateway.service.proxy_routes import _build_gemini_models_payload
+from lens_api.gateway.service.proxy_upstream import (
+    _GatewayStreamingResponse,
+    _stream_client_iterator,
+)
+from lens_api.gateway.service.routing_plan import _prepare_upstream_body
+from lens_api.gateway.service.runtime_context import StreamCapture
+from lens_api.gateway.service.site_model_probe import (
+    _apply_site_model_probe_param_override,
+    _build_site_model_probe_upstream_request,
+    _site_model_probe_body,
+    _site_model_probe_channel,
+    _site_model_probe_stream_output_text,
+)
+from lens_api.models import (
+    ChannelConfig,
+    ChannelProxyMode,
+    GatewayApiKey,
+    ModelGroup,
+    ModelGroupItem,
+    ProtocolKind,
+    RoutingStrategy,
+    SiteModelTestCredential,
+    SiteModelTestRequest,
+)
+
+
+class TrackedAsyncBytes:
+    def __init__(self, chunks: list[bytes]) -> None:
+        self._chunks = chunks
+        self._index = 0
+        self.drained = False
+
+    def __aiter__(self) -> AsyncIterator[bytes]:
+        return self
+
+    async def __anext__(self) -> bytes:
+        if self._index >= len(self._chunks):
+            self.drained = True
+            raise StopAsyncIteration
+        chunk = self._chunks[self._index]
+        self._index += 1
+        return chunk
+
+
+def _site_model_test_request(
+    *,
+    protocol: ProtocolKind = ProtocolKind.OPENAI_CHAT,
+    headers: dict[str, str] | None = None,
+    model_name: str = "gpt-test",
+    param_override: str = "",
+) -> SiteModelTestRequest:
+    return SiteModelTestRequest(
+        protocol=protocol,
+        base_url="https://example.com",
+        headers=headers or {},
+        proxy_mode=ChannelProxyMode.INHERIT,
+        channel_proxy="",
+        param_override=param_override,
+        credential=SiteModelTestCredential(
+            id="cred-1",
+            name="Key 1",
+            api_key="sk-test",
+        ),
+        model_name=model_name,
+        prompt="hello",
+    )
+
+
+def _gateway_key() -> GatewayApiKey:
+    return GatewayApiKey(
+        id="key-1",
+        api_key="sk-test",
+        created_at="2024-01-01T00:00:00Z",
+        updated_at="2024-01-01T00:00:00Z",
+    )
+
+
+def _router_channel(channel_id: str, name: str) -> ChannelConfig:
+    return ChannelConfig(
+        id=channel_id,
+        name=name,
+        protocol=ProtocolKind.OPENAI_CHAT,
+        base_url="https://example.com",
+        api_key="sk-test",
+    )
+
+
+def _model_names(payload: dict[str, object]) -> list[str]:
+    models = payload.get("models")
+    assert isinstance(models, list)
+    return [item["baseModelId"] for item in models if isinstance(item, dict)]
+
+
+async def _collect(iterator: AsyncIterator[bytes]) -> bytes:
+    chunks: list[bytes] = []
+    async for chunk in iterator:
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+def _sse(payload: dict[str, object]) -> bytes:
+    return f"data: {json.dumps(payload)}\n\n".encode()
+
+
+def test_route_error_decisions_cover_gateway_defaults() -> None:
+    cases = {
+        400: (False, False, True, True),
+        401: (True, True, True, False),
+        403: (True, True, True, False),
+        404: (False, False, True, True),
+        429: (True, True, False, False),
+        500: (True, True, False, False),
+        502: (True, True, False, False),
+        503: (True, True, False, False),
+        504: (True, True, False, False),
+    }
+
+    for status_code, expected in cases.items():
+        decision = decide_route_error(status_code)
+        assert (
+            decision.retryable,
+            decision.cooldown_candidate,
+            decision.user_actionable,
+            decision.skip_retry,
+        ) == expected
+
+    timeout_decision = decide_route_error(None, timeout=True)
+    assert timeout_decision.retryable is True
+    assert timeout_decision.cooldown_candidate is True
+
+    body_too_large = decide_route_error(413, body_too_large=True)
+    assert body_too_large.retryable is False
+    assert body_too_large.cooldown_candidate is False
+    assert body_too_large.skip_retry is True
+
+
+def test_retry_after_parser_supports_seconds_http_date_and_milliseconds() -> None:
+    assert parse_retry_after_seconds({"retry-after": "2"}) == 2
+    assert parse_retry_after_seconds({"retry-after-ms": "1500"}) == 1.5
+    assert parse_retry_after_seconds({"x-ms-retry-after-ms": "2500"}) == 2.5
+
+    future = time.time() + 30
+    parsed = parse_retry_after_seconds({"retry-after": formatdate(future, usegmt=True)})
+    assert parsed is not None
+    assert 0 < parsed <= 30
+
+
+def test_router_select_can_preview_without_advancing_round_robin_cursor() -> None:
+    router = GatewayRouter()
+    channels = [_router_channel("channel-a", "A"), _router_channel("channel-b", "B")]
+
+    first = router.select(channels, ProtocolKind.OPENAI_CHAT)
+    preview = router.select(channels, ProtocolKind.OPENAI_CHAT, mutate=False)
+    second = router.select(channels, ProtocolKind.OPENAI_CHAT)
+
+    assert first.primary.channel.id == "channel-a"
+    assert preview.primary.channel.id == "channel-b"
+    assert second.primary.channel.id == "channel-b"
+
+
+def test_router_failure_rate_opens_after_minimum_requests_and_probes() -> None:
+    router = GatewayRouter(
+        circuit_minimum_requests=3,
+        circuit_failure_rate_threshold=0.6,
+    )
+    channel = _router_channel("channel-a", "A")
+
+    router.record_success(channel.id)
+    router.record_failure(
+        channel.id,
+        "server error",
+        status_code=500,
+        threshold=99,
+        cooldown_seconds=60,
+        max_cooldown_seconds=120,
+    )
+    assert router.is_target_available(RouteTarget(channel)) is True
+
+    router.record_failure(
+        channel.id,
+        "server error",
+        status_code=500,
+        threshold=99,
+        cooldown_seconds=60,
+        max_cooldown_seconds=120,
+    )
+    snapshot = router.snapshot([channel])
+    health = snapshot.health[0]
+    assert health.state == "open"
+    assert health.window_request_count == 3
+    assert health.failure_rate >= 0.6
+    assert health.cooldown_remaining_seconds > 0
+
+    router.record_success(channel.id)
+    snapshot = router.snapshot([channel])
+    assert snapshot.health[0].state == "available"
+
+
+def test_router_cooldown_expiry_enters_probe_and_failure_backs_off(
+    monkeypatch,
+) -> None:
+    now = 1000.0
+    monkeypatch.setattr(gateway_router_module, "monotonic", lambda: now)
+    router = GatewayRouter()
+    channel = _router_channel("channel-a", "A")
+
+    router.record_failure(
+        channel.id,
+        "server error",
+        status_code=500,
+        threshold=1,
+        cooldown_seconds=10,
+        max_cooldown_seconds=30,
+    )
+    assert router.snapshot([channel]).health[0].state == "open"
+
+    now = 1011.0
+    assert router.snapshot([channel]).health[0].state == "probe"
+
+    router.record_failure(
+        channel.id,
+        "server error",
+        status_code=500,
+        threshold=1,
+        cooldown_seconds=10,
+        max_cooldown_seconds=30,
+    )
+    health = router.snapshot([channel]).health[0]
+    assert health.state == "open"
+    assert health.last_cooldown_seconds == 20
+
+
+def test_gemini_model_list_allows_enabled_convertible_route_item() -> None:
+    execution_group = ModelGroup(
+        id="exec",
+        name="real-model",
+        protocols=[ProtocolKind.OPENAI_CHAT, ProtocolKind.GEMINI],
+        strategy=RoutingStrategy.ROUND_ROBIN,
+        items=[
+            ModelGroupItem(
+                channel_id="channel-openai",
+                protocol=ProtocolKind.OPENAI_CHAT,
+                credential_id="cred-1",
+                model_name="real-model",
+                enabled=True,
+            ),
+            ModelGroupItem(
+                channel_id="channel-gemini",
+                protocol=ProtocolKind.GEMINI,
+                credential_id="cred-1",
+                model_name="real-model",
+                enabled=False,
+            ),
+        ],
+    )
+    route_group = ModelGroup(
+        id="route",
+        name="alias-model",
+        protocols=[ProtocolKind.GEMINI],
+        strategy=RoutingStrategy.ROUND_ROBIN,
+        route_group_id=execution_group.id,
+    )
+
+    payload = _build_gemini_models_payload(
+        [execution_group, route_group],
+        _gateway_key(),
+    )
+
+    assert _model_names(payload) == ["alias-model", "real-model"]
+
+
+def test_gemini_model_list_rejects_non_chat_route_item() -> None:
+    execution_group = ModelGroup(
+        id="exec",
+        name="real-model",
+        protocols=[ProtocolKind.OPENAI_EMBEDDING, ProtocolKind.GEMINI],
+        strategy=RoutingStrategy.ROUND_ROBIN,
+        items=[
+            ModelGroupItem(
+                channel_id="channel-embedding",
+                protocol=ProtocolKind.OPENAI_EMBEDDING,
+                credential_id="cred-1",
+                model_name="real-model",
+                enabled=True,
+            )
+        ],
+    )
+    route_group = ModelGroup(
+        id="route",
+        name="alias-model",
+        protocols=[ProtocolKind.GEMINI],
+        strategy=RoutingStrategy.ROUND_ROBIN,
+        route_group_id=execution_group.id,
+    )
+
+    payload = _build_gemini_models_payload(
+        [execution_group, route_group],
+        _gateway_key(),
+    )
+
+    assert payload["models"] == []
+
+
+def test_site_model_probe_defaults_chat_test_to_stream() -> None:
+    payload = _site_model_test_request()
+    body = _site_model_probe_body(payload)
+    prepared = _apply_site_model_probe_param_override(
+        _site_model_probe_channel(payload), body, payload
+    )
+
+    assert body["stream"] is True
+    assert isinstance(prepared, dict)
+    assert prepared["stream"] is True
+
+
+def test_site_model_probe_uses_configured_headers_only() -> None:
+    payload = _site_model_test_request()
+    body = _site_model_probe_body(payload)
+    upstream_headers_config = {
+        "global": {"User-Agent": "global-ua", "X-Global": "1"},
+        "rules": [
+            {
+                "enabled": True,
+                "match_type": "regex",
+                "pattern": "gpt",
+                "headers": {"User-Agent": "rule-ua", "X-Rule": "1"},
+            }
+        ],
+    }
+
+    default_upstream = _build_site_model_probe_upstream_request(
+        channel=_site_model_probe_channel(payload),
+        body=body,
+        credential_id=payload.credential.id,
+        upstream_headers_config={"global": {}, "rules": []},
+    )
+    rule_upstream = _build_site_model_probe_upstream_request(
+        channel=_site_model_probe_channel(payload),
+        body=body,
+        credential_id=payload.credential.id,
+        upstream_headers_config=upstream_headers_config,
+    )
+    channel_payload = _site_model_test_request(
+        headers={"User-Agent": "channel-ua", "X-Channel": "1"}
+    )
+    channel_upstream = _build_site_model_probe_upstream_request(
+        channel=_site_model_probe_channel(channel_payload),
+        body=body,
+        credential_id=channel_payload.credential.id,
+        upstream_headers_config=upstream_headers_config,
+    )
+
+    assert "User-Agent" not in default_upstream.headers
+    assert "Originator" not in default_upstream.headers
+    assert rule_upstream.headers["User-Agent"] == "rule-ua"
+    assert rule_upstream.headers["X-Global"] == "1"
+    assert rule_upstream.headers["X-Rule"] == "1"
+    assert channel_upstream.headers["User-Agent"] == "channel-ua"
+    assert channel_upstream.headers["X-Channel"] == "1"
+    assert channel_upstream.headers["X-Global"] == "1"
+
+
+def test_site_model_probe_stream_output_text_supports_common_streams() -> None:
+    assert (
+        _site_model_probe_stream_output_text(
+            ProtocolKind.OPENAI_RESPONSES,
+            'data: {"type":"response.output_text.delta","delta":"ok"}\n\n',
+        )
+        == "ok"
+    )
+    assert (
+        _site_model_probe_stream_output_text(
+            ProtocolKind.ANTHROPIC,
+            'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"ok"}}\n\n',
+        )
+        == "ok"
+    )
+    assert (
+        _site_model_probe_stream_output_text(
+            ProtocolKind.GEMINI,
+            '{"candidates":[{"content":{"parts":[{"text":"ok"}]}}]}\n',
+        )
+        == "ok"
+    )
+
+
+def test_openai_chat_prepare_normalizes_developer_role() -> None:
+    prepared = _prepare_upstream_body(
+        ProtocolKind.OPENAI_CHAT,
+        {
+            "model": "requested-model",
+            "messages": [
+                {"role": "developer", "content": "follow policy"},
+                {"role": "user", "content": "hello"},
+            ],
+        },
+        "upstream-model",
+    )
+
+    assert prepared["model"] == "upstream-model"
+    assert prepared["messages"] == [
+        {"role": "system", "content": "follow policy"},
+        {"role": "user", "content": "hello"},
+    ]
+
+
+def test_openai_chat_prepare_inserts_missing_tool_result() -> None:
+    prepared = _prepare_upstream_body(
+        ProtocolKind.OPENAI_CHAT,
+        {
+            "model": "model",
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {"name": "lookup", "arguments": "{}"},
+                        }
+                    ],
+                },
+                {"role": "user", "content": "next"},
+            ],
+        },
+        None,
+    )
+
+    assert prepared["messages"] == [
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "lookup", "arguments": "{}"},
+                }
+            ],
+        },
+        {"role": "tool", "tool_call_id": "call_1", "content": "No result provided"},
+        {"role": "user", "content": "next"},
+    ]
+
+
+def test_anthropic_stream_to_chat_drains_after_message_stop() -> None:
+    raw = TrackedAsyncBytes(
+        [
+            _sse(
+                {
+                    "type": "message_start",
+                    "message": {
+                        "id": "msg_1",
+                        "model": "claude-opus-4-6",
+                        "usage": {"input_tokens": 3, "output_tokens": 0},
+                    },
+                }
+            ),
+            _sse(
+                {
+                    "type": "message_delta",
+                    "delta": {"stop_reason": "end_turn"},
+                    "usage": {"output_tokens": 2},
+                }
+            ),
+            _sse({"type": "message_stop"}),
+        ]
+    )
+
+    output = asyncio.run(_collect(anthropic_stream_to_chat_stream(raw, "model")))
+
+    assert b"data: [DONE]" in output
+    assert raw.drained is True
+
+
+def test_responses_stream_to_chat_drains_after_response_completed() -> None:
+    raw = TrackedAsyncBytes(
+        [
+            _sse(
+                {
+                    "type": "response.created",
+                    "response": {
+                        "id": "resp_1",
+                        "model": "gpt",
+                        "status": "in_progress",
+                    },
+                }
+            ),
+            _sse(
+                {
+                    "type": "response.completed",
+                    "response": {
+                        "id": "resp_1",
+                        "model": "gpt",
+                        "status": "completed",
+                        "usage": {
+                            "input_tokens": 3,
+                            "output_tokens": 2,
+                            "total_tokens": 5,
+                        },
+                    },
+                }
+            ),
+        ]
+    )
+
+    output = asyncio.run(_collect(responses_stream_to_chat_stream(raw, "model")))
+
+    assert b"data: [DONE]" in output
+    assert raw.drained is True
+
+
+def test_gemini_stream_to_chat_drains_after_finish_reason() -> None:
+    raw = TrackedAsyncBytes(
+        [
+            _sse(
+                {
+                    "candidates": [
+                        {
+                            "content": {"role": "model", "parts": [{"text": "ok"}]},
+                            "finishReason": "STOP",
+                        }
+                    ],
+                    "usageMetadata": {
+                        "promptTokenCount": 3,
+                        "candidatesTokenCount": 2,
+                        "totalTokenCount": 5,
+                    },
+                }
+            )
+        ]
+    )
+
+    output = asyncio.run(_collect(gemini_stream_to_chat_stream(raw, "model")))
+
+    assert b"data: [DONE]" in output
+    assert raw.drained is True
+
+
+def test_chat_stream_parser_drains_after_done_marker() -> None:
+    raw = TrackedAsyncBytes(
+        [
+            _sse(
+                {
+                    "choices": [
+                        {
+                            "delta": {"role": "assistant"},
+                            "finish_reason": None,
+                        }
+                    ]
+                }
+            ),
+            b"data: [DONE]\n\n",
+        ]
+    )
+
+    output = asyncio.run(_collect(chat_stream_to_anthropic_stream(raw, "model")))
+
+    assert b"message_stop" in output
+    assert raw.drained is True
+
+
+def test_router_error_policy_resolver_merge_and_globals() -> None:
+    from lens_api.models import (
+        RouterErrorPolicyConfig,
+        normalize_router_error_policy_config_json,
+    )
+    from lens_api.gateway.router import resolve_router_error_policy
+
+    empty = normalize_router_error_policy_config_json("")
+    assert empty == '{"overrides": {}}'
+
+    p429 = resolve_router_error_policy("429")
+    assert p429 is not None
+    assert p429.cooldown_scope == "credential"
+    assert p429.respect_retry_after is True
+
+    p5xx = resolve_router_error_policy(
+        "5xx",
+        circuit_breaker_threshold=4,
+        circuit_breaker_cooldown=90,
+        circuit_breaker_max_cooldown=900,
+    )
+    assert p5xx is not None
+    assert p5xx.failure_threshold == 4
+    assert p5xx.cooldown_seconds == 90
+
+    cfg = RouterErrorPolicyConfig.model_validate(
+        {
+            "overrides": {
+                "5xx": {"failure_threshold": 9},
+                "503": {"failure_threshold": 2, "respect_retry_after": True},
+            }
+        }
+    )
+    p503 = resolve_router_error_policy(
+        "503",
+        config=cfg,
+        circuit_breaker_threshold=4,
+        circuit_breaker_cooldown=60,
+        circuit_breaker_max_cooldown=600,
+    )
+    assert p503 is not None
+    assert p503.failure_threshold == 2
+    assert p503.respect_retry_after is True
+
+    p500 = resolve_router_error_policy(
+        "500",
+        config=cfg,
+        circuit_breaker_threshold=4,
+        circuit_breaker_cooldown=60,
+        circuit_breaker_max_cooldown=600,
+    )
+    assert p500 is not None
+    assert p500.failure_threshold == 9
+
+
+def test_router_scoped_credential_and_model_isolation() -> None:
+    from lens_api.models import ChannelKeyItem
+    from lens_api.gateway.router import resolve_router_error_policy
+
+    router = GatewayRouter()
+    channel = ChannelConfig(
+        id="channel-a",
+        name="A",
+        protocol=ProtocolKind.OPENAI_CHAT,
+        base_url="https://example.com",
+        api_key="sk",
+        keys=[
+            ChannelKeyItem(id="k1", key="a", remark="1", enabled=True),
+            ChannelKeyItem(id="k2", key="b", remark="2", enabled=True),
+        ],
+    )
+    policy = resolve_router_error_policy("429")
+    applied = router.record_failure(
+        channel.id,
+        "rate limited",
+        status_code=429,
+        credential_id="k1",
+        policy=policy,
+        retry_after_seconds=2,
+    )
+    assert applied == 2
+    assert (
+        router.is_target_available(RouteTarget(channel=channel, credential_id="k1"))
+        is False
+    )
+    assert (
+        router.is_target_available(RouteTarget(channel=channel, credential_id="k2"))
+        is True
+    )
+
+    router2 = GatewayRouter()
+    channel2 = _router_channel("channel-b", "B")
+    p500 = resolve_router_error_policy("500", circuit_breaker_threshold=1)
+    router2.record_failure(
+        channel2.id,
+        "server",
+        status_code=500,
+        model_name="model-a",
+        policy=p500,
+    )
+    assert (
+        router2.is_target_available(RouteTarget(channel=channel2, model_name="model-a"))
+        is False
+    )
+    assert (
+        router2.is_target_available(RouteTarget(channel=channel2, model_name="model-b"))
+        is True
+    )
+
+
+def test_router_probe_lease_is_single_flight(monkeypatch) -> None:
+    now = 1000.0
+    monkeypatch.setattr(gateway_router_module, "monotonic", lambda: now)
+    router = GatewayRouter()
+    channel = _router_channel("channel-a", "A")
+    router.record_failure(
+        channel.id,
+        "server error",
+        status_code=500,
+        threshold=1,
+        cooldown_seconds=10,
+        max_cooldown_seconds=30,
+    )
+    now = 1011.0
+    target = RouteTarget(channel=channel)
+    release, _ = router.acquire_target(target)
+    assert release is not None
+    blocked, _ = router.acquire_target(RouteTarget(channel=channel))
+    assert blocked is None
+    router.release_probe(target)
+    release()
+    next_release, _ = router.acquire_target(RouteTarget(channel=channel))
+    assert next_release is not None
+    next_release()
+
+
+def test_protocol_channels_share_concurrency_limit() -> None:
+    router = GatewayRouter()
+    chat = _router_channel("cfg_openai_chat", "shared").model_copy(
+        update={"concurrency_limit": 1}
+    )
+    responses = chat.model_copy(
+        update={
+            "id": "cfg_openai_responses",
+            "protocol": ProtocolKind.OPENAI_RESPONSES,
+        }
+    )
+
+    release, at_capacity = router.acquire_target(RouteTarget(chat))
+    assert release is not None
+    assert at_capacity is False
+    rejected, at_capacity = router.acquire_target(RouteTarget(responses))
+    assert rejected is None
+    assert at_capacity is True
+
+    release()
+    release()
+    next_release, at_capacity = router.acquire_target(RouteTarget(responses))
+    assert next_release is not None
+    assert at_capacity is False
+    next_release()
+
+
+def test_stream_concurrency_release_does_not_release_probe(monkeypatch) -> None:
+    now = 1000.0
+    monkeypatch.setattr(gateway_router_module, "monotonic", lambda: now)
+    router = GatewayRouter()
+    channel = _router_channel("channel-a", "A")
+    router.record_failure(
+        channel.id,
+        "server error",
+        status_code=500,
+        threshold=1,
+        cooldown_seconds=10,
+        max_cooldown_seconds=30,
+    )
+    now = 1011.0
+    target = RouteTarget(channel=channel)
+
+    release, _ = router.acquire_target(target)
+    assert release is not None
+    release()
+    blocked, _ = router.acquire_target(target)
+    assert blocked is None
+
+    router.record_success(channel.id, probe_owner=target.probe_owner)
+    next_release, _ = router.acquire_target(target)
+    assert next_release is not None
+    next_release()
+
+
+def test_stale_probe_release_does_not_clear_new_owner(monkeypatch) -> None:
+    now = 1000.0
+    monkeypatch.setattr(gateway_router_module, "monotonic", lambda: now)
+    router = GatewayRouter()
+    channel = _router_channel("channel-a", "A")
+    router.record_failure(
+        channel.id,
+        "server error",
+        status_code=500,
+        threshold=1,
+        cooldown_seconds=10,
+        max_cooldown_seconds=30,
+    )
+
+    now = 1011.0
+    stale_target = RouteTarget(channel=channel)
+    stale_release, _ = router.acquire_target(stale_target)
+    assert stale_release is not None
+    router.record_failure(
+        channel.id,
+        "probe failed",
+        status_code=500,
+        threshold=1,
+        cooldown_seconds=10,
+        max_cooldown_seconds=30,
+        probe_owner=stale_target.probe_owner,
+    )
+    stale_release()
+
+    now = 1032.0
+    current_target = RouteTarget(channel=channel)
+    current_release, _ = router.acquire_target(current_target)
+    assert current_release is not None
+    router.release_probe(stale_target)
+    blocked, _ = router.acquire_target(RouteTarget(channel=channel))
+    assert blocked is None
+
+    router.record_success(
+        channel.id,
+        probe_owner=current_target.probe_owner,
+    )
+    current_release()
+
+
+def test_stream_client_iterator_releases_concurrency() -> None:
+    releases = 0
+
+    def release() -> None:
+        nonlocal releases
+        releases += 1
+
+    capture = StreamCapture(capture_body=False, concurrency_release=release)
+    raw = TrackedAsyncBytes([b"data: ok\n\n"])
+
+    assert asyncio.run(_collect(_stream_client_iterator(raw, capture)))
+    assert releases == 1
+    assert capture.concurrency_release is None
+
+
+def test_gateway_streaming_response_finalizes_on_send_failure() -> None:
+    async def exercise() -> tuple[int, bool, bool, bool]:
+        releases = 0
+        iterator_closed = False
+        background_ran = False
+
+        def release() -> None:
+            nonlocal releases
+            releases += 1
+
+        async def content() -> AsyncIterator[bytes]:
+            nonlocal iterator_closed
+            try:
+                yield b"chunk"
+            finally:
+                iterator_closed = True
+
+        async def finalize() -> None:
+            nonlocal background_ran
+            background_ran = True
+
+        upstream = httpx.Response(200)
+        capture = StreamCapture(
+            capture_body=False,
+            concurrency_release=release,
+            upstream_response=upstream,
+        )
+        response = _GatewayStreamingResponse(
+            content(),
+            capture=capture,
+            background=BackgroundTask(finalize),
+        )
+
+        async def receive() -> dict[str, str]:
+            return {"type": "http.disconnect"}
+
+        async def send(message: dict[str, object]) -> None:
+            if message["type"] == "http.response.body":
+                raise OSError("client disconnected")
+
+        scope = {"type": "http", "asgi": {"spec_version": "2.4"}}
+        try:
+            await response(scope, receive, send)
+        except Exception:
+            pass
+        else:
+            raise AssertionError("send failure must propagate")
+
+        return releases, iterator_closed, upstream.is_closed, background_ran
+
+    assert asyncio.run(exercise()) == (1, True, True, True)
+
+
+def test_router_auth_does_not_count_toward_failure_rate() -> None:
+    router = GatewayRouter(
+        circuit_minimum_requests=2,
+        circuit_failure_rate_threshold=0.5,
+    )
+    channel = _router_channel("channel-a", "A")
+    from lens_api.gateway.router import resolve_router_error_policy
+
+    auth = resolve_router_error_policy("401")
+    assert auth is not None
+    assert auth.count_toward_failure_rate is False
+    router.record_failure(
+        channel.id,
+        "auth",
+        status_code=401,
+        credential_id="k1",
+        policy=auth,
+    )
+    # One 500 with high threshold should not open via failure rate polluted by auth.
+    router.record_failure(
+        channel.id,
+        "server",
+        status_code=500,
+        threshold=99,
+        cooldown_seconds=60,
+        max_cooldown_seconds=120,
+    )
+    health = router.snapshot([channel]).health[0]
+    # Auth is credential-scoped; channel failure-rate window should only have the 500.
+    assert health.window_request_count <= 1
+
+
+def test_retry_after_respects_max_and_skips_exponential() -> None:
+    from lens_api.gateway.router import resolve_router_error_policy
+
+    router = GatewayRouter()
+    channel = _router_channel("channel-a", "A")
+    policy = resolve_router_error_policy("429")
+    assert policy is not None
+    capped = policy.model_copy(
+        update={"cooldown_seconds": 5, "max_cooldown_seconds": 10}
+    )
+    # Clamp upstream Retry-After to max.
+    applied = router.record_failure(
+        channel.id,
+        "rl",
+        status_code=429,
+        credential_id="k1",
+        policy=capped,
+        retry_after_seconds=120,
+    )
+    assert applied == 10
+
+    router2 = GatewayRouter()
+    applied2 = router2.record_failure(
+        channel.id,
+        "rl",
+        status_code=429,
+        credential_id="k1",
+        policy=policy,
+        retry_after_seconds=2,
+    )
+    assert applied2 == 2
+    # Second failure with Retry-After should still use hint, not double previous.
+    applied3 = router2.record_failure(
+        channel.id,
+        "rl",
+        status_code=429,
+        credential_id="k1",
+        policy=policy,
+        retry_after_seconds=3,
+    )
+    assert applied3 == 3
+
+
+def test_clear_cooldown_removes_all_scopes() -> None:
+    from lens_api.gateway.router import resolve_router_error_policy
+    from lens_api.models import ChannelKeyItem
+
+    router = GatewayRouter()
+    channel = ChannelConfig(
+        id="channel-a",
+        name="A",
+        protocol=ProtocolKind.OPENAI_CHAT,
+        base_url="https://example.com",
+        api_key="sk",
+        keys=[ChannelKeyItem(id="k1", key="a", remark="1", enabled=True)],
+    )
+    router.record_failure(
+        channel.id,
+        "auth",
+        status_code=401,
+        credential_id="k1",
+        policy=resolve_router_error_policy("401"),
+    )
+    router.record_failure(
+        channel.id,
+        "server",
+        status_code=500,
+        model_name="m1",
+        policy=resolve_router_error_policy("500", circuit_breaker_threshold=1),
+    )
+    assert (
+        router.is_target_available(RouteTarget(channel=channel, credential_id="k1"))
+        is False
+    )
+    assert (
+        router.is_target_available(RouteTarget(channel=channel, model_name="m1"))
+        is False
+    )
+    router.clear_cooldown(channel.id)
+    assert (
+        router.is_target_available(RouteTarget(channel=channel, credential_id="k1"))
+        is True
+    )
+    assert (
+        router.is_target_available(RouteTarget(channel=channel, model_name="m1"))
+        is True
+    )

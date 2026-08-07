@@ -1,0 +1,42 @@
+[project]
+name = "lens"
+dynamic = ["version"]
+description = "Multi-provider LLM gateway for OpenAI Chat, OpenAI Responses, Anthropic, and Gemini"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+dependencies = [
+    "aiosqlite>=0.20.0",
+    "alembic>=1.18.0",
+    "fastapi>=0.115.0",
+    "httpx>=0.28.0",
+    "packaging>=24.0",
+    "psycopg[binary]>=3.2.0",
+    "PyJWT>=2.10.1",
+    "pydantic>=2.8.0",
+    "pydantic-settings>=2.5.0",
+    "python-multipart>=0.0.20",
+    "sqlalchemy>=2.0.36",
+    "tzdata>=2026.2",
+    "uvicorn[standard]>=0.30.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=1.4.0",
+]
+
+[project.scripts]
+lens = "lens_api.cli:main"
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["lens_api*"]
+
+[tool.setuptools.dynamic]
+version = {attr = "lens_api.__version__"}

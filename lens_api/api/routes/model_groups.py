@@ -1,0 +1,49 @@
+from types import ModuleType
+
+from fastapi import FastAPI
+
+
+def register(app: FastAPI, service_module: ModuleType) -> None:
+    app.add_api_route(
+        "/api/admin/model-group-candidates",
+        service_module.model_group_candidates,
+        methods=["POST"],
+        response_model=service_module.ModelGroupCandidatesResponse,
+    )
+    app.add_api_route(
+        "/api/admin/model-groups",
+        service_module.list_model_groups,
+        methods=["GET"],
+        response_model=list[service_module.ModelGroup],
+    )
+    app.add_api_route(
+        "/api/admin/model-groups",
+        service_module.create_model_group,
+        methods=["POST"],
+        response_model=service_module.ModelGroup,
+        status_code=201,
+    )
+    app.add_api_route(
+        "/api/admin/model-groups/ensure-from-site",
+        service_module.ensure_model_groups_from_site,
+        methods=["POST"],
+        response_model=service_module.ModelGroupEnsureFromSiteResponse,
+    )
+    app.add_api_route(
+        "/api/admin/model-groups/{group_id}",
+        service_module.get_model_group,
+        methods=["GET"],
+        response_model=service_module.ModelGroup,
+    )
+    app.add_api_route(
+        "/api/admin/model-groups/{group_id}",
+        service_module.update_model_group,
+        methods=["PUT"],
+        response_model=service_module.ModelGroup,
+    )
+    app.add_api_route(
+        "/api/admin/model-groups/{group_id}",
+        service_module.delete_model_group,
+        methods=["DELETE"],
+        status_code=204,
+    )

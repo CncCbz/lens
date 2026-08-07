@@ -1,0 +1,49 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: lens-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${LENS_POSTGRES_DB:-lens}
+      POSTGRES_USER: ${LENS_POSTGRES_USER:-lens}
+      POSTGRES_PASSWORD: ${LENS_POSTGRES_PASSWORD:?Set LENS_POSTGRES_PASSWORD in .env}
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    volumes:
+      - lens-postgres-data:/var/lib/postgresql/data
+
+  app:
+    image: lens:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: lens
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      LENS_HOST: 0.0.0.0
+      LENS_PORT: 3000
+      LENS_UI_STATIC_DIR: /app/ui
+      LENS_DATABASE_URL: ${LENS_DATABASE_URL:?Set LENS_DATABASE_URL in .env}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8318:3000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./data:/app/data
+
+volumes:
+  lens-postgres-data:

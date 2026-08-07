@@ -1,0 +1,24 @@
+services:
+  app:
+    image: lens:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: lens
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - LENS_HOST=0.0.0.0
+      - LENS_PORT=3000
+      - LENS_UI_STATIC_DIR=/app/ui
+    ports:
+      - "3000:3000"
+    volumes:
+      - /opt/1panel/www/sites/lens/index:/app/data
+    networks:
+      - 1panel-network
+
+networks:
+  1panel-network:
+    external: true

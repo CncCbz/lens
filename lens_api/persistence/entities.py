@@ -1,0 +1,390 @@
+from datetime import datetime
+import uuid
+
+from sqlalchemy import CheckConstraint, Float, Index, Integer, String, Text
+from sqlalchemy.orm import Mapped, mapped_column
+
+from ..core.db import Base
+
+
+def enabled_column() -> Mapped[int]:
+    return mapped_column(Integer, nullable=False, default=1)
+
+
+def sort_order_column() -> Mapped[int]:
+    return mapped_column(Integer, nullable=False, default=0)
+
+
+def timestamp_column() -> Mapped[datetime]:
+    return mapped_column(default=datetime.utcnow, nullable=False)
+
+
+def auto_timestamp_column() -> Mapped[datetime]:
+    return mapped_column(
+        default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    )
+
+
+class AdminUserEntity(Base):
+    __tablename__ = "admin_users"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    username: Mapped[str] = mapped_column(
+        String(80), unique=True, nullable=False, index=True
+    )
+    password_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    is_active: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    created_at: Mapped[datetime] = timestamp_column()
+    updated_at: Mapped[datetime] = auto_timestamp_column()
+
+
+class SiteEntity(Base):
+    __tablename__ = "sites"
+
+    id: Mapped[str] = mapped_column(String(80), primary_key=True)
+    name: Mapped[str] = mapped_column(
+        String(120), nullable=False, unique=True, index=True
+    )
+
+
+class SiteBaseUrlEntity(Base):
+    __tablename__ = "site_base_urls"
+
+    id: Mapped[str] = mapped_column(String(80), primary_key=True)
+    site_id: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    url: Mapped[str] = mapped_column(String(500), nullable=False)
+    name: Mapped[str] = mapped_column(String(120), nullable=False, default="")
+    enabled: Mapped[int] = enabled_column()
+    sort_order: Mapped[int] = sort_order_column()
+    supported_protocols_json: Mapped[str] = mapped_column(
+        Text, nullable=False, default="[]", server_default="[]"
+    )
+
+
+class SiteCredentialEntity(Base):
+    __tablename__ = "site_credentials"
+
+    id: Mapped[str] = mapped_column(String(80), primary_key=True)
+    site_id: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    api_key: Mapped[str] = mapped_column(Text, nullable=False)
+    enabled: Mapped[int] = enabled_column()
+    cost_multiplier: Mapped[float] = mapped_column(Float, nullable=False, default=1.0)
+    sort_order: Mapped[int] = sort_order_column()
+
+
+class SiteProtocolConfigEntity(Base):
+    __tablename__ = "site_protocol_configs"
+
+    id: Mapped[str] = mapped_column(String(80), primary_key=True)
+    site_id: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(120), nullable=False, default="")
+    protocols_json: Mapped[str] = mapped_column(
+        Text, nullable=False, default="[]", server_default="[]"
+    )
+    credential_id: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    enabled: Mapped[int] = enabled_column()
+    headers_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    proxy_mode: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="inherit"
+    )
+    channel_proxy: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    concurrency_limit: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    param_override: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    match_regex: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    base_url_id: Mapped[str] = mapped_column(String(80), nullable=False)
+
+
+class SiteDiscoveredModelEntity(Base):
+    __tablename__ = "site_discovered_models"
+
+    id: Mapped[str] = mapped_column(String(80), primary_key=True)
+    protocol_config_id: Mapped[str] = mapped_column(
+        String(80), nullable=False, index=True
+    )
+    credential_id: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    model_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    enabled: Mapped[int] = enabled_column()
+    sort_order: Mapped[int] = sort_order_column()
+    protocol: Mapped[str | None] = mapped_column(String(40), nullable=True)
+
+
+class ModelGroupEntity(Base):
+    __tablename__ = "model_groups"
+    __table_args__ = (
+        CheckConstraint(
+            "sync_filter_mode IN ('', 'contains', 'regex')",
+            name="ck_model_groups_sync_filter_mode",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(80), primary_key=True)
+    name: Mapped[str] = mapped_column(
+        String(120), nullable=False, unique=True, index=True
+    )
+    protocols_json: Mapped[str] = mapped_column(
+        Text, nullable=False, default="[]", server_default="[]"
+    )
+    strategy: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="round_robin"
+    )
+    route_group_id: Mapped[str] = mapped_column(
+        String(80), nullable=False, default="", index=True
+    )
+    sync_filter_mode: Mapped[str] = mapped_column(
+        String(20), nullable=False, default=""
+    )
+    sync_filter_query: Mapped[str] = mapped_column(Text, nullable=False, default="")
+
+
+class ModelGroupItemEntity(Base):
+    __tablename__ = "model_group_items"
+    __table_args__ = (
+        CheckConstraint(
+            "credential_id <> ''",
+            name="ck_model_group_items_credential_id_not_empty",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    group_id: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    channel_id: Mapped[str] = mapped_column(String(160), nullable=False, index=True)
+    credential_id: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    model_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    enabled: Mapped[int] = enabled_column()
+    sort_order: Mapped[int] = sort_order_column()
+
+
+class SettingEntity(Base):
+    __tablename__ = "settings"
+
+    key: Mapped[str] = mapped_column(String(80), primary_key=True)
+    value: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class GatewayApiKeyEntity(Base):
+    __tablename__ = "gateway_api_keys"
+
+    id: Mapped[str] = mapped_column(String(80), primary_key=True)
+    remark: Mapped[str] = mapped_column(String(120), nullable=False, default="")
+    api_key: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    enabled: Mapped[int] = enabled_column()
+    allowed_models_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    max_cost_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    spent_cost_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    expires_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    created_at: Mapped[datetime] = timestamp_column()
+    updated_at: Mapped[datetime] = auto_timestamp_column()
+
+
+class RequestLogEntity(Base):
+    __tablename__ = "request_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    request_id: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+        unique=True,
+        index=True,
+        default=lambda: uuid.uuid4().hex,
+    )
+    protocol: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    user_agent: Mapped[str] = mapped_column(String(300), nullable=False, default="")
+    requested_group_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    resolved_group_name: Mapped[str | None] = mapped_column(
+        String(120), nullable=True, index=True
+    )
+    upstream_model_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    channel_id: Mapped[str | None] = mapped_column(
+        String(160), nullable=True, index=True
+    )
+    protocol_config_id: Mapped[str | None] = mapped_column(
+        String(80), nullable=True
+    )
+    channel_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    gateway_key_id: Mapped[str | None] = mapped_column(
+        String(80), nullable=True, index=True
+    )
+    status_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    success: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    lifecycle_status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="succeeded", index=True
+    )
+    is_stream: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    first_token_latency_ms: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0
+    )
+    latency_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    input_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    cache_read_input_tokens: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0
+    )
+    cache_write_input_tokens: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0
+    )
+    output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    input_cost_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    output_cost_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    total_cost_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    request_content: Mapped[str | None] = mapped_column(Text, nullable=True)
+    request_headers: Mapped[str | None] = mapped_column(Text, nullable=True)
+    upstream_headers: Mapped[str | None] = mapped_column(Text, nullable=True)
+    response_content: Mapped[str | None] = mapped_column(Text, nullable=True)
+    attempts_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    stats_archived: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        default=datetime.utcnow, nullable=False, index=True
+    )
+
+    __table_args__ = (
+        Index(
+            "ix_request_logs_protocol_config_created",
+            "protocol_config_id",
+            "created_at",
+            "id",
+        ),
+    )
+
+
+class ModelPriceEntity(Base):
+    __tablename__ = "model_prices"
+
+    model_key: Mapped[str] = mapped_column(String(200), primary_key=True)
+    display_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    input_price_per_million: Mapped[float] = mapped_column(
+        Float, nullable=False, default=0.0
+    )
+    output_price_per_million: Mapped[float] = mapped_column(
+        Float, nullable=False, default=0.0
+    )
+    cache_read_price_per_million: Mapped[float] = mapped_column(
+        Float, nullable=False, default=0.0
+    )
+    cache_write_price_per_million: Mapped[float] = mapped_column(
+        Float, nullable=False, default=0.0
+    )
+
+
+class CronjobEntity(Base):
+    __tablename__ = "cronjobs"
+
+    id: Mapped[str] = mapped_column(String(80), primary_key=True)
+    enabled: Mapped[int] = enabled_column()
+    schedule_type: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="interval"
+    )
+    interval_hours: Mapped[int] = mapped_column(Integer, nullable=False)
+    run_at_time: Mapped[str | None] = mapped_column(String(5), nullable=True)
+    weekdays_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="idle", index=True
+    )
+    last_started_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    last_finished_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    last_error: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    next_run_at: Mapped[datetime | None] = mapped_column(nullable=True, index=True)
+    lease_owner: Mapped[str] = mapped_column(
+        String(80), nullable=False, default="", index=True
+    )
+    lease_until: Mapped[datetime | None] = mapped_column(nullable=True, index=True)
+    created_at: Mapped[datetime] = timestamp_column()
+    updated_at: Mapped[datetime] = auto_timestamp_column()
+
+
+class ImportedStatsTotalEntity(Base):
+    __tablename__ = "imported_stats_total"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    input_token: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    output_token: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    input_cost: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    output_cost: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    wait_time: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    request_success: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    request_failed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+
+class ImportedStatsDailyEntity(Base):
+    __tablename__ = "imported_stats_daily"
+
+    date: Mapped[str] = mapped_column(String(8), primary_key=True)
+    input_token: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    output_token: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    input_cost: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    output_cost: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    wait_time: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    request_success: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    request_failed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+
+class RequestLogDailyStatsEntity(Base):
+    __tablename__ = "request_log_daily_stats"
+
+    date: Mapped[str] = mapped_column(String(8), primary_key=True)
+    request_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    successful_requests: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    failed_requests: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    wait_time_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    input_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    cache_read_input_tokens: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0
+    )
+    cache_write_input_tokens: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0
+    )
+    output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    input_cost_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    output_cost_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    total_cost_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+
+
+class OverviewModelDailyStatsEntity(Base):
+    __tablename__ = "overview_model_daily_stats"
+
+    date: Mapped[str] = mapped_column(String(8), primary_key=True)
+    model: Mapped[str] = mapped_column(String(200), primary_key=True)
+    requests: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total_cost_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+
+
+class OverviewChannelDailyStatsEntity(Base):
+    __tablename__ = "overview_channel_daily_stats"
+
+    date: Mapped[str] = mapped_column(String(8), primary_key=True)
+    channel_id: Mapped[str] = mapped_column(String(160), primary_key=True)
+    channel_name: Mapped[str] = mapped_column(String(120), nullable=False, default="")
+    requests: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total_cost_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+
+
+class OverviewDimensionDailyStatsEntity(Base):
+    __tablename__ = "overview_dimension_daily_stats"
+
+    date: Mapped[str] = mapped_column(String(8), primary_key=True)
+    dimension_type: Mapped[str] = mapped_column(String(32), primary_key=True)
+    dimension_id: Mapped[str] = mapped_column(String(220), primary_key=True)
+    dimension_name: Mapped[str] = mapped_column(String(220), nullable=False, default="")
+    request_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    successful_requests: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    failed_requests: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    latency_ms_sum: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    first_token_latency_ms_sum: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0
+    )
+    input_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    cache_read_input_tokens: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0
+    )
+    cache_write_input_tokens: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0
+    )
+    output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    input_cost_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    output_cost_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    total_cost_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
