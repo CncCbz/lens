@@ -12,10 +12,13 @@ from lens_api.persistence.repositories import (
     SettingsRepository,
 )
 
+pytestmark = pytest.mark.postgres
 
-async def _repos(tmp_path):
-    engine = create_engine(f"sqlite+aiosqlite:///{tmp_path / 'test.db'}")
+
+async def _repos(postgres_url: str):
+    engine = create_engine(postgres_url)
     async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
     session_factory = create_session_factory(engine)
     settings_repo = SettingsRepository(session_factory)
@@ -118,8 +121,10 @@ async def _finish_log(
 
 
 @pytest.mark.asyncio
-async def test_gateway_key_spend_accumulates_from_terminal_logs(tmp_path) -> None:
-    gateway_key_repo, request_log_store, engine = await _repos(tmp_path)
+async def test_gateway_key_spend_accumulates_from_terminal_logs(
+    postgres_url: str,
+) -> None:
+    gateway_key_repo, request_log_store, engine = await _repos(postgres_url)
     try:
         key = await _create_key(gateway_key_repo)
 
@@ -136,8 +141,8 @@ async def test_gateway_key_spend_accumulates_from_terminal_logs(tmp_path) -> Non
 
 
 @pytest.mark.asyncio
-async def test_gateway_key_spend_updates_by_delta(tmp_path) -> None:
-    gateway_key_repo, request_log_store, engine = await _repos(tmp_path)
+async def test_gateway_key_spend_updates_by_delta(postgres_url: str) -> None:
+    gateway_key_repo, request_log_store, engine = await _repos(postgres_url)
     try:
         key = await _create_key(gateway_key_repo)
         pending = await request_log_store.create_pending_request_log(
@@ -168,8 +173,10 @@ async def test_gateway_key_spend_updates_by_delta(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_gateway_key_spend_moves_when_log_key_changes(tmp_path) -> None:
-    gateway_key_repo, request_log_store, engine = await _repos(tmp_path)
+async def test_gateway_key_spend_moves_when_log_key_changes(
+    postgres_url: str,
+) -> None:
+    gateway_key_repo, request_log_store, engine = await _repos(postgres_url)
     try:
         first_key = await _create_key(gateway_key_repo, "First")
         second_key = await _create_key(gateway_key_repo, "Second")
@@ -188,8 +195,10 @@ async def test_gateway_key_spend_moves_when_log_key_changes(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_request_log_headers_are_redacted_at_storage_boundary(tmp_path) -> None:
-    gateway_key_repo, request_log_store, engine = await _repos(tmp_path)
+async def test_request_log_headers_are_redacted_at_storage_boundary(
+    postgres_url: str,
+) -> None:
+    gateway_key_repo, request_log_store, engine = await _repos(postgres_url)
     try:
         key = await _create_key(gateway_key_repo)
         log = await _create_terminal_log(
@@ -241,8 +250,10 @@ async def test_request_log_headers_are_redacted_at_storage_boundary(tmp_path) ->
 
 
 @pytest.mark.asyncio
-async def test_gateway_key_spend_survives_request_log_clear(tmp_path) -> None:
-    gateway_key_repo, request_log_store, engine = await _repos(tmp_path)
+async def test_gateway_key_spend_survives_request_log_clear(
+    postgres_url: str,
+) -> None:
+    gateway_key_repo, request_log_store, engine = await _repos(postgres_url)
     try:
         key = await _create_key(gateway_key_repo)
         await _create_terminal_log(request_log_store, key_id=key.id, total_cost_usd=1.5)

@@ -285,19 +285,12 @@ def _key_error_message(exc: KeyError) -> str:
 
 
 def _database_error_response(
-    exc: OperationalError, request: Request | None = None
+    _exc: OperationalError, request: Request | None = None
 ) -> JSONResponse:
-    message = str(exc.orig if hasattr(exc, "orig") else exc).lower()
-    if "database is locked" in message:
-        status_code = status.HTTP_503_SERVICE_UNAVAILABLE
-        detail = "Database is busy, please retry"
-    else:
-        status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
-        detail = "Database operation failed"
     return _error_response(
-        status_code=status_code,
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         error_type="database_error",
-        message=detail,
+        message="Database operation failed",
         request=request,
     )
 

@@ -1,6 +1,3 @@
-from typing import Any
-
-from sqlalchemy import event
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -16,48 +13,28 @@ class Base(DeclarativeBase):
 
 def normalize_async_database_url(database_url: str) -> str:
     normalized = database_url.strip()
-    if normalized.startswith("sqlite://") and not normalized.startswith("sqlite+"):
-        return normalized.replace("sqlite://", "sqlite+aiosqlite://", 1)
     if normalized.startswith("postgresql://"):
-        return normalized.replace("postgresql://", "postgresql+psycopg://", 1)
-    if normalized.startswith("postgres://"):
-        return normalized.replace("postgres://", "postgresql+psycopg://", 1)
+        normalized = normalized.replace("postgresql://", "postgresql+psycopg://", 1)
+    elif normalized.startswith("postgres://"):
+        normalized = normalized.replace("postgres://", "postgresql+psycopg://", 1)
+    elif normalized.startswith("postgresql+asyncpg://"):
+        normalized = normalized.replace(
+            "postgresql+asyncpg://", "postgresql+psycopg://", 1
+        )
+    if not normalized.startswith("postgresql+psycopg://"):
+        raise ValueError("LENS_DATABASE_URL must use PostgreSQL")
     return normalized
 
 
 def normalize_sync_database_url(database_url: str) -> str:
-    normalized = normalize_async_database_url(database_url)
-    if normalized.startswith("sqlite+"):
-        return "sqlite://" + normalized.split("://", 1)[1]
-    if normalized.startswith("postgresql+asyncpg://"):
-        return "postgresql+psycopg://" + normalized.split("://", 1)[1]
-    return normalized
+    return normalize_async_database_url(database_url)
 
 
 def create_engine(database_url: str) -> AsyncEngine:
-    database_url = normalize_async_database_url(database_url)
-    is_sqlite = database_url.startswith("sqlite")
-    connect_args: dict[str, object] = {"timeout": 30} if is_sqlite else {}
-
-    engine = create_async_engine(
-        database_url,
-        connect_args=connect_args,
-        pool_pre_ping=not is_sqlite,
+    return create_async_engine(
+        normalize_async_database_url(database_url),
+        pool_pre_ping=True,
     )
-
-    if is_sqlite:
-
-        @event.listens_for(engine.sync_engine, "connect")
-        def _set_sqlite_pragmas(dbapi_connection: Any, _connection_record: Any) -> None:
-            cursor = dbapi_connection.cursor()
-            try:
-                cursor.execute("PRAGMA journal_mode=DELETE")
-                cursor.execute("PRAGMA synchronous=NORMAL")
-                cursor.execute("PRAGMA busy_timeout=30000")
-            finally:
-                cursor.close()
-
-    return engine
 
 
 def create_session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:

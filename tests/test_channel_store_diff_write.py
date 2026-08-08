@@ -18,10 +18,12 @@ from lens_api.persistence.entities import SiteDiscoveredModelEntity
 from sqlalchemy import select
 
 
+@pytest.mark.postgres
 @pytest.mark.asyncio
-async def test_update_site_preserves_model_ids(tmp_path) -> None:
-    engine = create_engine(f"sqlite+aiosqlite:///{tmp_path / 'sites.db'}")
+async def test_update_site_preserves_model_ids(postgres_url: str) -> None:
+    engine = create_engine(postgres_url)
     async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
     store = ChannelStore(create_session_factory(engine))
 

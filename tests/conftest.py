@@ -4,6 +4,17 @@ import os
 
 import pytest
 
+_TEST_POSTGRES_URL = os.environ.get("LENS_TEST_POSTGRES_URL", "").strip()
+os.environ.setdefault(
+    "LENS_DATABASE_URL",
+    _TEST_POSTGRES_URL or "postgresql+psycopg://lens:test@127.0.0.1:5432/lens_test",
+)
+
+
+@pytest.fixture
+def postgres_url() -> str:
+    return os.environ["LENS_TEST_POSTGRES_URL"].strip()
+
 
 def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line(

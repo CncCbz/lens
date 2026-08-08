@@ -11,11 +11,9 @@ _ENTRYPOINT = (
 
 def test_entrypoint_requires_and_uses_admin_password(tmp_path: Path) -> None:
     log_path = tmp_path / "lens.log"
-    (tmp_path / "mkdir").write_text("#!/bin/sh\nexit 0\n")
     (tmp_path / "lens").write_text(
         '#!/bin/sh\nprintf "%s\\n" "$*" >> "$LENS_TEST_LOG"\n'
     )
-    (tmp_path / "mkdir").chmod(0o755)
     (tmp_path / "lens").chmod(0o755)
 
     env = os.environ | {

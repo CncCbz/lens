@@ -21,10 +21,12 @@ class _Store(RequestLogReadMixin):
         return UTC
 
 
+@pytest.mark.postgres
 @pytest.mark.asyncio
-async def test_runtime_summaries_use_protocol_config_id(tmp_path) -> None:
-    engine = create_engine(f"sqlite+aiosqlite:///{tmp_path / 'runtime.db'}")
+async def test_runtime_summaries_use_protocol_config_id(postgres_url: str) -> None:
+    engine = create_engine(postgres_url)
     async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
     session_factory = create_session_factory(engine)
     store = _Store(session_factory)

@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     max_request_body_bytes: int = 32_000_000
     max_connections: int = 200
     max_keepalive_connections: int = 50
-    database_url: str = "sqlite+aiosqlite:///./data/data.db"
+    database_url: str
     anthropic_version: str = "2023-06-01"
     ui_static_dir: str = ""
 

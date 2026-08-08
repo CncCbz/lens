@@ -301,8 +301,7 @@ class RequestLogReadMixin:
                 )
                 .join(
                     SiteProtocolConfigEntity,
-                    RequestLogEntity.protocol_config_id
-                    == SiteProtocolConfigEntity.id,
+                    RequestLogEntity.protocol_config_id == SiteProtocolConfigEntity.id,
                 )
                 .where(
                     RequestLogEntity.lifecycle_status.in_(REQUEST_LOG_TERMINAL_STATUSES)
@@ -350,94 +349,48 @@ class RequestLogReadMixin:
                 for channel_id in channel_ids
             }
 
-            try:
-                dialect_name = session.get_bind().dialect.name
-            except Exception:
-                dialect_name = ""
             bucket_start_naive = bucket_start.replace(tzinfo=None)
             bucket_end_naive = bucket_end.replace(tzinfo=None)
-            if dialect_name == "postgresql":
-                # ponytail: native buckets; SQLite keeps Python bucketing for tests
-                bucket_index_expr = func.floor(
-                    (
-                        func.extract(
-                            "epoch",
-                            RequestLogEntity.created_at - literal(bucket_start_naive),
-                        )
-                    )
-                    / CHANNEL_HEALTH_BUCKET_SECONDS
-                ).label("bucket_index")
-                bucket_rows = await session.execute(
-                    select(
-                        RequestLogEntity.channel_id.label("channel_id"),
-                        bucket_index_expr,
-                        func.coalesce(func.sum(RequestLogEntity.success), 0).label(
-                            "success_count"
-                        ),
-                        func.count().label("total_count"),
-                    )
-                    .where(
-                        RequestLogEntity.channel_id.is_not(None),
-                        RequestLogEntity.lifecycle_status.in_(
-                            REQUEST_LOG_TERMINAL_STATUSES
-                        ),
-                        RequestLogEntity.created_at >= bucket_start_naive,
-                        RequestLogEntity.created_at < bucket_end_naive,
-                    )
-                    .group_by(RequestLogEntity.channel_id, bucket_index_expr)
-                )
-                for row in bucket_rows.all():
-                    if row.channel_id is None:
-                        continue
-                    channel_id = str(row.channel_id)
-                    counts = bucket_counts_by_channel.get(channel_id)
-                    if counts is None:
-                        continue
-                    bucket_index = int(row.bucket_index)
-                    if bucket_index < 0 or bucket_index >= CHANNEL_HEALTH_BUCKET_COUNT:
-                        continue
-                    counts[bucket_index]["total_count"] = int(row.total_count)
-                    counts[bucket_index]["success_count"] = int(row.success_count or 0)
-            else:
-                bucket_rows = await session.execute(
-                    select(
-                        RequestLogEntity.channel_id.label("channel_id"),
-                        RequestLogEntity.success.label("success"),
-                        RequestLogEntity.created_at.label("created_at"),
-                    ).where(
-                        RequestLogEntity.channel_id.is_not(None),
-                        RequestLogEntity.lifecycle_status.in_(
-                            REQUEST_LOG_TERMINAL_STATUSES
-                        ),
-                        RequestLogEntity.created_at >= bucket_start_naive,
-                        RequestLogEntity.created_at < bucket_end_naive,
+            bucket_index_expr = func.floor(
+                (
+                    func.extract(
+                        "epoch",
+                        RequestLogEntity.created_at - literal(bucket_start_naive),
                     )
                 )
-                for row in bucket_rows.all():
-                    if row.channel_id is None or row.created_at is None:
-                        continue
-
-                    channel_id = str(row.channel_id)
-                    counts = bucket_counts_by_channel.get(channel_id)
-                    if counts is None:
-                        continue
-
-                    created_at = row.created_at
-                    if created_at.tzinfo is None:
-                        created_at = created_at.replace(tzinfo=UTC)
-                    else:
-                        created_at = created_at.astimezone(UTC)
-
-                    bucket_index = int(
-                        (created_at - bucket_start).total_seconds()
-                        // CHANNEL_HEALTH_BUCKET_SECONDS
-                    )
-                    if bucket_index < 0 or bucket_index >= CHANNEL_HEALTH_BUCKET_COUNT:
-                        continue
-
-                    counts[bucket_index]["total_count"] += 1
-                    if row.success:
-                        counts[bucket_index]["success_count"] += 1
+                / CHANNEL_HEALTH_BUCKET_SECONDS
+            ).label("bucket_index")
+            bucket_rows = await session.execute(
+                select(
+                    RequestLogEntity.channel_id.label("channel_id"),
+                    bucket_index_expr,
+                    func.coalesce(func.sum(RequestLogEntity.success), 0).label(
+                        "success_count"
+                    ),
+                    func.count().label("total_count"),
+                )
+                .where(
+                    RequestLogEntity.channel_id.is_not(None),
+                    RequestLogEntity.lifecycle_status.in_(
+                        REQUEST_LOG_TERMINAL_STATUSES
+                    ),
+                    RequestLogEntity.created_at >= bucket_start_naive,
+                    RequestLogEntity.created_at < bucket_end_naive,
+                )
+                .group_by(RequestLogEntity.channel_id, bucket_index_expr)
+            )
+            for row in bucket_rows.all():
+                if row.channel_id is None:
+                    continue
+                channel_id = str(row.channel_id)
+                counts = bucket_counts_by_channel.get(channel_id)
+                if counts is None:
+                    continue
+                bucket_index = int(row.bucket_index)
+                if bucket_index < 0 or bucket_index >= CHANNEL_HEALTH_BUCKET_COUNT:
+                    continue
+                counts[bucket_index]["total_count"] = int(row.total_count)
+                counts[bucket_index]["success_count"] = int(row.success_count or 0)
 
             items: list[SiteRuntimeSummary] = []
             for site in site_rows:

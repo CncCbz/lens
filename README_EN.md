@@ -116,14 +116,7 @@ cd lens
 cp .env.example .env
 ```
 
-Edit `.env` and set at least `LENS_AUTH_SECRET_KEY`, `LENS_POSTGRES_PASSWORD`, and `LENS_ADMIN_PASSWORD`.
-
-To change the data directory, edit only the host path on the left side of `volumes`; keep `/app/data` unchanged:
-
-```yaml
-volumes:
-  - ./data:/app/data
-```
+Edit `.env` and set at least `LENS_AUTH_SECRET_KEY`, `LENS_POSTGRES_PASSWORD`, and `LENS_ADMIN_PASSWORD`. Compose uses the service name `postgres` for the database connection; when using standalone `docker run`, change `LENS_DATABASE_URL` to an external PostgreSQL address reachable from the container.
 
 Start (build from current source):
 
@@ -137,13 +130,11 @@ Visit `http://127.0.0.1:8318` and sign in with the administrator credentials con
 
 ```bash
 docker build -t lens:local .
-mkdir -p data
 
 docker run -d --name lens \
   --env-file .env \
   --add-host=host.docker.internal:host-gateway \
   -p 8318:3000 \
-  -v "$(pwd)/data:/app/data" \
   lens:local
 ```
 
@@ -213,7 +204,7 @@ Clients only need: Lens Base URL + Gateway API Key + Model group name.
 
 | Layer    | Technologies                                                    |
 | -------- | --------------------------------------------------------------- |
-| Backend  | Python 3.11+, FastAPI, SQLAlchemy, Alembic, SQLite / PostgreSQL |
+| Backend  | Python 3.11+, FastAPI, SQLAlchemy, Alembic, PostgreSQL          |
 | Frontend | Next.js 16, React 19, TypeScript, TanStack Query, shadcn/ui     |
 
 ## Environment Variables
@@ -224,7 +215,7 @@ Core variables:
 | ------------------------------ | ------------------------------------ | ------------------------------------------------------------------ |
 | `LENS_HOST`                    | `127.0.0.1`                          | Backend listen host; Docker sets it to `0.0.0.0`                   |
 | `LENS_PORT`                    | `18080`                              | Backend listen port; Docker sets it to `3000`                      |
-| `LENS_DATABASE_URL`            | `sqlite+aiosqlite:///./data/data.db` | Database URL; defaults to SQLite, can point to external PostgreSQL |
+| `LENS_DATABASE_URL`            | Required                             | PostgreSQL database URL                                            |
 | `LENS_AUTH_SECRET_KEY`         | Required                             | JWT signing key                                                    |
 | `LENS_REQUEST_TIMEOUT_SECONDS` | `180`                                | Upstream request timeout                                           |
 
@@ -242,18 +233,6 @@ Example:
 LENS_DATABASE_URL=postgresql+psycopg://lens:password@postgres.example.com:5432/lens
 ```
 
-**Configuration Tips for 1Panel and Other Containerized Environments**:
-
-If Lens and PostgreSQL run on the same server, put both containers in the same Docker network (such as 1Panel's `1panel-network`), and use the PostgreSQL container name as the host:
-
-```bash
-LENS_DATABASE_URL=postgresql+psycopg://lens:password@postgresql:5432/lens
-```
-
-The first `lens` is the database username, the last `lens` is the database name, and `postgresql` is the PostgreSQL container name; adjust it to your actual container name.
-
-**SQLite is suitable for local testing and lightweight deployments. Use PostgreSQL for production or high-concurrency scenarios.**
-
 ## Database Migrations
 
 ```bash
@@ -261,30 +240,6 @@ lens db upgrade                               # upgrade to latest
 lens db downgrade                             # downgrade one revision
 lens db revision -m "describe your change"    # create a migration
 ```
-
-### SQLite → PostgreSQL full cutover (downtime allowed)
-
-`docker-compose.yml` includes `postgres:17-alpine` by default. Local development can point `LENS_DATABASE_URL` at an independent external test database without using the Compose PostgreSQL service.
-
-1. Stop Lens and copy `data/data.db` plus a config backup.
-2. Ensure the source SQLite has been upgraded to the current Alembic head (`lens db upgrade`).
-3. Start only PostgreSQL: `docker compose up -d postgres`
-4. Initialize the target schema (do **not** start the app first — that would run `seed-admin` into an empty target):
-   ```bash
-   docker compose run --rm --no-deps --entrypoint lens app db upgrade
-   ```
-5. Copy and verify all business tables (expand `LENS_DATABASE_URL` **inside** the container so the host shell does not need it):
-   ```bash
-   docker compose run --rm --no-deps --entrypoint sh app -c \
-     'python scripts/migrate_sqlite_to_postgresql.py \
-       --source-url sqlite:////app/data/data.db \
-       --target-url "$LENS_DATABASE_URL"'
-   ```
-6. Start Lens and smoke-test login, channel CRUD, a live request, and cooldown UI.
-7. On any failure: stop the new instance and restore the previous `LENS_DATABASE_URL` and SQLite backup.
-8. Keep the old SQLite file until the rollback window ends; schedule regular `pg_dump` for production.
-
-The migration script requires the same Alembic head on source and target. Before copying it `TRUNCATE`s all target business tables (a fresh upgrade seeds default cronjobs / a gateway key that must be replaced), keeps `alembic_version`, then copies all 19 tables, resets sequences, and verifies row counts plus SHA-256 digests.
 
 ## Client Integration
 

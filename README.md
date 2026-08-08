@@ -113,14 +113,7 @@ cd lens
 cp .env.example .env
 ```
 
-编辑 `.env`，至少设置 `LENS_AUTH_SECRET_KEY`、`LENS_POSTGRES_PASSWORD` 和 `LENS_ADMIN_PASSWORD`。
-
-如需修改数据目录，只改 `volumes` 左侧的宿主机路径，右侧 `/app/data` 保持不变：
-
-```yaml
-volumes:
-  - ./data:/app/data
-```
+编辑 `.env`，至少设置 `LENS_AUTH_SECRET_KEY`、`LENS_POSTGRES_PASSWORD` 和 `LENS_ADMIN_PASSWORD`。Compose 使用服务名 `postgres` 连接数据库；使用独立 `docker run` 时，请将 `LENS_DATABASE_URL` 改为容器可访问的外部 PostgreSQL 地址。
 
 启动（从当前源码构建）：
 
@@ -134,13 +127,11 @@ docker compose up -d --build
 
 ```bash
 docker build -t lens:local .
-mkdir -p data
 
 docker run -d --name lens \
   --env-file .env \
   --add-host=host.docker.internal:host-gateway \
   -p 8318:3000 \
-  -v "$(pwd)/data:/app/data" \
   lens:local
 ```
 
@@ -210,7 +201,7 @@ pnpm dev
 
 | 层   | 技术                                                            |
 | ---- | --------------------------------------------------------------- |
-| 后端 | Python 3.11+、FastAPI、SQLAlchemy、Alembic、SQLite / PostgreSQL |
+| 后端 | Python 3.11+、FastAPI、SQLAlchemy、Alembic、PostgreSQL          |
 | 前端 | Next.js 16、React 19、TypeScript、TanStack Query、shadcn/ui     |
 
 ## 环境变量
@@ -221,7 +212,7 @@ pnpm dev
 | ------------------------------ | ------------------------------------ | ------------------------------------------------ |
 | `LENS_HOST`                    | `127.0.0.1`                          | 后端监听地址；Docker 中设为 `0.0.0.0`            |
 | `LENS_PORT`                    | `18080`                              | 后端监听端口；Docker 中设为 `3000`               |
-| `LENS_DATABASE_URL`            | `sqlite+aiosqlite:///./data/data.db` | 数据库连接；默认 SQLite，也可指向外部 PostgreSQL |
+| `LENS_DATABASE_URL`            | 必填                                 | PostgreSQL 数据库连接                              |
 | `LENS_AUTH_SECRET_KEY`         | 必填                                 | JWT 签名密钥                                     |
 | `LENS_REQUEST_TIMEOUT_SECONDS` | `180`                                | 上游请求超时                                     |
 
@@ -239,18 +230,6 @@ postgresql+psycopg://用户名:密码@主机:端口/数据库名
 LENS_DATABASE_URL=postgresql+psycopg://lens:password@postgres.example.com:5432/lens
 ```
 
-**1Panel 等容器化环境配置技巧**：
-
-如果 Lens 和 PostgreSQL 部署在同一台服务器，推荐把两个容器放到同一个 Docker 网络（例如 1Panel 的 `1panel-network`），然后用 PostgreSQL 容器名作为主机名：
-
-```bash
-LENS_DATABASE_URL=postgresql+psycopg://lens:password@postgresql:5432/lens
-```
-
-这里第一个 `lens` 是数据库用户名，最后一个 `lens` 是数据库名；`postgresql` 是 PostgreSQL 容器名，需要按实际容器名调整。
-
-**SQLite 适合本地测试和轻量部署，生产环境或高并发场景建议使用 PostgreSQL。**
-
 ## 数据库迁移
 
 ```bash
@@ -258,30 +237,6 @@ lens db upgrade                               # 升级到最新
 lens db downgrade                             # 回退一步
 lens db revision -m "describe your change"    # 生成新迁移
 ```
-
-### SQLite → PostgreSQL 全量切换（允许停机）
-
-`docker-compose.yml` 默认包含 `postgres:17-alpine`。本地开发可直接把 `LENS_DATABASE_URL` 指向独立外部测试库，不必依赖 Compose 内的 PostgreSQL。
-
-1. 停止 Lens，复制 `data/data.db` 与配置备份。
-2. 确保源 SQLite 已 `lens db upgrade` 到当前 head。
-3. 只启动 PostgreSQL：`docker compose up -d postgres`
-4. 对目标库执行 schema 初始化（不要先启动 app，避免 `seed-admin` 写入空库）：
-   ```bash
-   docker compose run --rm --no-deps --entrypoint lens app db upgrade
-   ```
-5. 全量复制并校验（在**容器内**读取 `LENS_DATABASE_URL`，避免主机 shell 变量为空）：
-   ```bash
-   docker compose run --rm --no-deps --entrypoint sh app -c \
-     'python scripts/migrate_sqlite_to_postgresql.py \
-       --source-url sqlite:////app/data/data.db \
-       --target-url "$LENS_DATABASE_URL"'
-   ```
-6. 启动 Lens 并做冒烟：登录、渠道读写、发起请求、查看冷却。
-7. 任一步失败：停用新实例，恢复原 `LENS_DATABASE_URL` 与 SQLite 备份。
-8. 回滚窗口结束后再归档旧 SQLite，不要立即删除；生产请配置定期 `pg_dump`。
-
-迁移脚本要求源/目标同一 Alembic head；复制前会 `TRUNCATE` 目标全部业务表（Alembic 升级会写入默认 cronjobs/gateway key，必须覆盖），保留 `alembic_version`，再复制 19 张表、重置 sequence，并做行数与 SHA-256 校验。
 
 ## 客户端接入
 
