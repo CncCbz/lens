@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { AppDialogContent, Dialog } from "@/components/ui/dialog";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
@@ -25,6 +26,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type {
   ModelGroup,
   ModelGroupCandidateItem,
@@ -45,6 +47,30 @@ import {
   type FoldedMember,
   type FormState,
 } from "./shared";
+
+function hasConfiguredJson(value: string): boolean {
+  try {
+    const parsed: unknown = JSON.parse(value.trim() || "{}");
+    return (
+      !!parsed &&
+      typeof parsed === "object" &&
+      !Array.isArray(parsed) &&
+      Object.keys(parsed as Record<string, unknown>).length > 0
+    );
+  } catch {
+    return value.trim().length > 0;
+  }
+}
+
+function hasConfiguredPricing(form: FormState): boolean {
+  const values = [
+    form.input_price_per_million,
+    form.output_price_per_million,
+    form.cache_read_price_per_million,
+    form.cache_write_price_per_million,
+  ];
+  return values.some((value) => value.trim() !== "" && value.trim() !== "0");
+}
 
 export function GroupEditorDialog({
   dialogOpen,
@@ -133,6 +159,11 @@ export function GroupEditorDialog({
   moveFoldedMember: (fromIndex: number, toIndex: number) => void;
   onOpenModelTest: (member: FoldedMember) => void;
 }) {
+  const advancedConfiguredCount =
+    (hasConfiguredJson(form.headers) ? 1 : 0) +
+    (hasConfiguredJson(form.param_override) ? 1 : 0) +
+    (hasConfiguredPricing(form) ? 1 : 0);
+
   return (
     <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
       <AppDialogContent
@@ -267,420 +298,513 @@ export function GroupEditorDialog({
                   />
                 </Field>
               </FieldGroup>
-              <FieldGroup className="grid gap-4 md:grid-cols-2">
-                <Field>
-                  <FieldLabel htmlFor="group-headers">
-                    {locale === "zh-CN"
-                      ? "请求头覆盖 JSON"
-                      : "Request headers JSON"}
-                  </FieldLabel>
-                  <Textarea
-                    id="group-headers"
-                    value={form.headers}
-                    onChange={(event) =>
-                      setForm((current) => ({
-                        ...current,
-                        headers: event.target.value,
-                      }))
-                    }
-                    className="min-h-24 font-mono text-xs"
-                  />
-                </Field>
-                <Field>
-                  <FieldLabel htmlFor="group-param-override">
-                    {locale === "zh-CN"
-                      ? "参数覆盖 JSON"
-                      : "Parameter override JSON"}
-                  </FieldLabel>
-                  <Textarea
-                    id="group-param-override"
-                    value={form.param_override}
-                    onChange={(event) =>
-                      setForm((current) => ({
-                        ...current,
-                        param_override: event.target.value,
-                      }))
-                    }
-                    className="min-h-24 font-mono text-xs"
-                  />
-                </Field>
-              </FieldGroup>
             </section>
 
-            {!form.route_group_id ? (
-              <>
-                <Separator />
-
-                <section className="grid gap-4">
-                  <div className="text-base font-semibold text-foreground">
-                    {locale === "zh-CN" ? "价格" : "Pricing"}
-                  </div>
-                  <div className="grid gap-3 xl:grid-cols-2">
-                    <EditablePriceRow
-                      locale={locale}
-                      primaryLabel="input"
-                      primaryValue={form.input_price_per_million}
-                      secondaryLabel="cache_read"
-                      secondaryValue={form.cache_read_price_per_million}
-                      onPrimaryChange={(value) =>
-                        setForm((current) => ({
-                          ...current,
-                          input_price_per_million: value,
-                        }))
-                      }
-                      onSecondaryChange={(value) =>
-                        setForm((current) => ({
-                          ...current,
-                          cache_read_price_per_million: value,
-                        }))
-                      }
-                    />
-                    <EditablePriceRow
-                      locale={locale}
-                      primaryLabel="output"
-                      primaryValue={form.output_price_per_million}
-                      secondaryLabel="cache_write"
-                      secondaryValue={form.cache_write_price_per_million}
-                      onPrimaryChange={(value) =>
-                        setForm((current) => ({
-                          ...current,
-                          output_price_per_million: value,
-                        }))
-                      }
-                      onSecondaryChange={(value) =>
-                        setForm((current) => ({
-                          ...current,
-                          cache_write_price_per_million: value,
-                        }))
-                      }
-                    />
-                  </div>
-                </section>
-
-                <Separator />
-
-                <div className="grid gap-4 xl:grid-cols-[1.05fr_0.95fr]">
-                  <section className="flex flex-col rounded-lg bg-muted/10">
-                    <div className="grid gap-3 py-1 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
-                      <div className="grid min-w-0 gap-2 sm:grid-cols-[128px_minmax(0,1fr)]">
-                        <Select
-                          value={candidateSearchMode}
-                          onValueChange={(value) =>
-                            changeCandidateSearchMode(
-                              value as CandidateSearchMode,
-                            )
-                          }
-                        >
-                          <SelectTrigger className="h-7 w-full">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="contains">
-                              {locale === "zh-CN" ? "包含" : "Contains"}
-                            </SelectItem>
-                            <SelectItem value="regex">
-                              {locale === "zh-CN" ? "正则" : "Regex"}
-                            </SelectItem>
-                          </SelectContent>
-                        </Select>
-                        <div className="flex min-w-0 items-center gap-2 rounded-md border bg-background px-3">
-                          <Search size={14} className="text-muted-foreground" />
-                          <Input
-                            className="min-w-0 flex-1 border-0 bg-transparent px-0 py-0 text-sm shadow-none focus-visible:ring-0"
-                            value={candidateSearch}
-                            onChange={(e) =>
-                              changeCandidateSearch(e.target.value)
+            <Tabs
+              key={form.route_group_id ? "route-group" : "standard-group"}
+              defaultValue={form.route_group_id ? "advanced" : "members"}
+            >
+              <TabsList
+                className={cn(
+                  "grid w-full",
+                  form.route_group_id ? "grid-cols-1" : "grid-cols-2",
+                )}
+              >
+                {!form.route_group_id ? (
+                  <TabsTrigger value="members">
+                    {locale === "zh-CN" ? "成员管理" : "Members"}
+                  </TabsTrigger>
+                ) : null}
+                <TabsTrigger value="advanced">
+                  {locale === "zh-CN" ? "高级配置" : "Advanced"}
+                  {advancedConfiguredCount > 0 ? (
+                    <Badge className="ml-1 h-4 min-w-4 rounded-full px-1 text-[10px]">
+                      {advancedConfiguredCount}
+                    </Badge>
+                  ) : null}
+                </TabsTrigger>
+              </TabsList>
+              {!form.route_group_id ? (
+                <TabsContent value="members">
+                  <div className="grid gap-4 xl:grid-cols-[1.05fr_0.95fr]">
+                    <section className="flex flex-col rounded-lg bg-muted/10">
+                      <div className="grid gap-3 py-1 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
+                        <div className="grid min-w-0 gap-2 sm:grid-cols-[128px_minmax(0,1fr)]">
+                          <Select
+                            value={candidateSearchMode}
+                            onValueChange={(value) =>
+                              changeCandidateSearchMode(
+                                value as CandidateSearchMode,
+                              )
                             }
-                            placeholder={
-                              candidateSearchMode === "regex"
+                          >
+                            <SelectTrigger className="h-7 w-full">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="contains">
+                                {locale === "zh-CN" ? "包含" : "Contains"}
+                              </SelectItem>
+                              <SelectItem value="regex">
+                                {locale === "zh-CN" ? "正则" : "Regex"}
+                              </SelectItem>
+                            </SelectContent>
+                          </Select>
+                          <div className="flex min-w-0 items-center gap-2 rounded-md border bg-background px-3">
+                            <Search
+                              size={14}
+                              className="text-muted-foreground"
+                            />
+                            <Input
+                              className="min-w-0 flex-1 border-0 bg-transparent px-0 py-0 text-sm shadow-none focus-visible:ring-0"
+                              value={candidateSearch}
+                              onChange={(e) =>
+                                changeCandidateSearch(e.target.value)
+                              }
+                              placeholder={
+                                candidateSearchMode === "regex"
+                                  ? locale === "zh-CN"
+                                    ? "输入正则表达式"
+                                    : "Enter regular expression"
+                                  : locale === "zh-CN"
+                                    ? "输入包含条件"
+                                    : "Enter contains filter"
+                              }
+                            />
+                          </div>
+                        </div>
+                        <div className="flex flex-wrap items-center justify-end gap-2">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={addMatchedItems}
+                            disabled={
+                              form.protocols.length === 0 ||
+                              candidateRegexInvalid ||
+                              (!filteredCandidates.length &&
+                                !candidateSearch.trim())
+                            }
+                          >
+                            <Sparkles size={13} />
+                            {candidateSearch.trim()
+                              ? locale === "zh-CN"
+                                ? `加入并保存筛选 ${filteredCandidates.length}`
+                                : `Add and save filter ${filteredCandidates.length}`
+                              : locale === "zh-CN"
+                                ? `加入全部 ${filteredCandidates.length}`
+                                : `Add all ${filteredCandidates.length}`}
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => void refetchCandidates()}
+                            disabled={
+                              isFetchingCandidates ||
+                              form.protocols.length === 0
+                            }
+                          >
+                            <RefreshCcw size={13} />
+                            {locale === "zh-CN" ? "刷新列表" : "Refresh"}
+                          </Button>
+                        </div>
+                      </div>
+                      {candidateRegexInvalid ? (
+                        <div className="px-2 text-sm text-destructive">
+                          {locale === "zh-CN"
+                            ? "正则表达式无效"
+                            : "Invalid regex"}
+                        </div>
+                      ) : null}
+                      {form.sync_filter_mode && form.sync_filter_query ? (
+                        <div className="mx-2 mb-2 flex flex-col gap-2 rounded-md border bg-muted/20 px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
+                          <div className="min-w-0 text-sm text-muted-foreground">
+                            <span className="text-foreground">
+                              {locale === "zh-CN"
+                                ? "已保存筛选"
+                                : "Saved filter"}
+                            </span>
+                            <span className="mx-2">·</span>
+                            <span>
+                              {form.sync_filter_mode === "regex"
                                 ? locale === "zh-CN"
-                                  ? "输入正则表达式"
-                                  : "Enter regular expression"
+                                  ? "正则"
+                                  : "Regex"
                                 : locale === "zh-CN"
-                                  ? "输入包含条件"
-                                  : "Enter contains filter"
+                                  ? "包含"
+                                  : "Contains"}
+                            </span>
+                            <span className="mx-2">·</span>
+                            <span className="break-all">
+                              {form.sync_filter_query}
+                            </span>
+                          </div>
+                          <div className="flex shrink-0 flex-wrap items-center gap-2">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={() => void applySavedFilter()}
+                            >
+                              <RefreshCcw data-icon="inline-start" />
+                              {locale === "zh-CN"
+                                ? "按规则更新"
+                                : "Update by rule"}
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="text-muted-foreground"
+                              onClick={clearSavedFilter}
+                            >
+                              <X data-icon="inline-start" />
+                              {locale === "zh-CN" ? "清除规则" : "Clear rule"}
+                            </Button>
+                          </div>
+                        </div>
+                      ) : null}
+
+                      <div className="max-h-[min(420px,42vh)] overflow-y-auto px-2 pb-2">
+                        <div className="flex flex-col">
+                          {groupedCandidates.map((channelGroup) => {
+                            const channelKey = channelGroup.key;
+                            const isOpen =
+                              expandedChannels.includes(channelKey);
+                            return (
+                              <div
+                                key={channelKey}
+                                className="border-b last:border-b-0"
+                              >
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  className="h-auto min-h-11 w-full justify-start gap-3 rounded-none px-3 py-2 text-left hover:bg-muted"
+                                  onClick={() => toggleChannel(channelKey)}
+                                >
+                                  <div className="min-w-0 flex-1">
+                                    <div className="truncate text-sm font-medium text-foreground">
+                                      {channelGroup.channel_name}
+                                    </div>
+                                  </div>
+                                  <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+                                    {channelGroup.candidates.length}
+                                  </span>
+                                  <ChevronDown
+                                    size={15}
+                                    className={cn(
+                                      "text-muted-foreground transition-transform",
+                                      isOpen && "rotate-180",
+                                    )}
+                                  />
+                                </Button>
+                                {isOpen ? (
+                                  <div className="flex flex-col gap-0.5 px-3 pb-2 pt-1">
+                                    <Separator className="mb-1" />
+                                    {channelGroup.candidates.map(
+                                      (candidate) => {
+                                        const fk = modelFoldKey(
+                                          candidate.protocol_config_id,
+                                          candidate.credential_id,
+                                          candidate.model_name,
+                                        );
+                                        const isActive = foldedMembers.some(
+                                          (m) => m.key === fk,
+                                        );
+                                        return (
+                                          <CandidateRow
+                                            key={`${candidate.protocol_config_id}-${candidate.credential_id}-${candidate.model_name}`}
+                                            candidate={candidate}
+                                            active={isActive}
+                                            selectedProtocols={form.protocols}
+                                            locale={locale}
+                                            onClick={() =>
+                                              addCandidate(candidate)
+                                            }
+                                          />
+                                        );
+                                      },
+                                    )}
+                                  </div>
+                                ) : null}
+                              </div>
+                            );
+                          })}
+                          {sitesIsError || candidateIsError ? (
+                            <Alert variant="destructive" className="my-2">
+                              <AlertCircle />
+                              <AlertTitle>
+                                {candidateIsError
+                                  ? locale === "zh-CN"
+                                    ? "候选模型加载失败"
+                                    : "Failed to load candidates"
+                                  : locale === "zh-CN"
+                                    ? "渠道加载失败"
+                                    : "Failed to load channels"}
+                              </AlertTitle>
+                              <AlertDescription>
+                                {candidateListError instanceof Error
+                                  ? candidateListError.message
+                                  : locale === "zh-CN"
+                                    ? "无法读取候选模型"
+                                    : "Unable to read candidates"}
+                              </AlertDescription>
+                            </Alert>
+                          ) : !groupedCandidates.length ? (
+                            <p className="px-1 py-6 text-center text-sm text-muted-foreground">
+                              {form.protocols.length === 0
+                                ? locale === "zh-CN"
+                                  ? "请先在上方选择对外协议以加载候选节点。"
+                                  : "Select external protocols above to load candidates."
+                                : locale === "zh-CN"
+                                  ? "暂无可选模型"
+                                  : "No candidates found"}
+                            </p>
+                          ) : null}
+                        </div>
+                      </div>
+                    </section>
+
+                    <section className="flex flex-col rounded-lg bg-muted/10">
+                      <div className="flex flex-col items-start justify-between gap-3 px-2 py-1 sm:flex-row sm:items-center">
+                        <div className="text-sm font-medium text-foreground">
+                          {locale === "zh-CN" ? "已选模型" : "Selected models"}
+                        </div>
+                        <div className="flex flex-wrap items-center justify-end gap-2">
+                          {invalidSelectedMemberCount > 0 ? (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              className="text-destructive"
+                              onClick={removeInvalidItems}
+                            >
+                              <AlertCircle size={13} />
+                              {locale === "zh-CN"
+                                ? "一键移除失效节点"
+                                : "Remove invalid items"}
+                            </Button>
+                          ) : null}
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="text-muted-foreground"
+                            onClick={() => setAllMembersEnabled(true)}
+                          >
+                            {locale === "zh-CN" ? "全开" : "Enable all"}
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="text-muted-foreground"
+                            onClick={() => setAllMembersEnabled(false)}
+                          >
+                            {locale === "zh-CN" ? "全关" : "Disable all"}
+                          </Button>
+                          <Button
+                            type="button"
+                            variant={showEnabledOnly ? "default" : "outline"}
+                            className={cn(
+                              !showEnabledOnly && "text-muted-foreground",
+                            )}
+                            onClick={() =>
+                              setShowEnabledOnly((current) => !current)
+                            }
+                          >
+                            {locale === "zh-CN" ? "仅看启用" : "Enabled only"}
+                          </Button>
+                          <span className="rounded-full bg-muted px-2.5 py-1 text-xs text-muted-foreground">
+                            {visibleFoldedMembers.length}/{foldedMembers.length}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="max-h-[min(420px,42vh)] overflow-y-auto px-2 pb-2 pt-1">
+                        <div className="flex flex-col gap-1.5">
+                          {visibleFoldedMembers.length ? (
+                            visibleFoldedMembers.map(({ member, index }) => (
+                              <FoldedMemberRow
+                                key={member.key}
+                                member={member}
+                                index={index}
+                                dragging={draggingIndex === index}
+                                busy={false}
+                                testingDisabled={testingModel}
+                                onTest={() => onOpenModelTest(member)}
+                                onToggle={() =>
+                                  toggleFoldedMember(
+                                    member.key,
+                                    !member.enabled,
+                                  )
+                                }
+                                onRemove={() => removeFoldedMember(member.key)}
+                                onDragStart={() => setDraggingIndex(index)}
+                                onDragEnter={() => {
+                                  if (
+                                    draggingIndex === null ||
+                                    draggingIndex === index
+                                  )
+                                    return;
+                                  moveFoldedMember(draggingIndex, index);
+                                  setDraggingIndex(index);
+                                }}
+                                onDragEnd={() => setDraggingIndex(null)}
+                                locale={locale}
+                              />
+                            ))
+                          ) : (
+                            <p className="px-1 py-6 text-center text-sm text-muted-foreground">
+                              {locale === "zh-CN"
+                                ? "当前筛选下没有成员"
+                                : "No members under current filter"}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    </section>
+                  </div>
+                </TabsContent>
+              ) : null}
+              <TabsContent value="advanced">
+                <div className="flex flex-col gap-4">
+                  <div className="flex flex-col gap-2">
+                    <div className="flex items-center gap-2 text-base font-semibold text-foreground">
+                      {locale === "zh-CN" ? "请求头覆盖" : "Request headers"}
+                      <Badge
+                        variant={
+                          hasConfiguredJson(form.headers)
+                            ? "default"
+                            : "secondary"
+                        }
+                      >
+                        {locale === "zh-CN"
+                          ? hasConfiguredJson(form.headers)
+                            ? "已配置"
+                            : "未配置"
+                          : hasConfiguredJson(form.headers)
+                            ? "Configured"
+                            : "Not set"}
+                      </Badge>
+                    </div>
+                    <Textarea
+                      id="group-headers"
+                      value={form.headers}
+                      onChange={(event) =>
+                        setForm((current) => ({
+                          ...current,
+                          headers: event.target.value,
+                        }))
+                      }
+                      className="min-h-24 font-mono text-xs"
+                    />
+                    <p className="text-sm text-muted-foreground">
+                      {locale === "zh-CN"
+                        ? "大小写不敏感；authorization / host 等系统头不可覆盖"
+                        : "Case-insensitive; system headers such as authorization/host are protected"}
+                    </p>
+                  </div>
+                  <Separator />
+                  <div className="flex flex-col gap-2">
+                    <div className="flex items-center gap-2 text-base font-semibold text-foreground">
+                      {locale === "zh-CN" ? "参数覆盖" : "Parameter override"}
+                      <Badge
+                        variant={
+                          hasConfiguredJson(form.param_override)
+                            ? "default"
+                            : "secondary"
+                        }
+                      >
+                        {locale === "zh-CN"
+                          ? hasConfiguredJson(form.param_override)
+                            ? "已配置"
+                            : "未配置"
+                          : hasConfiguredJson(form.param_override)
+                            ? "Configured"
+                            : "Not set"}
+                      </Badge>
+                    </div>
+                    <Textarea
+                      id="group-param-override"
+                      value={form.param_override}
+                      onChange={(event) =>
+                        setForm((current) => ({
+                          ...current,
+                          param_override: event.target.value,
+                        }))
+                      }
+                      className="min-h-24 font-mono text-xs"
+                    />
+                    <p className="text-sm text-muted-foreground">
+                      {locale === "zh-CN"
+                        ? "递归合并，禁止覆盖 model"
+                        : "Deep-merged; model is not overridable"}
+                    </p>
+                  </div>
+                  {!form.route_group_id ? (
+                    <>
+                      <Separator />
+                      <div className="flex flex-col gap-3">
+                        <div className="flex items-center gap-2 text-base font-semibold text-foreground">
+                          {locale === "zh-CN" ? "价格" : "Pricing"}
+                          <Badge
+                            variant={
+                              hasConfiguredPricing(form)
+                                ? "default"
+                                : "secondary"
+                            }
+                          >
+                            {locale === "zh-CN"
+                              ? hasConfiguredPricing(form)
+                                ? "已配置"
+                                : "未配置"
+                              : hasConfiguredPricing(form)
+                                ? "Configured"
+                                : "Not set"}
+                          </Badge>
+                        </div>
+                        <div className="grid gap-3 xl:grid-cols-2">
+                          <EditablePriceRow
+                            locale={locale}
+                            primaryLabel="input"
+                            primaryValue={form.input_price_per_million}
+                            secondaryLabel="cache_read"
+                            secondaryValue={form.cache_read_price_per_million}
+                            onPrimaryChange={(value) =>
+                              setForm((current) => ({
+                                ...current,
+                                input_price_per_million: value,
+                              }))
+                            }
+                            onSecondaryChange={(value) =>
+                              setForm((current) => ({
+                                ...current,
+                                cache_read_price_per_million: value,
+                              }))
+                            }
+                          />
+                          <EditablePriceRow
+                            locale={locale}
+                            primaryLabel="output"
+                            primaryValue={form.output_price_per_million}
+                            secondaryLabel="cache_write"
+                            secondaryValue={form.cache_write_price_per_million}
+                            onPrimaryChange={(value) =>
+                              setForm((current) => ({
+                                ...current,
+                                output_price_per_million: value,
+                              }))
+                            }
+                            onSecondaryChange={(value) =>
+                              setForm((current) => ({
+                                ...current,
+                                cache_write_price_per_million: value,
+                              }))
                             }
                           />
                         </div>
                       </div>
-                      <div className="flex flex-wrap items-center justify-end gap-2">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          onClick={addMatchedItems}
-                          disabled={
-                            form.protocols.length === 0 ||
-                            candidateRegexInvalid ||
-                            (!filteredCandidates.length &&
-                              !candidateSearch.trim())
-                          }
-                        >
-                          <Sparkles size={13} />
-                          {candidateSearch.trim()
-                            ? locale === "zh-CN"
-                              ? `加入并保存筛选 ${filteredCandidates.length}`
-                              : `Add and save filter ${filteredCandidates.length}`
-                            : locale === "zh-CN"
-                              ? `加入全部 ${filteredCandidates.length}`
-                              : `Add all ${filteredCandidates.length}`}
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          onClick={() => void refetchCandidates()}
-                          disabled={
-                            isFetchingCandidates || form.protocols.length === 0
-                          }
-                        >
-                          <RefreshCcw size={13} />
-                          {locale === "zh-CN" ? "刷新列表" : "Refresh"}
-                        </Button>
-                      </div>
-                    </div>
-                    {candidateRegexInvalid ? (
-                      <div className="px-2 text-sm text-destructive">
-                        {locale === "zh-CN"
-                          ? "正则表达式无效"
-                          : "Invalid regex"}
-                      </div>
-                    ) : null}
-                    {form.sync_filter_mode && form.sync_filter_query ? (
-                      <div className="mx-2 mb-2 flex flex-col gap-2 rounded-md border bg-muted/20 px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
-                        <div className="min-w-0 text-sm text-muted-foreground">
-                          <span className="text-foreground">
-                            {locale === "zh-CN" ? "已保存筛选" : "Saved filter"}
-                          </span>
-                          <span className="mx-2">·</span>
-                          <span>
-                            {form.sync_filter_mode === "regex"
-                              ? locale === "zh-CN"
-                                ? "正则"
-                                : "Regex"
-                              : locale === "zh-CN"
-                                ? "包含"
-                                : "Contains"}
-                          </span>
-                          <span className="mx-2">·</span>
-                          <span className="break-all">
-                            {form.sync_filter_query}
-                          </span>
-                        </div>
-                        <div className="flex shrink-0 flex-wrap items-center gap-2">
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={() => void applySavedFilter()}
-                          >
-                            <RefreshCcw data-icon="inline-start" />
-                            {locale === "zh-CN"
-                              ? "按规则更新"
-                              : "Update by rule"}
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            className="text-muted-foreground"
-                            onClick={clearSavedFilter}
-                          >
-                            <X data-icon="inline-start" />
-                            {locale === "zh-CN" ? "清除规则" : "Clear rule"}
-                          </Button>
-                        </div>
-                      </div>
-                    ) : null}
-
-                    <div className="max-h-[min(420px,42vh)] overflow-y-auto px-2 pb-2">
-                      <div className="flex flex-col">
-                        {groupedCandidates.map((channelGroup) => {
-                          const channelKey = channelGroup.key;
-                          const isOpen = expandedChannels.includes(channelKey);
-                          return (
-                            <div
-                              key={channelKey}
-                              className="border-b last:border-b-0"
-                            >
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                className="h-auto min-h-11 w-full justify-start gap-3 rounded-none px-3 py-2 text-left hover:bg-muted"
-                                onClick={() => toggleChannel(channelKey)}
-                              >
-                                <div className="min-w-0 flex-1">
-                                  <div className="truncate text-sm font-medium text-foreground">
-                                    {channelGroup.channel_name}
-                                  </div>
-                                </div>
-                                <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
-                                  {channelGroup.candidates.length}
-                                </span>
-                                <ChevronDown
-                                  size={15}
-                                  className={cn(
-                                    "text-muted-foreground transition-transform",
-                                    isOpen && "rotate-180",
-                                  )}
-                                />
-                              </Button>
-                              {isOpen ? (
-                                <div className="flex flex-col gap-0.5 px-3 pb-2 pt-1">
-                                  <Separator className="mb-1" />
-                                  {channelGroup.candidates.map((candidate) => {
-                                    const fk = modelFoldKey(
-                                      candidate.protocol_config_id,
-                                      candidate.credential_id,
-                                      candidate.model_name,
-                                    );
-                                    const isActive = foldedMembers.some(
-                                      (m) => m.key === fk,
-                                    );
-                                    return (
-                                      <CandidateRow
-                                        key={`${candidate.protocol_config_id}-${candidate.credential_id}-${candidate.model_name}`}
-                                        candidate={candidate}
-                                        active={isActive}
-                                        selectedProtocols={form.protocols}
-                                        locale={locale}
-                                        onClick={() => addCandidate(candidate)}
-                                      />
-                                    );
-                                  })}
-                                </div>
-                              ) : null}
-                            </div>
-                          );
-                        })}
-                        {sitesIsError || candidateIsError ? (
-                          <Alert variant="destructive" className="my-2">
-                            <AlertCircle />
-                            <AlertTitle>
-                              {candidateIsError
-                                ? locale === "zh-CN"
-                                  ? "候选模型加载失败"
-                                  : "Failed to load candidates"
-                                : locale === "zh-CN"
-                                  ? "渠道加载失败"
-                                  : "Failed to load channels"}
-                            </AlertTitle>
-                            <AlertDescription>
-                              {candidateListError instanceof Error
-                                ? candidateListError.message
-                                : locale === "zh-CN"
-                                  ? "无法读取候选模型"
-                                  : "Unable to read candidates"}
-                            </AlertDescription>
-                          </Alert>
-                        ) : !groupedCandidates.length ? (
-                          <p className="px-1 py-6 text-center text-sm text-muted-foreground">
-                            {form.protocols.length === 0
-                              ? locale === "zh-CN"
-                                ? "请先在上方选择对外协议以加载候选节点。"
-                                : "Select external protocols above to load candidates."
-                              : locale === "zh-CN"
-                                ? "暂无可选模型"
-                                : "No candidates found"}
-                          </p>
-                        ) : null}
-                      </div>
-                    </div>
-                  </section>
-
-                  <section className="flex flex-col rounded-lg bg-muted/10">
-                    <div className="flex flex-col items-start justify-between gap-3 px-2 py-1 sm:flex-row sm:items-center">
-                      <div className="text-sm font-medium text-foreground">
-                        {locale === "zh-CN" ? "已选模型" : "Selected models"}
-                      </div>
-                      <div className="flex flex-wrap items-center justify-end gap-2">
-                        {invalidSelectedMemberCount > 0 ? (
-                          <Button
-                            type="button"
-                            variant="outline"
-                            className="text-destructive"
-                            onClick={removeInvalidItems}
-                          >
-                            <AlertCircle size={13} />
-                            {locale === "zh-CN"
-                              ? "一键移除失效节点"
-                              : "Remove invalid items"}
-                          </Button>
-                        ) : null}
-                        <Button
-                          type="button"
-                          variant="outline"
-                          className="text-muted-foreground"
-                          onClick={() => setAllMembersEnabled(true)}
-                        >
-                          {locale === "zh-CN" ? "全开" : "Enable all"}
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          className="text-muted-foreground"
-                          onClick={() => setAllMembersEnabled(false)}
-                        >
-                          {locale === "zh-CN" ? "全关" : "Disable all"}
-                        </Button>
-                        <Button
-                          type="button"
-                          variant={showEnabledOnly ? "default" : "outline"}
-                          className={cn(
-                            !showEnabledOnly && "text-muted-foreground",
-                          )}
-                          onClick={() =>
-                            setShowEnabledOnly((current) => !current)
-                          }
-                        >
-                          {locale === "zh-CN" ? "仅看启用" : "Enabled only"}
-                        </Button>
-                        <span className="rounded-full bg-muted px-2.5 py-1 text-xs text-muted-foreground">
-                          {visibleFoldedMembers.length}/{foldedMembers.length}
-                        </span>
-                      </div>
-                    </div>
-                    <div className="max-h-[min(420px,42vh)] overflow-y-auto px-2 pb-2 pt-1">
-                      <div className="flex flex-col gap-1.5">
-                        {visibleFoldedMembers.length ? (
-                          visibleFoldedMembers.map(({ member, index }) => (
-                            <FoldedMemberRow
-                              key={member.key}
-                              member={member}
-                              index={index}
-                              dragging={draggingIndex === index}
-                              busy={false}
-                              testingDisabled={testingModel}
-                              onTest={() => onOpenModelTest(member)}
-                              onToggle={() =>
-                                toggleFoldedMember(member.key, !member.enabled)
-                              }
-                              onRemove={() => removeFoldedMember(member.key)}
-                              onDragStart={() => setDraggingIndex(index)}
-                              onDragEnter={() => {
-                                if (
-                                  draggingIndex === null ||
-                                  draggingIndex === index
-                                )
-                                  return;
-                                moveFoldedMember(draggingIndex, index);
-                                setDraggingIndex(index);
-                              }}
-                              onDragEnd={() => setDraggingIndex(null)}
-                              locale={locale}
-                            />
-                          ))
-                        ) : (
-                          <p className="px-1 py-6 text-center text-sm text-muted-foreground">
-                            {locale === "zh-CN"
-                              ? "当前筛选下没有成员"
-                              : "No members under current filter"}
-                          </p>
-                        )}
-                      </div>
-                    </div>
-                  </section>
+                    </>
+                  ) : null}
                 </div>
-              </>
-            ) : null}
+              </TabsContent>
+            </Tabs>
           </div>
         </form>
       </AppDialogContent>
