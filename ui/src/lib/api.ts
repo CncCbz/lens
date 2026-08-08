@@ -73,6 +73,8 @@ export type ModelGroup = {
   strategy: RoutingStrategy;
   route_group_id?: string;
   route_group_name?: string;
+  headers: Record<string, string>;
+  param_override: Record<string, unknown>;
   sync_filter_mode: ModelGroupSyncFilterMode;
   sync_filter_query: string;
   input_price_per_million: number;
@@ -94,6 +96,8 @@ export type ModelGroupPayload = {
   protocols: ProtocolKind[];
   strategy: RoutingStrategy;
   route_group_id?: string;
+  headers: Record<string, string>;
+  param_override: Record<string, unknown>;
   sync_filter_mode: ModelGroupSyncFilterMode;
   sync_filter_query: string;
   items: ModelGroupItemPayload[];

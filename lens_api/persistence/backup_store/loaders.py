@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+
+
 from .shared import (
     AsyncSession,
     ConfigBackupCronjob,
@@ -46,6 +49,14 @@ from .value_parsing import (
     parse_attempts,
 )
 from ..site_loader import fetch_site_rows
+
+
+def _parse_json_object(value: str | None) -> dict[str, object]:
+    try:
+        parsed = json.loads(value or "{}")
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
 
 
 class BackupLoadersMixin:
@@ -251,6 +262,8 @@ class BackupLoadersMixin:
                         "protocols": json.loads(row.protocols_json),
                         "strategy": row.strategy,
                         "route_group_id": row.route_group_id,
+                        "headers": _parse_json_object(row.headers_json),
+                        "param_override": _parse_json_object(row.param_override_json),
                         "route_group_name": route_group_names.get(
                             row.route_group_id, ""
                         ),

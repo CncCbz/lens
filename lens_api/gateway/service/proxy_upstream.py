@@ -503,7 +503,7 @@ def _prepare_channel_request(
     credential_id: str | None,
     user_agent: str | None,
     forwarded_headers: Mapping[str, str] | None,
-    upstream_headers_config: Mapping[str, Any] | None,
+    model_group_headers: tuple[Mapping[str, str], ...],
     log_body_enabled: bool,
     path_suffix: str | None = None,
     multipart_files: list[tuple[str, tuple[str, bytes, str]]] | None = None,
@@ -515,7 +515,7 @@ def _prepare_channel_request(
         credential_id=credential_id,
         user_agent=user_agent,
         forwarded_headers=forwarded_headers,
-        upstream_headers_config=upstream_headers_config,
+        model_group_headers=model_group_headers,
         path_suffix=path_suffix,
     )
     if multipart_files is not None:

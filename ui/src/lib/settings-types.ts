@@ -1,25 +1,5 @@
-export type ParamOverrideMatchType = "exact" | "regex";
-
-export interface UpstreamParamOverrideRuleDraft {
-  id: string;
-  enabled: boolean;
-  name: string;
-  matchType: ParamOverrideMatchType;
-  models: string;
-  pattern: string;
-  override: string;
-}
-
-export interface UpstreamParamOverrideDraft {
-  global: string;
-  rules: UpstreamParamOverrideRuleDraft[];
-}
-
 export type RouterErrorCooldownScope =
-  | "none"
-  | "credential"
-  | "target"
-  | "channel";
+  "none" | "credential" | "target" | "channel";
 
 export interface RouterErrorPolicyFields {
   same_target_retries: number;

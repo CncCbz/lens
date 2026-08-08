@@ -14,6 +14,7 @@ import { AppDialogContent, Dialog } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Combobox, ComboboxOption } from "@/components/ui/combobox";
 import { ProtocolMultiSelect } from "@/components/ui/protocol-multi-select";
 import {
@@ -263,6 +264,44 @@ export function GroupEditorDialog({
                     onChange={(value) =>
                       setForm((current) => ({ ...current, strategy: value }))
                     }
+                  />
+                </Field>
+              </FieldGroup>
+              <FieldGroup className="grid gap-4 md:grid-cols-2">
+                <Field>
+                  <FieldLabel htmlFor="group-headers">
+                    {locale === "zh-CN"
+                      ? "请求头覆盖 JSON"
+                      : "Request headers JSON"}
+                  </FieldLabel>
+                  <Textarea
+                    id="group-headers"
+                    value={form.headers}
+                    onChange={(event) =>
+                      setForm((current) => ({
+                        ...current,
+                        headers: event.target.value,
+                      }))
+                    }
+                    className="min-h-24 font-mono text-xs"
+                  />
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="group-param-override">
+                    {locale === "zh-CN"
+                      ? "参数覆盖 JSON"
+                      : "Parameter override JSON"}
+                  </FieldLabel>
+                  <Textarea
+                    id="group-param-override"
+                    value={form.param_override}
+                    onChange={(event) =>
+                      setForm((current) => ({
+                        ...current,
+                        param_override: event.target.value,
+                      }))
+                    }
+                    className="min-h-24 font-mono text-xs"
                   />
                 </Field>
               </FieldGroup>

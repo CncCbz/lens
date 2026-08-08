@@ -74,7 +74,7 @@ class BackupExportImportMixin:
         )
 
     async def import_dump(self, dump: ConfigBackupDump) -> ConfigImportResult:
-        if dump.version not in (2, 3, 4, 5, 6):
+        if dump.version not in (2, 3, 4, 5, 6, 7):
             raise ValueError(f"Unsupported backup version: {dump.version}")
 
         async with self._session_factory() as session:

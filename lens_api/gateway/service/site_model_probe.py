@@ -82,7 +82,6 @@ async def _call_site_model_probe_channel(
         channel=channel,
         body=body,
         credential_id=credential_id,
-        upstream_headers_config=runtime["upstream_headers_config"],
     )
     proxy_url = resolve_upstream_proxy_url(channel, runtime["proxy_url"])
     client, close_client = _resolve_http_client(proxy_url)
@@ -107,16 +106,13 @@ def _build_site_model_probe_upstream_request(
     channel: ChannelConfig,
     body: dict[str, Any],
     credential_id: str,
-    upstream_headers_config: dict[str, Any] | None,
 ) -> UpstreamRequest:
-    # Same header merge as live proxy: defaults + global/rules + channel headers.
     # No built-in client fingerprint headers for model tests.
     return build_upstream_request(
         channel,
         body,
         settings,
         credential_id=credential_id,
-        upstream_headers_config=upstream_headers_config,
     )
 
 

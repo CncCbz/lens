@@ -35,8 +35,6 @@ from .runtime_context import (
     SETTING_CIRCUIT_BREAKER_COOLDOWN,
     SETTING_CIRCUIT_BREAKER_MAX_COOLDOWN,
     SETTING_CIRCUIT_BREAKER_THRESHOLD,
-    SETTING_UPSTREAM_HEADERS_CONFIG,
-    SETTING_UPSTREAM_PARAM_OVERRIDE_CONFIG,
     SETTING_ROUTER_ERROR_POLICY_CONFIG,
     SettingItem,
     SettingsUpdate,
@@ -46,8 +44,6 @@ from .runtime_context import (
     app_state,
     datetime,
     json,
-    normalize_upstream_headers_config_json,
-    normalize_upstream_param_override_config_json,
     normalize_router_error_policy_config_json,
     resolve_time_zone,
 )
@@ -163,6 +159,8 @@ async def update_settings(
         runtime = await app_state.settings_repo.get_runtime_settings()
         current_time_zone = str(runtime["time_zone"])
     for item in payload.items:
+        if item.key in {"upstream_headers_config", "upstream_param_override_config"}:
+            continue
         if item.key == SETTING_SITE_NAME:
             normalized_items.append(
                 SettingItem(key=item.key, value=item.value.strip() or "Lens")
@@ -176,22 +174,6 @@ async def update_settings(
             next_time_zone = time_zone.key
             next_time_zone_value = time_zone
             normalized_items.append(SettingItem(key=item.key, value=time_zone.key))
-            continue
-        if item.key == SETTING_UPSTREAM_HEADERS_CONFIG:
-            normalized_items.append(
-                SettingItem(
-                    key=item.key,
-                    value=normalize_upstream_headers_config_json(item.value),
-                )
-            )
-            continue
-        if item.key == SETTING_UPSTREAM_PARAM_OVERRIDE_CONFIG:
-            normalized_items.append(
-                SettingItem(
-                    key=item.key,
-                    value=normalize_upstream_param_override_config_json(item.value),
-                )
-            )
             continue
         if item.key == SETTING_ROUTER_ERROR_POLICY_CONFIG:
             normalized_items.append(

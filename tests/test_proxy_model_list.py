@@ -343,29 +343,15 @@ def test_site_model_probe_defaults_chat_test_to_stream() -> None:
 def test_site_model_probe_uses_configured_headers_only() -> None:
     payload = _site_model_test_request()
     body = _site_model_probe_body(payload)
-    upstream_headers_config = {
-        "global": {"User-Agent": "global-ua", "X-Global": "1"},
-        "rules": [
-            {
-                "enabled": True,
-                "match_type": "regex",
-                "pattern": "gpt",
-                "headers": {"User-Agent": "rule-ua", "X-Rule": "1"},
-            }
-        ],
-    }
-
     default_upstream = _build_site_model_probe_upstream_request(
         channel=_site_model_probe_channel(payload),
         body=body,
         credential_id=payload.credential.id,
-        upstream_headers_config={"global": {}, "rules": []},
     )
     rule_upstream = _build_site_model_probe_upstream_request(
         channel=_site_model_probe_channel(payload),
         body=body,
         credential_id=payload.credential.id,
-        upstream_headers_config=upstream_headers_config,
     )
     channel_payload = _site_model_test_request(
         headers={"User-Agent": "channel-ua", "X-Channel": "1"}
@@ -374,17 +360,16 @@ def test_site_model_probe_uses_configured_headers_only() -> None:
         channel=_site_model_probe_channel(channel_payload),
         body=body,
         credential_id=channel_payload.credential.id,
-        upstream_headers_config=upstream_headers_config,
     )
 
     assert "User-Agent" not in default_upstream.headers
     assert "Originator" not in default_upstream.headers
-    assert rule_upstream.headers["User-Agent"] == "rule-ua"
-    assert rule_upstream.headers["X-Global"] == "1"
-    assert rule_upstream.headers["X-Rule"] == "1"
+    assert "User-Agent" not in rule_upstream.headers
+    assert "X-Global" not in rule_upstream.headers
+    assert "X-Rule" not in rule_upstream.headers
     assert channel_upstream.headers["User-Agent"] == "channel-ua"
     assert channel_upstream.headers["X-Channel"] == "1"
-    assert channel_upstream.headers["X-Global"] == "1"
+    assert "X-Global" not in channel_upstream.headers
 
 
 def test_site_model_probe_stream_output_text_supports_common_streams() -> None:

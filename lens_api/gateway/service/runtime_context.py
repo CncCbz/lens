@@ -109,8 +109,6 @@ from ...models import (
     SiteModelTestResult,
     SiteRuntimeSummary,
     SiteUpdate,
-    normalize_upstream_headers_config_json,
-    normalize_upstream_param_override_config_json,
     normalize_router_error_policy_config_json,
 )
 from ...persistence.admin_repository import AdminRepository
@@ -131,8 +129,6 @@ from ...persistence.shared import (
     SETTING_SITE_LOGO_URL,
     SETTING_SITE_NAME,
     SETTING_TIME_ZONE,
-    SETTING_UPSTREAM_HEADERS_CONFIG,
-    SETTING_UPSTREAM_PARAM_OVERRIDE_CONFIG,
     SETTING_ROUTER_ERROR_POLICY_CONFIG,
 )
 from ...persistence.repositories import (

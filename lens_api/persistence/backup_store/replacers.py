@@ -29,8 +29,6 @@ from .shared import (
     SETTING_MODEL_PRICE_LAST_SYNC_AT,
     SETTING_STATS_LAST_PERSIST_AT,
     SETTING_TIME_ZONE,
-    SETTING_UPSTREAM_HEADERS_CONFIG,
-    SETTING_UPSTREAM_PARAM_OVERRIDE_CONFIG,
     SETTING_ROUTER_ERROR_POLICY_CONFIG,
     SettingEntity,
     SettingItem,
@@ -54,8 +52,6 @@ from .shared import (
     normalize_cronjob_schedule,
     normalize_model_key,
     normalize_time_zone,
-    normalize_upstream_headers_config_json,
-    normalize_upstream_param_override_config_json,
     normalize_router_error_policy_config_json,
     resolve_time_zone,
 )
@@ -336,6 +332,10 @@ class BackupReplacersMixin:
                     ),
                     strategy=group.strategy.value,
                     route_group_id=group.route_group_id,
+                    headers_json=json.dumps(group.headers, ensure_ascii=True),
+                    param_override_json=json.dumps(
+                        group.param_override, ensure_ascii=True
+                    ),
                     sync_filter_mode=group.sync_filter_mode.value,
                     sync_filter_query=group.sync_filter_query,
                 )
@@ -538,17 +538,9 @@ class BackupReplacersMixin:
                 normalize_time_zone(item.value)
                 if item.key == SETTING_TIME_ZONE
                 else (
-                    normalize_upstream_headers_config_json(item.value)
-                    if item.key == SETTING_UPSTREAM_HEADERS_CONFIG
-                    else (
-                        normalize_upstream_param_override_config_json(item.value)
-                        if item.key == SETTING_UPSTREAM_PARAM_OVERRIDE_CONFIG
-                        else (
-                            normalize_router_error_policy_config_json(item.value)
-                            if item.key == SETTING_ROUTER_ERROR_POLICY_CONFIG
-                            else item.value
-                        )
-                    )
+                    normalize_router_error_policy_config_json(item.value)
+                    if item.key == SETTING_ROUTER_ERROR_POLICY_CONFIG
+                    else item.value
                 )
             )
             session.add(SettingEntity(key=item.key, value=value))

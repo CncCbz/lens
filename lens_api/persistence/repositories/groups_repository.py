@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field as dc_field
-from typing import Literal
+from typing import Any, Literal
 
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
@@ -48,6 +49,14 @@ from ..shared import (
 )
 
 _EnsureStatus = Literal["create", "update", "unchanged", "skipped"]
+
+
+def _parse_json_object(value: str | None) -> dict[str, Any]:
+    try:
+        parsed = json.loads(value or "{}")
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
 
 
 @dataclass
@@ -775,6 +784,10 @@ class GroupRepository:
                 route_group_id=route_group.id if route_group is not None else "",
                 sync_filter_mode=payload.sync_filter_mode.value,
                 sync_filter_query=payload.sync_filter_query,
+                headers_json=json.dumps(payload.headers, ensure_ascii=True),
+                param_override_json=json.dumps(
+                    payload.param_override, ensure_ascii=True
+                ),
             )
             session.add(entity)
             await session.flush()
@@ -859,6 +872,10 @@ class GroupRepository:
                     entity.sync_filter_mode = value.value
                 elif key == "items":
                     continue
+                elif key == "headers":
+                    entity.headers_json = json.dumps(value, ensure_ascii=True)
+                elif key == "param_override":
+                    entity.param_override_json = json.dumps(value, ensure_ascii=True)
                 elif key == "route_group_id":
                     entity.route_group_id = (
                         route_group.id if route_group is not None else ""
@@ -1317,6 +1334,8 @@ class GroupRepository:
             strategy=entity.strategy,
             route_group_id=entity.route_group_id,
             route_group_name=route_group_name,
+            headers=_parse_json_object(entity.headers_json),
+            param_override=_parse_json_object(entity.param_override_json),
             sync_filter_mode=entity.sync_filter_mode,
             sync_filter_query=entity.sync_filter_query,
             input_price_per_million=(

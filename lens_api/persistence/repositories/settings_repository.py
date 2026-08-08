@@ -5,11 +5,7 @@ import json
 
 from pydantic import ValidationError
 
-from ...models import (
-    RouterErrorPolicyConfig,
-    UpstreamHeadersConfig,
-    UpstreamParamOverrideConfig,
-)
+from ...models import RouterErrorPolicyConfig
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from ..shared import (
@@ -33,13 +29,15 @@ from ..shared import (
     SETTING_SITE_LOGO_URL,
     SETTING_SITE_NAME,
     SETTING_TIME_ZONE,
-    SETTING_UPSTREAM_HEADERS_CONFIG,
-    SETTING_UPSTREAM_PARAM_OVERRIDE_CONFIG,
     SettingEntity,
     SettingItem,
     monotonic,
     normalize_time_zone,
     select,
+)
+
+_REMOVED_SETTING_KEYS = frozenset(
+    {"upstream_headers_config", "upstream_param_override_config"}
 )
 
 
@@ -76,44 +74,10 @@ class SettingsRepository:
         allow_origins = cloned.get("cors_allow_origins")
         if isinstance(allow_origins, list):
             cloned["cors_allow_origins"] = list(allow_origins)
-        upstream_headers_config = cloned.get("upstream_headers_config")
-        if isinstance(upstream_headers_config, dict):
-            cloned["upstream_headers_config"] = deepcopy(upstream_headers_config)
-        upstream_param_override_config = cloned.get("upstream_param_override_config")
-        if isinstance(upstream_param_override_config, dict):
-            cloned["upstream_param_override_config"] = deepcopy(
-                upstream_param_override_config
-            )
         router_error_policy_config = cloned.get("router_error_policy_config")
         if isinstance(router_error_policy_config, dict):
             cloned["router_error_policy_config"] = deepcopy(router_error_policy_config)
         return cloned
-
-    @staticmethod
-    def _parse_upstream_headers_config(value: str | None) -> dict[str, Any]:
-        raw_value = (value or "").strip()
-        if not raw_value:
-            config = UpstreamHeadersConfig()
-        else:
-            try:
-                payload = json.loads(raw_value)
-                config = UpstreamHeadersConfig.model_validate(payload)
-            except (TypeError, ValueError, json.JSONDecodeError, ValidationError):
-                config = UpstreamHeadersConfig()
-        return config.model_dump(mode="json", by_alias=True)
-
-    @staticmethod
-    def _parse_upstream_param_override_config(value: str | None) -> dict[str, Any]:
-        raw_value = (value or "").strip()
-        if not raw_value:
-            config = UpstreamParamOverrideConfig()
-        else:
-            try:
-                payload = json.loads(raw_value)
-                config = UpstreamParamOverrideConfig.model_validate(payload)
-            except (TypeError, ValueError, json.JSONDecodeError, ValidationError):
-                config = UpstreamParamOverrideConfig()
-        return config.model_dump(mode="json", by_alias=True)
 
     @staticmethod
     def _parse_router_error_policy_config(value: str | None) -> dict[str, Any]:
@@ -217,12 +181,6 @@ class SettingsRepository:
             "model_list_compat_mode_enabled": self._parse_bool(
                 mapping.get(SETTING_MODEL_LIST_COMPAT_MODE_ENABLED), default=False
             ),
-            "upstream_headers_config": self._parse_upstream_headers_config(
-                mapping.get(SETTING_UPSTREAM_HEADERS_CONFIG)
-            ),
-            "upstream_param_override_config": self._parse_upstream_param_override_config(
-                mapping.get(SETTING_UPSTREAM_PARAM_OVERRIDE_CONFIG)
-            ),
             "router_error_policy_config": self._parse_router_error_policy_config(
                 mapping.get(SETTING_ROUTER_ERROR_POLICY_CONFIG)
             ),
@@ -265,10 +223,12 @@ class SettingsRepository:
                 items = [
                     SettingItem(key=item.key, value=item.value)
                     for item in result.scalars().all()
+                    if item.key not in _REMOVED_SETTING_KEYS
                 ]
             return self._store_settings_cache(items)
 
     async def upsert_settings(self, items: list[SettingItem]) -> list[SettingItem]:
+        items = [item for item in items if item.key not in _REMOVED_SETTING_KEYS]
         if not items:
             return await self.list_settings()
         keys = [item.key for item in items]

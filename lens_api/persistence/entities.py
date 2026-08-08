@@ -135,6 +135,12 @@ class ModelGroupEntity(Base):
         String(20), nullable=False, default=""
     )
     sync_filter_query: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    headers_json: Mapped[str] = mapped_column(
+        Text, nullable=False, default="{}", server_default="{}"
+    )
+    param_override_json: Mapped[str] = mapped_column(
+        Text, nullable=False, default="{}", server_default="{}"
+    )
 
 
 class ModelGroupItemEntity(Base):

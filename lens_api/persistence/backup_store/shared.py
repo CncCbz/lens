@@ -33,8 +33,6 @@ from ...models import (
     RequestLogLifecycleStatus,
     SettingItem,
     SiteConfig,
-    normalize_upstream_headers_config_json,
-    normalize_upstream_param_override_config_json,
     normalize_router_error_policy_config_json,
 )
 from ..shared import (
@@ -56,8 +54,6 @@ from ..shared import (
     SETTING_SITE_NAME,
     SETTING_TIME_ZONE,
     SETTING_MODEL_PRICE_LAST_SYNC_AT,
-    SETTING_UPSTREAM_HEADERS_CONFIG,
-    SETTING_UPSTREAM_PARAM_OVERRIDE_CONFIG,
     SETTING_ROUTER_ERROR_POLICY_CONFIG,
 )
 from ..entities import (
@@ -86,7 +82,7 @@ from ..cronjob_store import (
     normalize_cronjob_schedule,
 )
 
-BACKUP_DUMP_VERSION = 6
+BACKUP_DUMP_VERSION = 7
 SETTING_STATS_LAST_PERSIST_AT = "stats_last_persist_at"
 
 
@@ -105,8 +101,6 @@ EXPORTABLE_SETTING_KEYS = (
     SETTING_HEALTH_PENALTY_WEIGHT,
     SETTING_HEALTH_MIN_SAMPLES,
     SETTING_MODEL_LIST_COMPAT_MODE_ENABLED,
-    SETTING_UPSTREAM_HEADERS_CONFIG,
-    SETTING_UPSTREAM_PARAM_OVERRIDE_CONFIG,
     SETTING_ROUTER_ERROR_POLICY_CONFIG,
     SETTING_SITE_NAME,
     SETTING_SITE_LOGO_URL,

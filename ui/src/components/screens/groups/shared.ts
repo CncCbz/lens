@@ -28,6 +28,8 @@ export type FormState = {
   protocols: ProtocolKind[];
   strategy: RoutingStrategy;
   route_group_id: string;
+  headers: string;
+  param_override: string;
   sync_filter_mode: ModelGroupSyncFilterMode;
   sync_filter_query: string;
   input_price_per_million: string;
@@ -70,10 +72,7 @@ export type GroupDisplayMember = {
 };
 
 export type GroupSort =
-  | "members-desc"
-  | "enabled-desc"
-  | "name-asc"
-  | "name-desc";
+  "members-desc" | "enabled-desc" | "name-asc" | "name-desc";
 export type CandidateSearchMode = Exclude<ModelGroupSyncFilterMode, "">;
 
 export type GroupRow = ModelGroup & {
@@ -96,6 +95,8 @@ export const emptyForm: FormState = {
   protocols: ["openai_chat"],
   strategy: "round_robin",
   route_group_id: "",
+  headers: "{}",
+  param_override: "{}",
   sync_filter_mode: "",
   sync_filter_query: "",
   input_price_per_million: "0",
@@ -396,6 +397,8 @@ export function toForm(group: ModelGroup): FormState {
     protocols: group.protocols,
     strategy: group.strategy,
     route_group_id: group.route_group_id ?? "",
+    headers: JSON.stringify(group.headers ?? {}, null, 2),
+    param_override: JSON.stringify(group.param_override ?? {}, null, 2),
     sync_filter_mode: group.sync_filter_mode,
     sync_filter_query: group.sync_filter_query,
     input_price_per_million: String(group.input_price_per_million),
@@ -418,12 +421,35 @@ export function toForm(group: ModelGroup): FormState {
   };
 }
 
+function parseJsonObject(
+  value: string,
+  field: string,
+): Record<string, unknown> {
+  const parsed: unknown = JSON.parse(value.trim() || "{}");
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(`${field} must be a JSON object`);
+  }
+  return parsed as Record<string, unknown>;
+}
+
+function parseHeaders(value: string): Record<string, string> {
+  const parsed = parseJsonObject(value, "headers");
+  for (const headerValue of Object.values(parsed)) {
+    if (typeof headerValue !== "string") {
+      throw new Error("headers values must be strings");
+    }
+  }
+  return parsed as Record<string, string>;
+}
+
 export function toPayload(form: FormState): ModelGroupPayload {
   return {
     name: form.name.trim(),
     protocols: form.protocols,
     strategy: form.strategy,
     route_group_id: form.route_group_id.trim(),
+    headers: parseHeaders(form.headers),
+    param_override: parseJsonObject(form.param_override, "param_override"),
     sync_filter_mode:
       form.route_group_id.trim() || !form.sync_filter_query.trim()
         ? ""

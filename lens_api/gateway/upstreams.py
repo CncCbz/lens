@@ -1,6 +1,5 @@
 from dataclasses import dataclass
-from collections.abc import Mapping
-import re
+from collections.abc import Iterable, Mapping
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -64,6 +63,24 @@ _INBOUND_HEADER_ALLOWLIST_PREFIXES = (
     "x-claude-remote-",
     "x-stainless-",
 )
+_SYSTEM_HEADER_NAMES = frozenset(
+    {
+        "authorization",
+        "x-api-key",
+        "x-goog-api-key",
+        "host",
+        "content-length",
+        "content-type",
+        "connection",
+        "keep-alive",
+        "proxy-authenticate",
+        "proxy-authorization",
+        "te",
+        "trailer",
+        "transfer-encoding",
+        "upgrade",
+    }
+)
 
 
 def build_upstream_request(
@@ -73,7 +90,7 @@ def build_upstream_request(
     credential_id: str | None = None,
     user_agent: str | None = None,
     forwarded_headers: Mapping[str, str] | None = None,
-    upstream_headers_config: Mapping[str, Any] | None = None,
+    model_group_headers: Iterable[Mapping[str, str]] = (),
     path_suffix: str | None = None,
 ) -> UpstreamRequest:
     api_key = resolve_channel_api_key(channel, credential_id=credential_id)
@@ -99,8 +116,7 @@ def build_upstream_request(
                 {"content-type": "application/json"},
                 channel.headers,
                 user_agent=user_agent,
-                upstream_headers_config=upstream_headers_config,
-                model_name=model_name,
+                model_group_headers=model_group_headers,
                 inbound_headers=forwarded_headers,
             ),
             json_body=payload,
@@ -131,8 +147,7 @@ def build_upstream_request(
             default_headers,
             channel.headers,
             user_agent=user_agent,
-            upstream_headers_config=upstream_headers_config,
-            model_name=str(body.get("model") or ""),
+            model_group_headers=model_group_headers,
             inbound_headers=forwarded_headers,
         ),
         json_body=dict(body),
@@ -143,21 +158,17 @@ def build_upstream_headers(
     default_headers: dict[str, str],
     channel_headers: dict[str, str],
     user_agent: str | None = None,
-    upstream_headers_config: Mapping[str, Any] | None = None,
-    model_name: str | None = None,
+    model_group_headers: Iterable[Mapping[str, str]] = (),
     inbound_headers: Mapping[str, str] | None = None,
 ) -> dict[str, str]:
-    # Merge order: inbound base -> Lens defaults -> UA -> global -> rules -> channel.
+    # Merge order: inbound base -> Lens defaults -> UA -> route group -> execution group -> channel.
     headers: dict[str, str] = {}
     _merge_headers(headers, _inbound_headers_for_upstream(inbound_headers))
     _merge_headers(headers, default_headers)
     if user_agent and not any(key.lower() == "user-agent" for key in channel_headers):
         _set_header(headers, "user-agent", user_agent)
-    _merge_headers(headers, _upstream_global_headers(upstream_headers_config))
-    matched_rules = _matching_upstream_rule_headers(upstream_headers_config, model_name)
-    # earlier rules take precedence (first matching rule wins on conflict)
-    for rule_headers in reversed(matched_rules):
-        _merge_headers(headers, rule_headers)
+    for group_headers in model_group_headers:
+        _merge_headers(headers, group_headers, protected=_SYSTEM_HEADER_NAMES)
     _merge_headers(headers, channel_headers)
     return headers
 
@@ -194,53 +205,18 @@ def _set_header(headers: dict[str, str], key: str, value: str) -> None:
     headers[normalized_key] = str(value)
 
 
-def _merge_headers(headers: dict[str, str], updates: Mapping[str, str] | None) -> None:
+def _merge_headers(
+    headers: dict[str, str],
+    updates: Mapping[str, str] | None,
+    *,
+    protected: frozenset[str] = frozenset(),
+) -> None:
     if not updates:
         return
     for key, value in updates.items():
+        if key.strip().lower() in protected:
+            continue
         _set_header(headers, key, value)
-
-
-def _upstream_global_headers(
-    upstream_headers_config: Mapping[str, Any] | None,
-) -> dict[str, str] | None:
-    if not upstream_headers_config:
-        return None
-    return upstream_headers_config.get("global")
-
-
-def _matching_upstream_rule_headers(
-    upstream_headers_config: Mapping[str, Any] | None,
-    model_name: str | None,
-) -> list[dict[str, str]]:
-    if not upstream_headers_config:
-        return []
-    rules = upstream_headers_config.get("rules", [])
-    matched: list[dict[str, str]] = []
-    normalized_model = (model_name or "").strip()
-    if not normalized_model:
-        return []
-    for rule in rules:
-        if not rule.get("enabled", True):
-            continue
-        if not _upstream_header_rule_matches(rule, normalized_model):
-            continue
-        matched.append(rule["headers"])
-    return matched
-
-
-def _upstream_header_rule_matches(rule: dict[str, Any], model_name: str) -> bool:
-    match_type = rule.get("match_type", "exact")
-    if match_type == "regex":
-        pattern = rule.get("pattern", "").strip()
-        if not pattern:
-            return False
-        try:
-            return bool(re.search(pattern, model_name))
-        except re.error:
-            return False
-    models = rule.get("models", [])
-    return model_name in models
 
 
 def _protocol_base_url(channel: ChannelConfig) -> str:
