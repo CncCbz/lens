@@ -696,9 +696,21 @@ class BackupReplacersMixin:
                     output_cost_usd=max(item.output_cost_usd, 0.0),
                     total_cost_usd=max(item.total_cost_usd, 0.0),
                     request_content=item.request_content,
+                    client_request_content=item.client_request_content,
+                    upstream_request_content=item.upstream_request_content,
                     request_headers=item.request_headers,
                     upstream_headers=item.upstream_headers,
+                    upstream_response_headers=item.upstream_response_headers,
                     response_content=item.response_content,
+                    upstream_response_content=item.upstream_response_content,
+                    upstream_response_distilled=item.upstream_response_distilled,
+                    client_response_raw_content=item.client_response_raw_content,
+                    client_response_headers=item.client_response_headers,
+                    upstream_protocol=(
+                        item.upstream_protocol.value
+                        if item.upstream_protocol is not None
+                        else None
+                    ),
                     attempts_json=json.dumps(
                         [attempt.model_dump(mode="json") for attempt in item.attempts],
                         ensure_ascii=True,

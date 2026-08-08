@@ -918,9 +918,17 @@ export type RequestLogAttempt = {
 
 export type RequestLogDetail = RequestLogItem & {
   request_content?: string | null;
+  client_request_content?: string | null;
+  upstream_request_content?: string | null;
   request_headers?: string | null;
   upstream_headers?: string | null;
+  upstream_response_headers?: string | null;
   response_content?: string | null;
+  upstream_response_content?: string | null;
+  upstream_response_distilled?: string | null;
+  client_response_raw_content?: string | null;
+  client_response_headers?: string | null;
+  upstream_protocol?: ProtocolKind | null;
   attempts: RequestLogAttempt[];
 };
 

@@ -266,6 +266,7 @@ async def _record_stream_request_log(
     protocol: ProtocolKind,
     requested_group_name: str | None,
     resolved_group_name: str | None,
+    client_request_content: str | None,
     channel: ChannelConfig,
     gateway_key: GatewayApiKey,
     user_agent: str,
@@ -289,6 +290,28 @@ async def _record_stream_request_log(
     client_response_content = (
         _join_stream_chunks(capture.client_response_content_chunks)
         if capture is not None and capture.capture_body
+        else None
+    )
+    upstream_response_content = (
+        _sanitize_log_content_text(raw_content) if raw_content else None
+    )
+    upstream_response_distilled = None
+    if raw_content:
+        try:
+            upstream_response_distilled = _distill_stream_response_content(
+                channel.protocol, raw_content
+            )
+        except ValueError:
+            upstream_response_distilled = None
+        if upstream_response_distilled is None:
+            upstream_response_distilled = _sanitize_log_content_text(raw_content)
+    upstream_response_headers = result.upstream_response_headers
+    client_response_headers = json.dumps(
+        dict(result.response.headers), ensure_ascii=True
+    )
+    client_response_raw_content = (
+        _sanitize_log_content_text(client_response_content)
+        if client_response_content
         else None
     )
     if capture is not None:
@@ -398,7 +421,15 @@ async def _record_stream_request_log(
         output_cost_usd=output_cost_usd,
         total_cost_usd=total_cost_usd,
         request_content=result.request_content,
+        client_request_content=client_request_content,
+        upstream_request_content=result.request_content,
         response_content=_sanitize_log_content_text(distilled_content),
+        upstream_response_headers=upstream_response_headers,
+        upstream_response_content=upstream_response_content,
+        upstream_response_distilled=upstream_response_distilled,
+        client_response_raw_content=client_response_raw_content,
+        client_response_headers=client_response_headers,
+        upstream_protocol=channel.protocol.value,
         attempts=attempt_logs,
         error_message=capture_issue,
     )
@@ -411,6 +442,7 @@ async def _record_stream_request_log_and_release_probe(
     protocol: ProtocolKind,
     requested_group_name: str | None,
     resolved_group_name: str | None,
+    client_request_content: str | None,
     channel: ChannelConfig,
     gateway_key: GatewayApiKey,
     user_agent: str,
@@ -424,6 +456,7 @@ async def _record_stream_request_log_and_release_probe(
             protocol=protocol,
             requested_group_name=requested_group_name,
             resolved_group_name=resolved_group_name,
+            client_request_content=client_request_content,
             channel=channel,
             gateway_key=gateway_key,
             user_agent=user_agent,

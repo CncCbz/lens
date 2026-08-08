@@ -752,7 +752,7 @@ export function RequestsScreen() {
 					}}
 				>
 					<AppDialogContent
-						className="max-w-6xl"
+						className="h-[calc(100dvh-1rem)] max-w-6xl sm:h-[88vh]"
 						title={titleForLocale(locale, "日志详情", "Log detail")}
 					>
 						{detailIsError ? (

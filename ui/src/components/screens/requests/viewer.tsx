@@ -24,8 +24,7 @@ export function normalizeLineBreaks(value: string) {
 
 export type JsonContainer = JsonLike[] | { [key: string]: JsonLike };
 export type ParsedViewerContent =
-  | { isJson: true; data: JsonContainer }
-  | { isJson: false; data: string };
+  { isJson: true; data: JsonContainer } | { isJson: false; data: string };
 
 export const JSON_VIEW_STYLE = {
   fontSize: "12px",
@@ -104,7 +103,7 @@ export function LineNumberedCode({ text }: { text: string }) {
   const lines = useMemo(() => normalizeLineBreaks(text).split("\n"), [text]);
 
   return (
-    <div className="max-h-[60dvh] overflow-auto sm:max-h-[560px]">
+    <div className="h-full min-h-0 max-h-[60dvh] overflow-auto sm:max-h-[560px]">
       <div className="min-w-full py-3">
         {lines.map((line, index) => (
           <div
@@ -258,7 +257,7 @@ export function JsonViewer({
             {titleForLocale(locale, "正在准备内容...", "Preparing content...")}
           </div>
         ) : parsed?.isJson ? (
-          <div className="max-h-[60dvh] overflow-auto sm:max-h-[560px]">
+          <div className="h-full min-h-0 overflow-auto">
             <div className="grid min-w-full grid-cols-[44px_minmax(0,1fr)]">
               <LineNumbersColumn lineHeights={lineHeights} />
               <div className="min-w-0 px-3 py-3 sm:px-4">

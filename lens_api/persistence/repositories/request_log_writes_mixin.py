@@ -411,6 +411,7 @@ class RequestLogWriteMixin:
             output_cost_usd=0.0,
             total_cost_usd=0.0,
             request_content=request_content,
+            client_request_content=request_content,
             request_headers=request_headers,
             response_content=None,
             attempts=[],
@@ -444,8 +445,17 @@ class RequestLogWriteMixin:
         cache_read_input_tokens: int = 0,
         cache_write_input_tokens: int = 0,
         request_content: str | None = None,
+        client_request_content: str | None = None,
+        upstream_request_content: str | None = None,
         request_headers: str | None = None,
+        upstream_headers: str | None = None,
+        upstream_response_headers: str | None = None,
         response_content: str | None = None,
+        upstream_response_content: str | None = None,
+        upstream_response_distilled: str | None = None,
+        client_response_raw_content: str | None = None,
+        client_response_headers: str | None = None,
+        upstream_protocol: str | None = None,
         attempts: list[dict[str, Any]] | None = None,
         error_message: str | None = None,
     ) -> RequestLogItem:
@@ -478,8 +488,33 @@ class RequestLogWriteMixin:
                 output_cost_usd=max(output_cost_usd, 0.0),
                 total_cost_usd=max(total_cost_usd, 0.0),
                 request_content=redact_sensitive_log_content(request_content),
+                client_request_content=redact_sensitive_log_content(
+                    client_request_content
+                    if client_request_content is not None
+                    else request_content
+                ),
+                upstream_request_content=redact_sensitive_log_content(
+                    upstream_request_content
+                ),
                 request_headers=redact_sensitive_header_json(request_headers),
+                upstream_headers=redact_sensitive_header_json(upstream_headers),
+                upstream_response_headers=redact_sensitive_header_json(
+                    upstream_response_headers
+                ),
                 response_content=redact_sensitive_log_content(response_content),
+                upstream_response_content=redact_sensitive_log_content(
+                    upstream_response_content
+                ),
+                upstream_response_distilled=redact_sensitive_log_content(
+                    upstream_response_distilled
+                ),
+                client_response_raw_content=redact_sensitive_log_content(
+                    client_response_raw_content
+                ),
+                client_response_headers=redact_sensitive_header_json(
+                    client_response_headers
+                ),
+                upstream_protocol=upstream_protocol,
                 attempts_json=json.dumps(attempts or [], ensure_ascii=True),
                 error_message=error_message,
                 stats_archived=(
@@ -528,8 +563,16 @@ class RequestLogWriteMixin:
         output_cost_usd: float = 0.0,
         total_cost_usd: float = 0.0,
         request_content: str | None = None,
+        client_request_content: str | None = None,
+        upstream_request_content: str | None = None,
         response_content: str | None = None,
         upstream_headers: str | None = None,
+        upstream_response_headers: str | None = None,
+        upstream_response_content: str | None = None,
+        upstream_response_distilled: str | None = None,
+        client_response_raw_content: str | None = None,
+        client_response_headers: str | None = None,
+        upstream_protocol: str | None = None,
         attempts: list[dict[str, Any]] | None = None,
         error_message: str | None = None,
     ) -> RequestLogItem | None:
@@ -568,9 +611,39 @@ class RequestLogWriteMixin:
             entity.output_cost_usd = max(output_cost_usd, 0.0)
             entity.total_cost_usd = max(total_cost_usd, 0.0)
             entity.request_content = redact_sensitive_log_content(request_content)
+            if client_request_content is not None:
+                entity.client_request_content = redact_sensitive_log_content(
+                    client_request_content
+                )
+            if upstream_request_content is not None:
+                entity.upstream_request_content = redact_sensitive_log_content(
+                    upstream_request_content
+                )
             entity.response_content = redact_sensitive_log_content(response_content)
             if upstream_headers is not None:
                 entity.upstream_headers = redact_sensitive_header_json(upstream_headers)
+            if upstream_response_headers is not None:
+                entity.upstream_response_headers = redact_sensitive_header_json(
+                    upstream_response_headers
+                )
+            if upstream_response_content is not None:
+                entity.upstream_response_content = redact_sensitive_log_content(
+                    upstream_response_content
+                )
+            if upstream_response_distilled is not None:
+                entity.upstream_response_distilled = redact_sensitive_log_content(
+                    upstream_response_distilled
+                )
+            if client_response_raw_content is not None:
+                entity.client_response_raw_content = redact_sensitive_log_content(
+                    client_response_raw_content
+                )
+            if client_response_headers is not None:
+                entity.client_response_headers = redact_sensitive_header_json(
+                    client_response_headers
+                )
+            if upstream_protocol is not None:
+                entity.upstream_protocol = upstream_protocol
             entity.attempts_json = json.dumps(attempts or [], ensure_ascii=True)
             entity.error_message = error_message
             entity.stats_archived = (

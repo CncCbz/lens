@@ -121,7 +121,8 @@ async def _build_sse_to_json_result(
             client_protocol, channel.protocol, content, original_model
         )
 
-    response_headers = _passthrough_headers(response.headers)
+    upstream_response_headers = _passthrough_headers(response.headers)
+    response_headers = dict(upstream_response_headers)
     response_headers.pop("content-type", None)
     cost = await _safe_estimate_cost(
         pricing_group_name,
@@ -151,6 +152,11 @@ async def _build_sse_to_json_result(
         total_cost_usd=cost[2],
         request_content=request_content,
         response_content=response_content if log_body_enabled else None,
+        upstream_response_headers=_dump_log_json(upstream_response_headers),
+        upstream_response_content=(
+            _sanitize_log_content_text(raw_content) if log_body_enabled else None
+        ),
+        client_response_headers=_dump_log_json(response_headers),
     )
 
 
@@ -255,7 +261,8 @@ async def _build_stream_result(
 
     converted_iter = _stream_client_iterator(converted_iter, capture)
 
-    response_headers = _passthrough_headers(response.headers)
+    upstream_response_headers = _passthrough_headers(response.headers)
+    response_headers = dict(upstream_response_headers)
     if converted:
         # Never let the upstream media type override the converted target type.
         response_headers.pop("content-type", None)
@@ -273,6 +280,8 @@ async def _build_stream_result(
         first_token_latency_ms=capture.first_token_latency_ms,
         upstream_model_name=body.get("model"),
         request_content=request_content,
+        upstream_response_headers=_dump_log_json(upstream_response_headers),
+        client_response_headers=_dump_log_json(response_headers),
         stream_capture=capture,
     )
 
@@ -305,6 +314,7 @@ async def _build_json_result(
     log_body_enabled: bool,
 ) -> UpstreamResult:
     content = await response.aread()
+    raw_content = _decode_content_bytes(content)
     try:
         parsed = _extract_response_usage(
             channel.protocol, response, fallback_model=body.get("model")
@@ -329,12 +339,14 @@ async def _build_json_result(
         parsed["cache_read_input_tokens"],
         parsed["cache_write_input_tokens"],
     )
+    upstream_response_headers = _passthrough_headers(response.headers)
+    response_headers = dict(upstream_response_headers)
     return UpstreamResult(
         response=Response(
             content=content,
             status_code=response.status_code,
             media_type=response.headers.get("content-type"),
-            headers=_passthrough_headers(response.headers),
+            headers=response_headers,
         ),
         status_code=response.status_code,
         is_stream=False,
@@ -351,6 +363,11 @@ async def _build_json_result(
         response_content=(
             _decode_log_content_bytes(content) if log_body_enabled else None
         ),
+        upstream_response_headers=_dump_log_json(upstream_response_headers),
+        upstream_response_content=(
+            _sanitize_log_content_text(raw_content) if log_body_enabled else None
+        ),
+        client_response_headers=_dump_log_json(response_headers),
     )
 
 

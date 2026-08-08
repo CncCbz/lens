@@ -9,6 +9,7 @@ from .runtime_context import (
     RequestLogLifecycleStatus,
     UpstreamResult,
     _attempt_logs_to_dicts,
+    json,
     app_state,
     dataclass,
 )
@@ -25,7 +26,14 @@ class _RequestLogger:
     body: dict[str, Any]
     request_content: str | None
     attempts: list[AttemptLog]
+    upstream_request_content: str | None = None
     upstream_headers: str | None = None
+    upstream_response_headers: str | None = None
+    upstream_response_content: str | None = None
+    upstream_response_distilled: str | None = None
+    client_response_raw_content: str | None = None
+    client_response_headers: str | None = None
+    upstream_protocol: ProtocolKind | None = None
 
     async def update(
         self,
@@ -47,9 +55,11 @@ class _RequestLogger:
         result: UpstreamResult | None = None,
     ) -> None:
         if request_content is not None:
-            self.request_content = request_content
+            self.upstream_request_content = request_content
         if upstream_headers is not None:
             self.upstream_headers = upstream_headers
+        if channel is not None:
+            self.upstream_protocol = channel.protocol
         kwargs: dict[str, Any] = {}
         if result is not None:
             kwargs.update(
@@ -61,6 +71,16 @@ class _RequestLogger:
                 input_cost_usd=result.input_cost_usd,
                 output_cost_usd=result.output_cost_usd,
                 total_cost_usd=result.total_cost_usd,
+            )
+            if response_content is None:
+                response_content = result.response_content
+            self.upstream_response_headers = result.upstream_response_headers
+            self.upstream_response_content = result.upstream_response_content
+            self.upstream_response_distilled = result.upstream_response_distilled
+            if result.client_response_raw_content is not None:
+                self.client_response_raw_content = result.client_response_raw_content
+            self.client_response_headers = json.dumps(
+                dict(result.response.headers), ensure_ascii=True
             )
         await _update_request_log(
             self.request_log_id,
@@ -78,9 +98,21 @@ class _RequestLogger:
             is_stream=is_stream,
             first_token_latency_ms=first_token_latency_ms,
             latency_ms=_elapsed_ms(self.started_at),
-            request_content=self.request_content,
+            request_content=self.upstream_request_content,
+            client_request_content=self.request_content,
+            upstream_request_content=self.upstream_request_content,
             response_content=response_content,
             upstream_headers=self.upstream_headers,
+            upstream_response_headers=self.upstream_response_headers,
+            upstream_response_content=self.upstream_response_content,
+            upstream_response_distilled=self.upstream_response_distilled,
+            client_response_raw_content=self.client_response_raw_content,
+            client_response_headers=self.client_response_headers,
+            upstream_protocol=(
+                self.upstream_protocol.value
+                if self.upstream_protocol is not None
+                else None
+            ),
             attempts=_attempt_logs_to_dicts(self.attempts),
             error_message=error_message,
             **kwargs,
@@ -113,8 +145,16 @@ async def _update_request_log(
     output_cost_usd: float = 0.0,
     total_cost_usd: float = 0.0,
     request_content: str | None = None,
+    client_request_content: str | None = None,
+    upstream_request_content: str | None = None,
     response_content: str | None = None,
     upstream_headers: str | None = None,
+    upstream_response_headers: str | None = None,
+    upstream_response_content: str | None = None,
+    upstream_response_distilled: str | None = None,
+    client_response_raw_content: str | None = None,
+    client_response_headers: str | None = None,
+    upstream_protocol: str | None = None,
     attempts: list[dict[str, Any]] | None = None,
     error_message: str | None,
 ) -> None:
@@ -143,8 +183,16 @@ async def _update_request_log(
         output_cost_usd=output_cost_usd,
         total_cost_usd=total_cost_usd,
         request_content=request_content,
+        client_request_content=client_request_content,
+        upstream_request_content=upstream_request_content,
         response_content=response_content,
         upstream_headers=upstream_headers,
+        upstream_response_headers=upstream_response_headers,
+        upstream_response_content=upstream_response_content,
+        upstream_response_distilled=upstream_response_distilled,
+        client_response_raw_content=client_response_raw_content,
+        client_response_headers=client_response_headers,
+        upstream_protocol=upstream_protocol,
         attempts=attempts,
         error_message=error_message,
     )

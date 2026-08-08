@@ -302,9 +302,31 @@ class RequestLogChannelResolutionMixin:
                 channel_has_multiple_credentials=channel_has_multiple_credentials,
             ).model_dump(),
             request_content=redact_sensitive_log_content(entity.request_content),
+            client_request_content=redact_sensitive_log_content(
+                entity.client_request_content
+            ),
+            upstream_request_content=redact_sensitive_log_content(
+                entity.upstream_request_content
+            ),
             request_headers=redact_sensitive_header_json(entity.request_headers),
             upstream_headers=redact_sensitive_header_json(entity.upstream_headers),
+            upstream_response_headers=redact_sensitive_header_json(
+                entity.upstream_response_headers
+            ),
             response_content=redact_sensitive_log_content(entity.response_content),
+            upstream_response_content=redact_sensitive_log_content(
+                entity.upstream_response_content
+            ),
+            upstream_response_distilled=redact_sensitive_log_content(
+                entity.upstream_response_distilled
+            ),
+            client_response_raw_content=redact_sensitive_log_content(
+                entity.client_response_raw_content
+            ),
+            client_response_headers=redact_sensitive_header_json(
+                entity.client_response_headers
+            ),
+            upstream_protocol=entity.upstream_protocol,
             attempts=[
                 RequestLogAttempt(**item)
                 for item in cls._parse_attempts_json(entity.attempts_json)

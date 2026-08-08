@@ -326,6 +326,11 @@ class UpstreamResult:
     total_cost_usd: float = 0.0
     request_content: str | None = None
     response_content: str | None = None
+    upstream_response_headers: str | None = None
+    upstream_response_content: str | None = None
+    upstream_response_distilled: str | None = None
+    client_response_raw_content: str | None = None
+    client_response_headers: str | None = None
     stream_capture: StreamCapture | None = None
 
 

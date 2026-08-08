@@ -825,6 +825,7 @@ async def _try_target(
             protocol=protocol,
             requested_group_name=plan.requested_group_name,
             resolved_group_name=plan.resolved_group_name,
+            client_request_content=log_ctx.request_content,
             channel=channel,
             gateway_key=log_ctx.gateway_key,
             user_agent=effective_user_agent,
@@ -833,6 +834,14 @@ async def _try_target(
             attempts=_attempt_logs_to_dicts(log_ctx.attempts),
         )
         return result.response
+    _apply_response_headers(
+        result.response,
+        _response_headers_for_log(
+            log_ctx,
+            final_channel_id=channel.id,
+            final_model=result.upstream_model_name or target.model_name,
+        ),
+    )
     await log_ctx.update(
         requested_group_name=plan.requested_group_name,
         resolved_group_name=plan.resolved_group_name,
@@ -847,13 +856,5 @@ async def _try_target(
         request_content=merged_request_content,
         response_content=result.response_content,
         result=result,
-    )
-    _apply_response_headers(
-        result.response,
-        _response_headers_for_log(
-            log_ctx,
-            final_channel_id=channel.id,
-            final_model=result.upstream_model_name or target.model_name,
-        ),
     )
     return result.response

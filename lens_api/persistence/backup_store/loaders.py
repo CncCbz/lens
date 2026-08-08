@@ -579,9 +579,17 @@ class BackupLoadersMixin:
                     created_at=row.created_at.replace(tzinfo=UTC).isoformat(),
                     stats_archived=bool(row.stats_archived),
                     request_content=row.request_content,
+                    client_request_content=row.client_request_content,
+                    upstream_request_content=row.upstream_request_content,
                     request_headers=row.request_headers,
                     upstream_headers=row.upstream_headers,
+                    upstream_response_headers=row.upstream_response_headers,
                     response_content=row.response_content,
+                    upstream_response_content=row.upstream_response_content,
+                    upstream_response_distilled=row.upstream_response_distilled,
+                    client_response_raw_content=row.client_response_raw_content,
+                    client_response_headers=row.client_response_headers,
+                    upstream_protocol=row.upstream_protocol,
                     attempts=attempts,
                 )
             )

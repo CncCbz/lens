@@ -228,6 +228,55 @@ export function tryParseJsonValue(value: string) {
   }
 }
 
+export function isSseText(value: string) {
+  return /(?:^|\n)\s*data:/i.test(value);
+}
+
+export function parseSseEvents(value: string) {
+  const events: JsonLike[] = [];
+  let currentEvent: string | null = null;
+  let dataLines: string[] = [];
+
+  const flush = () => {
+    if (dataLines.length === 0) return;
+    const rawData = dataLines.join("\n");
+    let data: JsonLike = rawData;
+    try {
+      data = JSON.parse(rawData) as JsonLike;
+    } catch {
+      // Keep raw text when a data payload is not valid JSON.
+    }
+    events.push({
+      event: currentEvent ?? "message",
+      data,
+    });
+    currentEvent = null;
+    dataLines = [];
+  };
+
+  for (const rawLine of value.split(/\r?\n/)) {
+    if (!rawLine.trim()) {
+      flush();
+      continue;
+    }
+    if (rawLine.startsWith(":")) continue;
+    if (rawLine.startsWith("event:")) {
+      currentEvent = rawLine.slice(6).trim();
+    } else if (rawLine.startsWith("data:")) {
+      dataLines.push(rawLine.slice(5).trim());
+    }
+  }
+  flush();
+
+  return events;
+}
+
+export function formatSseAsJson(value: string) {
+  const events = parseSseEvents(value);
+  if (events.length === 0) return value;
+  return JSON.stringify(events, null, 2);
+}
+
 export function formatHtmlErrorContent(value: string) {
   return value
     .replace(/>\s*</g, ">\n<")

@@ -1109,9 +1109,17 @@ class RequestLogAttempt(StrictBaseModel):
 
 class RequestLogDetail(RequestLogItem):
     request_content: str | None = None
+    client_request_content: str | None = None
+    upstream_request_content: str | None = None
     request_headers: str | None = None
     upstream_headers: str | None = None
+    upstream_response_headers: str | None = None
     response_content: str | None = None
+    upstream_response_content: str | None = None
+    upstream_response_distilled: str | None = None
+    client_response_raw_content: str | None = None
+    client_response_headers: str | None = None
+    upstream_protocol: ProtocolKind | None = None
     attempts: list[RequestLogAttempt] = Field(default_factory=list)
 
 
@@ -1275,9 +1283,17 @@ class ConfigBackupRequestLog(StrictBaseModel):
     created_at: str
     stats_archived: bool = False
     request_content: str | None = None
+    client_request_content: str | None = None
+    upstream_request_content: str | None = None
     request_headers: str | None = None
     upstream_headers: str | None = None
+    upstream_response_headers: str | None = None
     response_content: str | None = None
+    upstream_response_content: str | None = None
+    upstream_response_distilled: str | None = None
+    client_response_raw_content: str | None = None
+    client_response_headers: str | None = None
+    upstream_protocol: ProtocolKind | None = None
     attempts: list["RequestLogAttempt"] = Field(default_factory=list)
 
     @model_validator(mode="after")
