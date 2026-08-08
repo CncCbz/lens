@@ -5,7 +5,11 @@ from typing import Any, AsyncIterator
 
 from ._shared import (
     FINISH_REASON_CHAT_TO_ANTHROPIC,
-    _parse_chat_sse_stream,
+    _anthropic_budget_to_effort,
+    _clean_thinking_effort,
+    _effort_to_anthropic_budget,
+    _extract_chat_reasoning_effort,
+    _parse_sse_stream,
     anthropic_content_to_chat_messages,
     anthropic_tool_choice_to_chat,
     anthropic_tools_to_chat_tools,
@@ -64,6 +68,25 @@ def anthropic_request_to_chat(
     cache_control = body.get("cache_control")
     if isinstance(cache_control, dict):
         chat["cache_control"] = dict(cache_control)
+
+    thinking = body.get("thinking")
+    if isinstance(thinking, dict):
+        thinking_type = str(thinking.get("type") or "")
+        if thinking_type == "disabled":
+            chat["reasoning_effort"] = "none"
+        elif thinking_type == "adaptive":
+            output_config = body.get("output_config")
+            effort = (
+                _clean_thinking_effort(output_config.get("effort"))
+                if isinstance(output_config, dict)
+                else None
+            )
+            if effort:
+                chat["reasoning_effort"] = effort
+        elif thinking_type == "enabled":
+            effort = _anthropic_budget_to_effort(thinking.get("budget_tokens"))
+            if effort:
+                chat["reasoning_effort"] = effort
 
     return chat
 
@@ -141,6 +164,24 @@ def chat_request_to_anthropic(body: dict[str, Any]) -> dict[str, Any]:
     tool_choice = _chat_tool_choice_to_anthropic(body.get("tool_choice"))
     if tool_choice is not None:
         anthropic["tool_choice"] = tool_choice
+
+    effort = _extract_chat_reasoning_effort(body)
+    if effort:
+        if effort == "none":
+            anthropic["thinking"] = {"type": "disabled"}
+        else:
+            budget = _effort_to_anthropic_budget(effort)
+            if budget:
+                anthropic["thinking"] = {
+                    "type": "enabled",
+                    "budget_tokens": budget,
+                }
+                # Extended thinking requires max_tokens to comfortably exceed
+                # the budget so the final response is not truncated.
+                current_max = anthropic.get("max_tokens")
+                if isinstance(current_max, int) and current_max < budget + 1024:
+                    anthropic["max_tokens"] = budget + 1024
+
     return anthropic
 
 
@@ -164,6 +205,28 @@ def chat_response_to_anthropic(
         content.extend(chat_tool_calls_to_anthropic_content(tool_calls))
 
     usage = chat_body.get("usage", {})
+    prompt_tokens = _int_value(usage.get("prompt_tokens"))
+    prompt_details = usage.get("prompt_tokens_details")
+    cache_read = (
+        _int_value(prompt_details.get("cached_tokens"))
+        if isinstance(prompt_details, dict)
+        else 0
+    )
+    cache_write = (
+        _int_value(prompt_details.get("cache_creation_tokens"))
+        if isinstance(prompt_details, dict)
+        else 0
+    )
+    # Anthropic reports input_tokens as non-cached input, with cache reads and
+    # writes as separate fields. OpenAI-style prompt_tokens includes cached
+    # tokens, so subtract them to keep client-visible cache accounting correct.
+    anthropic_usage: dict[str, Any] = {
+        "input_tokens": max(prompt_tokens - cache_read - cache_write, 0),
+        "output_tokens": _int_value(usage.get("completion_tokens")),
+    }
+    if cache_read or cache_write:
+        anthropic_usage["cache_read_input_tokens"] = cache_read
+        anthropic_usage["cache_creation_input_tokens"] = cache_write
     return {
         "id": chat_body.get("id", f"msg_{uuid.uuid4().hex[:24]}"),
         "type": "message",
@@ -172,10 +235,7 @@ def chat_response_to_anthropic(
         "content": content,
         "stop_reason": stop_reason,
         "stop_sequence": None,
-        "usage": {
-            "input_tokens": usage.get("prompt_tokens", 0),
-            "output_tokens": usage.get("completion_tokens", 0),
-        },
+        "usage": anthropic_usage,
     }
 
 
@@ -213,7 +273,7 @@ def anthropic_response_to_chat(
 
     message: dict[str, Any] = {
         "role": "assistant",
-        "content": "".join(content_parts) if not tool_calls else None,
+        "content": "".join(content_parts) or None,
     }
     if reasoning_parts:
         message["reasoning_content"] = "".join(reasoning_parts)
@@ -244,9 +304,10 @@ async def chat_stream_to_anthropic_stream(
 ) -> AsyncIterator[bytes]:
     msg_id = f"msg_{uuid.uuid4().hex[:24]}"
     output_tokens = 0
-    text_started = False
+    text_block_index: int | None = None
     thinking_index: int | None = None
-    tool_index: dict[str, int] = {}
+    tool_index: dict[int, int] = {}
+    tool_args: dict[int, str] = {}
     next_block_index = 0
     finish_reason: str | None = None
 
@@ -268,7 +329,7 @@ async def chat_stream_to_anthropic_stream(
     )
     yield format_sse_event("ping", {"type": "ping"})
 
-    async for payload in _parse_chat_sse_stream(raw_iterator):
+    async for payload in _parse_sse_stream(raw_iterator):
         usage = payload.get("usage") or {}
         if usage.get("completion_tokens"):
             output_tokens = usage["completion_tokens"]
@@ -306,22 +367,22 @@ async def chat_stream_to_anthropic_stream(
                     )
 
             if text_delta:
-                if not text_started:
-                    text_started = True
+                if text_block_index is None:
+                    text_block_index = next_block_index
+                    next_block_index += 1
                     yield format_sse_event(
                         "content_block_start",
                         {
                             "type": "content_block_start",
-                            "index": next_block_index,
+                            "index": text_block_index,
                             "content_block": {"type": "text", "text": ""},
                         },
                     )
-                    next_block_index += 1
                 yield format_sse_event(
                     "content_block_delta",
                     {
                         "type": "content_block_delta",
-                        "index": next_block_index - 1,
+                        "index": text_block_index,
                         "delta": {"type": "text_delta", "text": text_delta},
                     },
                 )
@@ -329,17 +390,18 @@ async def chat_stream_to_anthropic_stream(
             if tc_deltas:
                 for tc in tc_deltas:
                     call_id = tc.get("id") or ""
-                    tc_idx = tc.get("index", 0)
-                    key = call_id or str(tc_idx)
-                    if key not in tool_index:
+                    tc_idx = _coerce_index(tc.get("index"))
+                    if tc_idx is None:
+                        tc_idx = len(tool_index)
+                    if tc_idx not in tool_index:
                         func = tc.get("function", {})
-                        tool_index[key] = next_block_index
+                        tool_index[tc_idx] = next_block_index
                         next_block_index += 1
                         yield format_sse_event(
                             "content_block_start",
                             {
                                 "type": "content_block_start",
-                                "index": tool_index[key],
+                                "index": tool_index[tc_idx],
                                 "content_block": {
                                     "type": "tool_use",
                                     "id": call_id or f"toolu_{uuid.uuid4().hex[:24]}",
@@ -350,17 +412,29 @@ async def chat_stream_to_anthropic_stream(
                         )
                     args_delta = (tc.get("function") or {}).get("arguments", "")
                     if args_delta:
+                        tool_args[tc_idx] = tool_args.get(tc_idx, "") + args_delta
                         yield format_sse_event(
                             "content_block_delta",
                             {
                                 "type": "content_block_delta",
-                                "index": tool_index[key],
+                                "index": tool_index[tc_idx],
                                 "delta": {
                                     "type": "input_json_delta",
                                     "partial_json": args_delta,
                                 },
                             },
                         )
+
+    # Fail visibly instead of terminating a message whose tool arguments do
+    # not form valid JSON (deltas were already streamed; a client would only
+    # receive a broken tool otherwise).
+    for block_idx, args in tool_args.items():
+        if not args.strip():
+            continue
+        try:
+            json.loads(args)
+        except json.JSONDecodeError as exc:
+            raise ValueError("Invalid tool call arguments JSON") from exc
 
     for i in range(next_block_index):
         yield format_sse_event(
@@ -398,7 +472,7 @@ async def anthropic_stream_to_chat_stream(
     finish_sent = False
     done_sent = False
 
-    async for payload in _parse_anthropic_sse_stream(raw_iterator):
+    async for payload in _parse_sse_stream(raw_iterator):
         if done_sent:
             continue
         payload_type = str(payload.get("type") or "")
@@ -511,13 +585,15 @@ async def anthropic_stream_to_chat_stream(
             continue
 
         if payload_type == "message_stop":
+            if not finish_reason:
+                raise ValueError("Anthropic stream ended without a stop reason")
             if not finish_sent:
                 yield _chat_stream_event(
                     message_id,
                     model,
                     created,
                     {},
-                    finish_reason=finish_reason or "stop",
+                    finish_reason=finish_reason,
                     usage=_anthropic_usage_to_chat_usage(usage),
                 )
             yield b"data: [DONE]\n\n"
@@ -525,16 +601,7 @@ async def anthropic_stream_to_chat_stream(
             continue
 
     if not done_sent:
-        if not finish_sent:
-            yield _chat_stream_event(
-                message_id,
-                model,
-                created,
-                {},
-                finish_reason=finish_reason or "stop",
-                usage=_anthropic_usage_to_chat_usage(usage),
-            )
-        yield b"data: [DONE]\n\n"
+        raise ValueError("Anthropic stream ended before message_stop")
 
 
 def _chat_message_reasoning_content(message: dict[str, Any]) -> tuple[bool, str]:
@@ -777,16 +844,20 @@ def _int_value(value: Any) -> int:
 
 
 def _merge_usage(target: dict[str, Any], raw_usage: Any) -> None:
+    """Merge upstream usage with last-value-wins semantics.
+
+    Anthropic stream usage is cumulative (message_delta carries the final
+    totals), so summing would double count. Fields absent from a later event
+    keep their earlier value, matching pi's field-wise update behavior.
+    """
     if not isinstance(raw_usage, dict):
         return
     for key, value in raw_usage.items():
-        if isinstance(value, int) and not isinstance(value, bool):
-            target[key] = _int_value(target.get(key)) + max(value, 0)
-        elif isinstance(value, dict):
+        if isinstance(value, dict):
             current = target.setdefault(key, {})
             if isinstance(current, dict):
                 _merge_usage(current, value)
-        elif key not in target:
+        else:
             target[key] = value
 
 
@@ -817,39 +888,3 @@ def _chat_stream_event(
     if usage is not None:
         payload["usage"] = usage
     return format_sse_event(None, payload)
-
-
-async def _parse_anthropic_sse_stream(
-    raw_iterator: AsyncIterator[bytes],
-) -> AsyncIterator[dict[str, Any]]:
-    buffer = b""
-    async for chunk in raw_iterator:
-        buffer += chunk
-        while b"\n\n" in buffer:
-            block, buffer = buffer.split(b"\n\n", 1)
-            payload = _parse_anthropic_sse_block(block)
-            if payload is not None:
-                yield payload
-    if buffer:
-        payload = _parse_anthropic_sse_block(buffer)
-        if payload is not None:
-            yield payload
-
-
-def _parse_anthropic_sse_block(block: bytes) -> dict[str, Any] | None:
-    data_parts: list[str] = []
-    for raw_line in block.splitlines():
-        line = raw_line.decode("utf-8", errors="replace").strip()
-        if not line.startswith("data:"):
-            continue
-        data_parts.append(line[5:].strip())
-    if not data_parts:
-        return None
-    data = "\n".join(data_parts)
-    if data == "[DONE]":
-        return None
-    try:
-        payload = json.loads(data)
-    except json.JSONDecodeError as exc:
-        raise ValueError("Invalid stream JSON") from exc
-    return payload if isinstance(payload, dict) else None

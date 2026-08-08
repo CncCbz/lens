@@ -1,4 +1,5 @@
 import json
+from collections.abc import Mapping
 from typing import Any, AsyncIterator
 
 FINISH_REASON_CHAT_TO_ANTHROPIC: dict[str | None, str] = {
@@ -15,29 +16,260 @@ FINISH_REASON_CHAT_TO_RESPONSES: dict[str | None, str] = {
     "content_filter": "failed",
 }
 
+# Reasoning/thinking level used as the shared Chat-pivot value domain. It
+# matches the OpenAI effort vocabulary that Chat and Responses providers use;
+# Anthropic budgets and Gemini budgets are mapped to/from these levels.
+_THINKING_EFFORTS: frozenset[str] = frozenset(
+    {"none", "minimal", "low", "medium", "high", "xhigh", "max"}
+)
+
+# pi-agent default Anthropic budget per level (xhigh/max clamp to high on
+# budget-based Anthropic models); max uses a larger budget so it survives
+# gateways whose upstream accepts extended efforts (e.g. DeepSeek).
+_ANTHROPIC_EFFORT_TO_BUDGET: dict[str, int] = {
+    "minimal": 1024,
+    "low": 2048,
+    "medium": 8192,
+    "high": 16384,
+    "xhigh": 16384,
+    "max": 32768,
+}
+
+# Gemini 2.5-style thinking budgets within the documented 128..32768 range.
+_GEMINI_EFFORT_TO_BUDGET: dict[str, int] = {
+    "minimal": 512,
+    "low": 2048,
+    "medium": 8192,
+    "high": 16384,
+    "xhigh": 24576,
+    "max": 32768,
+}
+
+
+def _clean_thinking_effort(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip().lower()
+    if normalized in _THINKING_EFFORTS:
+        return normalized
+    return None
+
+
+def _extract_chat_reasoning_effort(body: Mapping[str, Any] | None) -> str | None:
+    """Read the reasoning level from a Chat-format request."""
+    if not isinstance(body, Mapping):
+        return None
+    for key in ("reasoning_effort", "reasoningEffort"):
+        effort = _clean_thinking_effort(body.get(key))
+        if effort:
+            return effort
+    reasoning = body.get("reasoning")
+    if isinstance(reasoning, Mapping):
+        return _clean_thinking_effort(reasoning.get("effort"))
+    return _clean_thinking_effort(reasoning)
+
+
+def _anthropic_budget_to_effort(budget: Any) -> str | None:
+    """Reverse an Anthropic thinking budget to the closest Chat effort level."""
+    if isinstance(budget, bool):
+        return None
+    if not isinstance(budget, int):
+        return None
+    if budget <= 0:
+        return None
+    if budget >= 32768:
+        return "max"
+    if budget >= 16384:
+        return "high"
+    if budget >= 8192:
+        return "medium"
+    if budget >= 2048:
+        return "low"
+    return "minimal"
+
+
+def _effort_to_anthropic_budget(effort: str | None) -> int | None:
+    if effort is None:
+        return None
+    return _ANTHROPIC_EFFORT_TO_BUDGET.get(effort)
+
+
+def _effort_to_gemini_budget(effort: str | None) -> int | None:
+    if effort is None:
+        return None
+    return _GEMINI_EFFORT_TO_BUDGET.get(effort)
+
+
+def _gemini_budget_to_effort(budget: Any) -> str | None:
+    """Reverse a Gemini thinking budget to the closest Chat effort level."""
+    if isinstance(budget, bool):
+        return None
+    if not isinstance(budget, int):
+        return None
+    if budget == 0:
+        return "none"
+    if budget < 0:
+        # -1 means dynamic thinking; leave the level unspecified.
+        return None
+    if budget >= 32768:
+        return "max"
+    if budget >= 24576:
+        return "xhigh"
+    if budget >= 16384:
+        return "high"
+    if budget >= 8192:
+        return "medium"
+    if budget >= 2048:
+        return "low"
+    return "minimal"
+
+
+def _sse_block_payloads(block: str) -> list[dict[str, Any] | None]:
+    """Parse one SSE event block; ``None`` marks the ``[DONE]`` sentinel."""
+    data_lines = [
+        line[5:].strip() for line in block.splitlines() if line.startswith("data:")
+    ]
+    if not data_lines:
+        return []
+    joined = "\n".join(data_lines)
+    if joined == "[DONE]":
+        return [None]
+    try:
+        parsed = json.loads(joined)
+    except json.JSONDecodeError as exc:
+        raise ValueError("Invalid stream JSON") from exc
+    if isinstance(parsed, dict):
+        return [parsed]
+    return []
+
+
+def _raw_json_payloads(text: str) -> list[dict[str, Any]]:
+    """Parse newline-delimited JSON objects (``{`` mode) or one complete
+    top-level JSON array (``[`` mode). Malformed input raises ``ValueError``.
+    """
+    payloads: list[dict[str, Any]] = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            parsed = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise ValueError("Invalid stream JSON") from exc
+        if not isinstance(parsed, dict):
+            raise ValueError("Invalid stream JSON")
+        payloads.append(parsed)
+    return payloads
+
+
+async def _parse_sse_stream(
+    raw_iterator: AsyncIterator[bytes],
+    *,
+    allow_raw_json: bool = False,
+) -> AsyncIterator[dict[str, Any]]:
+    """Incrementally parse an SSE byte stream across arbitrary chunk boundaries.
+
+    Handles LF/CRLF/lone-CR newlines (including ``\r\n`` split across chunks),
+    multiline ``data:`` lines, blank-line event separators, an unterminated
+    final event at EOF, and the ``[DONE]`` transport sentinel. After ``[DONE]``
+    no more payloads are yielded, but the source iterator is still consumed so
+    capture/resource draining stays deterministic.
+
+    When ``allow_raw_json`` is true and the stream does not look like SSE (the
+    first non-whitespace byte is ``{`` or ``[``), newline-delimited JSON objects
+    and a complete top-level JSON array are parsed instead. Malformed input
+    raises ``ValueError``; it is never treated as an empty successful stream.
+    """
+    buffer = ""
+    done_seen = False
+    format_seen: str | None = None  # "sse" | "ndjson" | "array"
+    trailing_cr = False
+
+    def normalize(text: str) -> str:
+        return text.replace("\r\n", "\n").replace("\r", "\n")
+
+    async for chunk in raw_iterator:
+        if done_seen:
+            continue
+        text = chunk.decode("utf-8", errors="replace")
+        if trailing_cr:
+            buffer += "\n"
+            if text.startswith("\n"):
+                text = text[1:]
+            trailing_cr = False
+        buffer += text
+        if buffer.endswith("\r"):
+            buffer = buffer[:-1]
+            trailing_cr = True
+
+        head = buffer.lstrip()
+        if format_seen is None and head:
+            first = head[0]
+            if allow_raw_json and first in "{[":
+                format_seen = "array" if first == "[" else "ndjson"
+            else:
+                format_seen = "sse"
+
+        if format_seen == "sse":
+            normalized = normalize(buffer)
+            buffer = ""
+            while "\n\n" in normalized:
+                block, normalized = normalized.split("\n\n", 1)
+                for payload in _sse_block_payloads(block):
+                    if payload is None:
+                        done_seen = True
+                        break
+                    yield payload
+                if done_seen:
+                    break
+            if not done_seen:
+                buffer = normalized
+        elif format_seen == "ndjson":
+            normalized = normalize(buffer)
+            buffer = ""
+            lines = normalized.split("\n")
+            if lines and lines[-1] and not normalized.endswith("\n"):
+                buffer = lines.pop()
+            for payload in _raw_json_payloads("\n".join(lines)):
+                yield payload
+        # "array": buffer everything until EOF
+
+    if trailing_cr:
+        buffer += "\n"
+        trailing_cr = False
+
+    if done_seen:
+        async for _ in raw_iterator:
+            pass
+        return
+
+    if format_seen == "sse":
+        for payload in _sse_block_payloads(normalize(buffer)):
+            if payload is not None:
+                yield payload
+    elif format_seen == "ndjson":
+        for payload in _raw_json_payloads(normalize(buffer)):
+            yield payload
+    elif format_seen == "array":
+        stripped = buffer.strip()
+        if not stripped:
+            return
+        try:
+            parsed = json.loads(stripped)
+        except json.JSONDecodeError as exc:
+            raise ValueError("Invalid stream JSON") from exc
+        if not isinstance(parsed, list):
+            raise ValueError("Invalid stream JSON")
+        for item in parsed:
+            if isinstance(item, dict):
+                yield item
+
 
 async def _parse_chat_sse_stream(
     raw_iterator: AsyncIterator[bytes],
 ) -> AsyncIterator[dict[str, Any]]:
-    buffer = b""
-    done_seen = False
-    async for chunk in raw_iterator:
-        buffer += chunk
-        while b"\n" in buffer:
-            line, buffer = buffer.split(b"\n", 1)
-            line_str = line.decode("utf-8", errors="replace").strip()
-            if not line_str.startswith("data:"):
-                continue
-            data_str = line_str[5:].strip()
-            if data_str == "[DONE]":
-                done_seen = True
-                continue
-            if done_seen:
-                continue
-            try:
-                yield json.loads(data_str)
-            except json.JSONDecodeError as exc:
-                raise ValueError("Invalid stream JSON") from exc
+    async for payload in _parse_sse_stream(raw_iterator):
+        yield payload
 
 
 def _build_chat_tool_call(

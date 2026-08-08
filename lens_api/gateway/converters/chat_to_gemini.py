@@ -3,7 +3,13 @@ import time
 import uuid
 from typing import Any, AsyncIterator
 
-from ._shared import _parse_chat_sse_stream, format_sse_event
+from ._shared import (
+    _effort_to_gemini_budget,
+    _extract_chat_reasoning_effort,
+    _gemini_budget_to_effort,
+    _parse_sse_stream,
+    format_sse_event,
+)
 
 _GEMINI_FINISH_TO_CHAT: dict[str | None, str] = {
     "STOP": "stop",
@@ -30,6 +36,7 @@ def chat_request_to_gemini(body: dict[str, Any]) -> dict[str, Any]:
 
     contents: list[dict[str, Any]] = []
     system_parts: list[dict[str, Any]] = []
+    tool_call_id_to_name: dict[str, str] = {}
     for message in raw_messages:
         if not isinstance(message, dict):
             continue
@@ -40,15 +47,18 @@ def chat_request_to_gemini(body: dict[str, Any]) -> dict[str, Any]:
                 system_parts.append({"text": text})
             continue
         if role == "tool":
+            tool_name = tool_call_id_to_name.get(
+                str(message.get("tool_call_id") or "")
+            ) or str(message.get("name") or "tool")
             _append_gemini_content(
                 contents,
                 "user",
                 [
                     {
                         "functionResponse": {
-                            "name": str(message.get("name") or "tool"),
+                            "name": tool_name,
                             "response": {
-                                "name": str(message.get("name") or "tool"),
+                                "name": tool_name,
                                 "content": _chat_content_to_text(
                                     message.get("content")
                                 ),
@@ -63,6 +73,14 @@ def chat_request_to_gemini(body: dict[str, Any]) -> dict[str, Any]:
         parts = _chat_content_to_gemini_parts(message.get("content"))
         tool_calls = message.get("tool_calls")
         if gemini_role == "model" and isinstance(tool_calls, list):
+            for tc in tool_calls:
+                if not isinstance(tc, dict) or not tc.get("id"):
+                    continue
+                function = tc.get("function")
+                if isinstance(function, dict):
+                    tool_call_id_to_name[str(tc["id"])] = str(
+                        function.get("name") or ""
+                    )
             parts.extend(_chat_tool_calls_to_gemini_parts(tool_calls))
         _append_gemini_content(contents, gemini_role, parts)
 
@@ -99,13 +117,14 @@ def gemini_request_to_chat(body: dict[str, Any]) -> dict[str, Any]:
         messages.append({"role": "system", "content": system_text})
 
     contents = body.get("contents")
+    tool_ids = _GeminiToolIdState()
     if isinstance(contents, list):
         for item in contents:
             if not isinstance(item, dict):
                 continue
             role = "assistant" if item.get("role") == "model" else "user"
             parts = item.get("parts")
-            message = _gemini_parts_to_chat_message(role, parts)
+            message = _gemini_parts_to_chat_message(role, parts, tool_ids)
             if message is not None:
                 messages.append(message)
 
@@ -124,6 +143,15 @@ def gemini_request_to_chat(body: dict[str, Any]) -> dict[str, Any]:
         ):
             if source in generation_config:
                 chat[target] = generation_config[source]
+        thinking_config = generation_config.get("thinkingConfig")
+        if isinstance(thinking_config, dict):
+            effort = _gemini_budget_to_effort(
+                thinking_config.get("thinkingBudget")
+                if "thinkingBudget" in thinking_config
+                else thinking_config.get("thinking_budget")
+            )
+            if effort:
+                chat["reasoning_effort"] = effort
     if "stream" in body:
         chat["stream"] = body["stream"]
     tools = _gemini_tools_to_chat_tools(body.get("tools"))
@@ -198,7 +226,8 @@ def gemini_response_to_chat(
 async def chat_stream_to_gemini_stream(
     raw_iterator: AsyncIterator[bytes], original_model: str
 ) -> AsyncIterator[bytes]:
-    async for payload in _parse_chat_sse_stream(raw_iterator):
+    finished = False
+    async for payload in _parse_sse_stream(raw_iterator):
         for choice in payload.get("choices", []):
             delta = choice.get("delta") if isinstance(choice.get("delta"), dict) else {}
             parts: list[dict[str, Any]] = []
@@ -213,14 +242,18 @@ async def chat_stream_to_gemini_stream(
                 payload.get("usage") if isinstance(payload.get("usage"), dict) else {}
             )
             if parts or finish_reason or usage:
+                candidate: dict[str, Any] = {
+                    "content": {"role": "model", "parts": parts},
+                    "index": 0,
+                }
+                # Only a real Chat finish reason maps to a Gemini finish
+                # reason; intermediate chunks must not look terminated.
+                mapped_finish = _chat_finish_to_gemini(finish_reason)
+                if mapped_finish is not None:
+                    candidate["finishReason"] = mapped_finish
+                    finished = True
                 item: dict[str, Any] = {
-                    "candidates": [
-                        {
-                            "content": {"role": "model", "parts": parts},
-                            "finishReason": _chat_finish_to_gemini(finish_reason),
-                            "index": 0,
-                        }
-                    ],
+                    "candidates": [candidate],
                     "modelVersion": payload.get("model") or original_model,
                 }
                 if usage:
@@ -234,6 +267,24 @@ async def chat_stream_to_gemini_stream(
                     }
                 yield format_sse_event(None, item)
 
+    # A cleanly ended Chat stream ([DONE]/finish) always terminates the Gemini
+    # candidate stream; emit a terminal candidate if the source never carried a
+    # finish reason.
+    if not finished:
+        yield format_sse_event(
+            None,
+            {
+                "candidates": [
+                    {
+                        "content": {"role": "model", "parts": []},
+                        "finishReason": "STOP",
+                        "index": 0,
+                    }
+                ],
+                "modelVersion": original_model,
+            },
+        )
+
 
 async def gemini_stream_to_chat_stream(
     raw_iterator: AsyncIterator[bytes], original_model: str
@@ -243,8 +294,11 @@ async def gemini_stream_to_chat_stream(
     created = int(time.time())
     role_sent = False
     done_sent = False
+    finish_reason: str | None = None
+    usage: dict[str, Any] = {}
+    tool_ids = _GeminiToolIdState()
 
-    async for payload in _parse_gemini_stream(raw_iterator):
+    async for payload in _parse_sse_stream(raw_iterator, allow_raw_json=True):
         if done_sent:
             continue
         model = str(payload.get("modelVersion") or payload.get("model") or model)
@@ -257,12 +311,16 @@ async def gemini_stream_to_chat_stream(
             if isinstance(candidate.get("content"), dict)
             else {}
         )
-        delta = _gemini_parts_to_chat_delta(content.get("parts"))
-        finish_reason = _gemini_finish_to_chat(candidate.get("finishReason"))
-        usage = payload.get("usageMetadata")
+        delta = _gemini_parts_to_chat_delta(content.get("parts"), tool_ids)
+        candidate_finish = candidate.get("finishReason")
+        if isinstance(candidate_finish, str) and candidate_finish:
+            finish_reason = _gemini_finish_to_chat(candidate_finish)
+        raw_usage = payload.get("usageMetadata")
+        if isinstance(raw_usage, dict):
+            usage = raw_usage
         if delta:
             yield _chat_stream_event(message_id, model, created, delta)
-        if candidate.get("finishReason") or isinstance(usage, dict):
+        if isinstance(candidate_finish, str) and candidate_finish:
             yield _chat_stream_event(
                 message_id,
                 model,
@@ -276,8 +334,7 @@ async def gemini_stream_to_chat_stream(
             continue
 
     if not done_sent:
-        yield _chat_stream_event(message_id, model, created, {}, finish_reason="stop")
-        yield b"data: [DONE]\n\n"
+        raise ValueError("Gemini stream ended without a finish reason")
 
 
 def _append_gemini_content(
@@ -342,11 +399,15 @@ def _chat_tool_calls_to_gemini_parts(
     return parts
 
 
-def _gemini_parts_to_chat_message(role: str, parts: Any) -> dict[str, Any] | None:
+def _gemini_parts_to_chat_message(
+    role: str, parts: Any, tool_ids: "_GeminiToolIdState | None" = None
+) -> dict[str, Any] | None:
     text_parts: list[str] = []
     image_parts: list[dict[str, Any]] = []
     tool_calls: list[dict[str, Any]] = []
     tool_results: list[dict[str, Any]] = []
+    if tool_ids is None:
+        tool_ids = _GeminiToolIdState()
     if not isinstance(parts, list):
         return None
     for part in parts:
@@ -372,12 +433,14 @@ def _gemini_parts_to_chat_message(role: str, parts: Any) -> dict[str, Any] | Non
                 )
         function_call = part.get("functionCall") or part.get("function_call")
         if isinstance(function_call, dict):
+            name = str(function_call.get("name") or "")
+            call_id = tool_ids.call_id(name, function_call.get("id"))
             tool_calls.append(
                 {
-                    "id": f"call_{uuid.uuid4().hex[:24]}",
+                    "id": call_id,
                     "type": "function",
                     "function": {
-                        "name": function_call.get("name") or "",
+                        "name": name,
                         "arguments": json.dumps(
                             function_call.get("args") or {}, ensure_ascii=False
                         ),
@@ -388,10 +451,11 @@ def _gemini_parts_to_chat_message(role: str, parts: Any) -> dict[str, Any] | Non
             "function_response"
         )
         if isinstance(function_response, dict):
+            name = str(function_response.get("name") or "")
             tool_results.append(
                 {
                     "role": "tool",
-                    "tool_call_id": str(function_response.get("id") or ""),
+                    "tool_call_id": tool_ids.response_id(name),
                     "content": json.dumps(
                         function_response.get("response") or {}, ensure_ascii=False
                     ),
@@ -414,7 +478,11 @@ def _gemini_parts_to_chat_message(role: str, parts: Any) -> dict[str, Any] | Non
     return message
 
 
-def _gemini_parts_to_chat_delta(parts: Any) -> dict[str, Any]:
+def _gemini_parts_to_chat_delta(
+    parts: Any, tool_ids: "_GeminiToolIdState | None" = None
+) -> dict[str, Any]:
+    if tool_ids is None:
+        tool_ids = _GeminiToolIdState()
     if not isinstance(parts, list):
         return {}
     text_parts: list[str] = []
@@ -427,13 +495,15 @@ def _gemini_parts_to_chat_delta(parts: Any) -> dict[str, Any]:
             text_parts.append(text)
         function_call = part.get("functionCall") or part.get("function_call")
         if isinstance(function_call, dict):
+            name = str(function_call.get("name") or "")
+            call_id = tool_ids.call_id(name, function_call.get("id"))
             tool_calls.append(
                 {
                     "index": len(tool_calls),
-                    "id": f"call_{uuid.uuid4().hex[:24]}",
+                    "id": call_id,
                     "type": "function",
                     "function": {
-                        "name": function_call.get("name") or "",
+                        "name": name,
                         "arguments": json.dumps(
                             function_call.get("args") or {}, ensure_ascii=False
                         ),
@@ -491,6 +561,14 @@ def _chat_generation_config(body: dict[str, Any]) -> dict[str, Any]:
     for source, target in mapping.items():
         if source in body and target not in config:
             config[target] = body[source]
+    effort = _extract_chat_reasoning_effort(body)
+    if effort:
+        if effort == "none":
+            config["thinkingConfig"] = {"thinkingBudget": 0}
+        else:
+            budget = _effort_to_gemini_budget(effort)
+            if budget:
+                config["thinkingConfig"] = {"thinkingBudget": budget}
     response_format = body.get("response_format")
     if isinstance(response_format, dict):
         if response_format.get("type") == "json_object":
@@ -585,8 +663,10 @@ def _gemini_finish_to_chat(value: Any) -> str:
     return _GEMINI_FINISH_TO_CHAT.get(reason, "stop")
 
 
-def _chat_finish_to_gemini(value: Any) -> str:
+def _chat_finish_to_gemini(value: Any) -> str | None:
     reason = value if isinstance(value, str) else None
+    if reason is None:
+        return None
     return _CHAT_FINISH_TO_GEMINI.get(reason, "STOP")
 
 
@@ -631,52 +711,28 @@ def _chat_stream_event(
     return format_sse_event(None, payload)
 
 
-async def _parse_gemini_stream(
-    raw_iterator: AsyncIterator[bytes],
-) -> AsyncIterator[dict[str, Any]]:
-    buffer = b""
-    async for chunk in raw_iterator:
-        buffer += chunk
-        while b"\n\n" in buffer:
-            block, buffer = buffer.split(b"\n\n", 1)
-            payload = _parse_gemini_sse_block(block)
-            if payload is not None:
-                yield payload
-        while b"\n" in buffer:
-            line, remaining = buffer.split(b"\n", 1)
-            if not line.strip().startswith((b"{", b"[")):
-                break
-            buffer = remaining
-            payload = _parse_gemini_json_line(line)
-            if payload is not None:
-                yield payload
-    if buffer.strip():
-        payload = _parse_gemini_sse_block(buffer) or _parse_gemini_json_line(buffer)
-        if payload is not None:
-            yield payload
+class _GeminiToolIdState:
+    """Deterministic Gemini functionCall/functionResponse id association.
 
+    Gemini associates function responses by name, so we map a logical call name
+    to a stable Chat tool_call id: preserve an upstream id when one exists,
+    otherwise derive ``call_{name}_{n}``. The id for a given name is reused
+    across chunks so a fragmented call stays one Chat tool call.
+    """
 
-def _parse_gemini_sse_block(block: bytes) -> dict[str, Any] | None:
-    data_parts: list[str] = []
-    for raw_line in block.splitlines():
-        line = raw_line.decode("utf-8", errors="replace").strip()
-        if line.startswith("data:"):
-            data_parts.append(line[5:].strip())
-    if not data_parts:
-        return None
-    data = "\n".join(data_parts)
-    if data == "[DONE]":
-        return None
-    try:
-        payload = json.loads(data)
-    except json.JSONDecodeError as exc:
-        raise ValueError("Invalid stream JSON") from exc
-    return payload if isinstance(payload, dict) else None
+    def __init__(self) -> None:
+        self._name_to_id: dict[str, str] = {}
+        self._counts: dict[str, int] = {}
 
+    def call_id(self, name: str, provided: Any = None) -> str:
+        if isinstance(provided, str) and provided:
+            self._name_to_id[name] = provided
+            return provided
+        count = self._counts.get(name, 0) + 1
+        self._counts[name] = count
+        call_id = f"call_{name}_{count}"
+        self._name_to_id[name] = call_id
+        return call_id
 
-def _parse_gemini_json_line(line: bytes) -> dict[str, Any] | None:
-    try:
-        payload = json.loads(line.decode("utf-8", errors="replace"))
-    except json.JSONDecodeError:
-        return None
-    return payload if isinstance(payload, dict) else None
+    def response_id(self, name: str) -> str:
+        return self._name_to_id.get(name, "")

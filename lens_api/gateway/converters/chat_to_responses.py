@@ -6,8 +6,9 @@ from typing import Any, AsyncIterator
 
 from ._shared import (
     FINISH_REASON_CHAT_TO_RESPONSES,
+    _clean_thinking_effort,
     _copy_cache_control,
-    _parse_chat_sse_stream,
+    _parse_sse_stream,
     format_sse_event,
     responses_input_to_chat_messages,
     responses_tools_to_chat_tools,
@@ -66,6 +67,12 @@ def responses_request_to_chat(body: dict[str, Any]) -> dict[str, Any]:
     for key in _RESPONSES_CACHE_AND_ROUTING_KEYS:
         if key in body:
             chat[key] = body[key]
+
+    reasoning = body.get("reasoning")
+    if isinstance(reasoning, dict):
+        effort = _clean_thinking_effort(reasoning.get("effort"))
+        if effort:
+            chat["reasoning_effort"] = effort
 
     return chat
 
@@ -253,7 +260,8 @@ def responses_response_to_chat(
             for part in item.get("content") or []:
                 if not isinstance(part, dict):
                     continue
-                if part.get("type") in {"output_text", "text"}:
+                part_type = part.get("type")
+                if part_type in {"output_text", "text", "refusal"}:
                     text = part.get("text")
                     if isinstance(text, str):
                         content_parts.append(text)
@@ -273,7 +281,7 @@ def responses_response_to_chat(
 
     message: dict[str, Any] = {
         "role": "assistant",
-        "content": "".join(content_parts) if not tool_calls else None,
+        "content": "".join(content_parts) or None,
     }
     if tool_calls:
         message["tool_calls"] = tool_calls
@@ -306,17 +314,22 @@ async def chat_stream_to_responses_stream(
     original_model: str,
 ) -> AsyncIterator[bytes]:
     resp_id = f"resp_{uuid.uuid4().hex[:24]}"
-    msg_id = f"msg_{uuid.uuid4().hex[:24]}"
     resolved_model = original_model
     input_tokens = 0
     output_tokens = 0
     cached_input_tokens = 0
     input_token_details_seen = False
-    text_started = False
-    text_output_index: int | None = None
-    tool_calls_by_idx: dict[int, int] = {}
-    next_output_index = 0
     finish_reason: str | None = None
+
+    next_output_index = 0
+    reasoning_oi: int | None = None
+    reasoning_id = f"rs_{uuid.uuid4().hex[:24]}"
+    reasoning_text = ""
+    text_oi: int | None = None
+    text_id = f"msg_{uuid.uuid4().hex[:24]}"
+    text_content = ""
+    tool_items: dict[int, dict[str, Any]] = {}  # oi -> {item, args}
+    tool_idx_to_oi: dict[int, int] = {}
 
     yield format_sse_event(
         "response.created",
@@ -334,7 +347,7 @@ async def chat_stream_to_responses_stream(
         },
     )
 
-    async for payload in _parse_chat_sse_stream(raw_iterator):
+    async for payload in _parse_sse_stream(raw_iterator):
         if payload.get("model"):
             resolved_model = payload["model"]
         usage = payload.get("usage") or {}
@@ -351,22 +364,55 @@ async def chat_stream_to_responses_stream(
         for choice in payload.get("choices", []):
             finish_reason = choice.get("finish_reason") or finish_reason
             delta = choice.get("delta", {})
+            if not isinstance(delta, dict):
+                continue
             text_delta = delta.get("content")
+            refusal_delta = delta.get("refusal")
+            reasoning_delta = delta.get("reasoning_content") or delta.get("reasoning")
             tc_deltas = delta.get("tool_calls")
 
-            if text_delta:
-                if not text_started:
-                    text_started = True
-                    text_output_index = next_output_index
-                    oi = text_output_index
+            if isinstance(reasoning_delta, str) and reasoning_delta:
+                if reasoning_oi is None:
+                    reasoning_oi = next_output_index
                     next_output_index += 1
                     yield format_sse_event(
                         "response.output_item.added",
                         {
                             "type": "response.output_item.added",
-                            "output_index": oi,
+                            "output_index": reasoning_oi,
                             "item": {
-                                "id": msg_id,
+                                "id": reasoning_id,
+                                "type": "reasoning",
+                                "status": "in_progress",
+                                "summary": [],
+                                "content": [],
+                            },
+                        },
+                    )
+                reasoning_text += reasoning_delta
+                yield format_sse_event(
+                    "response.reasoning_text.delta",
+                    {
+                        "type": "response.reasoning_text.delta",
+                        "output_index": reasoning_oi,
+                        "delta": reasoning_delta,
+                    },
+                )
+
+            merged_text = (text_delta if isinstance(text_delta, str) else "") + (
+                refusal_delta if isinstance(refusal_delta, str) else ""
+            )
+            if merged_text:
+                if text_oi is None:
+                    text_oi = next_output_index
+                    next_output_index += 1
+                    yield format_sse_event(
+                        "response.output_item.added",
+                        {
+                            "type": "response.output_item.added",
+                            "output_index": text_oi,
+                            "item": {
+                                "id": text_id,
                                 "type": "message",
                                 "status": "in_progress",
                                 "role": "assistant",
@@ -378,7 +424,7 @@ async def chat_stream_to_responses_stream(
                         "response.content_part.added",
                         {
                             "type": "response.content_part.added",
-                            "output_index": oi,
+                            "output_index": text_oi,
                             "content_index": 0,
                             "part": {
                                 "type": "output_text",
@@ -387,50 +433,159 @@ async def chat_stream_to_responses_stream(
                             },
                         },
                     )
+                text_content += merged_text
                 yield format_sse_event(
                     "response.output_text.delta",
                     {
                         "type": "response.output_text.delta",
-                        "output_index": text_output_index,
+                        "output_index": text_oi,
                         "content_index": 0,
-                        "delta": text_delta,
+                        "delta": merged_text,
                     },
                 )
 
             if tc_deltas:
                 for tc in tc_deltas:
-                    tc_idx = _coerce_index(tc.get("index")) or 0
-                    if tc_idx not in tool_calls_by_idx:
-                        func = tc.get("function", {})
-                        call_id = tc.get("id") or f"call_{uuid.uuid4().hex[:24]}"
+                    if not isinstance(tc, dict):
+                        continue
+                    tc_idx = _coerce_index(tc.get("index"))
+                    if tc_idx is None:
+                        tc_idx = len(tool_idx_to_oi)
+                    if tc_idx not in tool_idx_to_oi:
                         oi = next_output_index
                         next_output_index += 1
-                        tool_calls_by_idx[tc_idx] = oi
+                        tool_idx_to_oi[tc_idx] = oi
+                        func = tc.get("function", {})
+                        call_id = tc.get("id") or f"call_{uuid.uuid4().hex[:24]}"
+                        item = {
+                            "id": f"fc_{uuid.uuid4().hex[:24]}",
+                            "type": "function_call",
+                            "status": "in_progress",
+                            "name": func.get("name", ""),
+                            "arguments": "",
+                            "call_id": call_id,
+                        }
+                        tool_items[oi] = {"item": item, "args": ""}
                         yield format_sse_event(
                             "response.output_item.added",
                             {
                                 "type": "response.output_item.added",
                                 "output_index": oi,
-                                "item": {
-                                    "id": f"fc_{uuid.uuid4().hex[:24]}",
-                                    "type": "function_call",
-                                    "status": "in_progress",
-                                    "name": func.get("name", ""),
-                                    "arguments": "",
-                                    "call_id": call_id,
-                                },
+                                "item": item,
                             },
                         )
+                    oi = tool_idx_to_oi[tc_idx]
                     args_delta = (tc.get("function") or {}).get("arguments", "")
                     if args_delta:
+                        tool_items[oi]["args"] += args_delta
                         yield format_sse_event(
                             "response.function_call_arguments.delta",
                             {
                                 "type": "response.function_call_arguments.delta",
-                                "output_index": tool_calls_by_idx[tc_idx],
+                                "output_index": oi,
                                 "delta": args_delta,
                             },
                         )
+
+    # Finalize completed output items and emit their done events in output index
+    # order so a Responses client can reconstruct the full response.
+    final_items: dict[int, dict[str, Any]] = {}
+    if reasoning_oi is not None:
+        reasoning_item = {
+            "id": reasoning_id,
+            "type": "reasoning",
+            "status": "completed",
+            "summary": (
+                [{"type": "summary_text", "text": reasoning_text}]
+                if reasoning_text
+                else []
+            ),
+            "content": (
+                [{"type": "reasoning_text", "text": reasoning_text}]
+                if reasoning_text
+                else []
+            ),
+        }
+        final_items[reasoning_oi] = reasoning_item
+    if text_oi is not None:
+        final_items[text_oi] = {
+            "id": text_id,
+            "type": "message",
+            "status": "completed",
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "output_text",
+                    "text": text_content,
+                    "annotations": [],
+                }
+            ],
+        }
+    for oi in sorted(tool_items):
+        state = tool_items[oi]
+        if state["args"].strip():
+            try:
+                json.loads(state["args"])
+            except json.JSONDecodeError as exc:
+                raise ValueError("Invalid tool call arguments JSON") from exc
+        state["item"]["status"] = "completed"
+        state["item"]["arguments"] = state["args"]
+        final_items[oi] = state["item"]
+
+    for oi in sorted(final_items):
+        if oi == reasoning_oi:
+            yield format_sse_event(
+                "response.output_item.done",
+                {
+                    "type": "response.output_item.done",
+                    "output_index": oi,
+                    "item": final_items[oi],
+                },
+            )
+        elif oi == text_oi:
+            yield format_sse_event(
+                "response.output_text.done",
+                {
+                    "type": "response.output_text.done",
+                    "output_index": oi,
+                    "content_index": 0,
+                    "text": text_content,
+                },
+            )
+            yield format_sse_event(
+                "response.content_part.done",
+                {
+                    "type": "response.content_part.done",
+                    "output_index": oi,
+                    "content_index": 0,
+                    "part": final_items[oi]["content"][0],
+                },
+            )
+            yield format_sse_event(
+                "response.output_item.done",
+                {
+                    "type": "response.output_item.done",
+                    "output_index": oi,
+                    "item": final_items[oi],
+                },
+            )
+        else:
+            yield format_sse_event(
+                "response.function_call_arguments.done",
+                {
+                    "type": "response.function_call_arguments.done",
+                    "output_index": oi,
+                    "arguments": final_items[oi]["arguments"],
+                },
+            )
+            yield format_sse_event(
+                "response.output_item.done",
+                {
+                    "type": "response.output_item.done",
+                    "output_index": oi,
+                    "item": final_items[oi],
+                },
+            )
 
     status = FINISH_REASON_CHAT_TO_RESPONSES.get(finish_reason, "completed")
     total = input_tokens + output_tokens
@@ -451,12 +606,11 @@ async def chat_stream_to_responses_stream(
                 "created_at": int(time.time()),
                 "model": resolved_model,
                 "status": status,
-                "output": [],
+                "output": [final_items[oi] for oi in sorted(final_items)],
                 "usage": usage_payload,
             },
         },
     )
-    yield b"data: [DONE]\n\n"
 
 
 async def responses_stream_to_chat_stream(
@@ -467,11 +621,18 @@ async def responses_stream_to_chat_stream(
     model = original_model
     created = int(time.time())
     role_sent = False
-    output_to_tool_index: dict[int, int] = {}
-    next_tool_index = 0
     done_sent = False
+    tool_call_seen = False
 
-    async for payload in _parse_responses_sse_stream(raw_iterator):
+    text_by_index: dict[int, str] = {}
+    reasoning_by_index: dict[int, str] = {}
+    tool_by_index: dict[int, dict[str, Any]] = {}
+    tool_oi_to_chat_index: dict[int, int] = {}
+    emitted_args: dict[int, str] = {}
+    next_tool_index = 0
+    usage: dict[str, Any] = {}
+
+    async for payload in _parse_sse_stream(raw_iterator):
         if done_sent:
             continue
         payload_type = str(payload.get("type") or "")
@@ -488,43 +649,118 @@ async def responses_stream_to_chat_stream(
             item = payload.get("item")
             if output_index is None or not isinstance(item, dict):
                 continue
-            if item.get("type") == "function_call":
-                output_to_tool_index[output_index] = next_tool_index
-                next_tool_index += 1
+            item_type = item.get("type")
+            if item_type == "function_call":
+                tool_call_seen = True
+                if output_index not in tool_by_index:
+                    tool_oi_to_chat_index[output_index] = next_tool_index
+                    next_tool_index += 1
+                    tool_by_index[output_index] = {
+                        "index": tool_oi_to_chat_index[output_index],
+                        "id": item.get("call_id")
+                        or item.get("id")
+                        or f"call_{uuid.uuid4().hex[:24]}",
+                        "name": item.get("name") or "",
+                        "args": item.get("arguments") or "",
+                    }
+                    emitted_args[output_index] = item.get("arguments") or ""
+                    yield _chat_stream_event(
+                        response_id,
+                        model,
+                        created,
+                        {
+                            "tool_calls": [
+                                {
+                                    "index": tool_by_index[output_index]["index"],
+                                    "id": tool_by_index[output_index]["id"],
+                                    "type": "function",
+                                    "function": {
+                                        "name": tool_by_index[output_index]["name"],
+                                        "arguments": tool_by_index[output_index][
+                                            "args"
+                                        ],
+                                    },
+                                }
+                            ]
+                        },
+                    )
+            elif item_type == "message":
+                text_by_index.setdefault(output_index, "")
+            elif item_type == "reasoning":
+                reasoning_by_index.setdefault(output_index, "")
+            continue
+
+        if payload_type == "response.output_text.delta":
+            output_index = _coerce_index(payload.get("output_index"), default=0)
+            delta = payload.get("delta")
+            if isinstance(delta, str) and delta:
+                text_by_index[output_index] = (
+                    text_by_index.get(output_index, "") + delta
+                )
+                yield _chat_stream_event(
+                    response_id, model, created, {"content": delta}
+                )
+            continue
+
+        if payload_type == "response.refusal.delta":
+            output_index = _coerce_index(payload.get("output_index"), default=0)
+            delta = payload.get("delta")
+            if isinstance(delta, str) and delta:
+                text_by_index[output_index] = (
+                    text_by_index.get(output_index, "") + delta
+                )
                 yield _chat_stream_event(
                     response_id,
                     model,
                     created,
-                    {
-                        "tool_calls": [
-                            {
-                                "index": output_to_tool_index[output_index],
-                                "id": item.get("call_id")
-                                or item.get("id")
-                                or f"call_{uuid.uuid4().hex[:24]}",
-                                "type": "function",
-                                "function": {
-                                    "name": item.get("name") or "",
-                                    "arguments": "",
-                                },
-                            }
-                        ]
-                    },
+                    {"content": delta, "refusal": delta},
                 )
             continue
 
-        if payload_type == "response.output_text.delta":
+        if payload_type in (
+            "response.reasoning_text.delta",
+            "response.reasoning_summary_text.delta",
+        ):
+            output_index = _coerce_index(payload.get("output_index"), default=0)
             delta = payload.get("delta")
             if isinstance(delta, str) and delta:
-                yield _chat_stream_event(
-                    response_id, model, created, {"content": delta}
+                reasoning_by_index[output_index] = (
+                    reasoning_by_index.get(output_index, "") + delta
                 )
+                yield _chat_stream_event(
+                    response_id,
+                    model,
+                    created,
+                    {"reasoning_content": delta},
+                )
+            continue
+
+        if payload_type == "response.reasoning_summary_part.done":
+            output_index = _coerce_index(payload.get("output_index"), default=0)
+            reasoning_by_index[output_index] = (
+                reasoning_by_index.get(output_index, "") + "\n\n"
+            )
+            yield _chat_stream_event(
+                response_id, model, created, {"reasoning_content": "\n\n"}
+            )
             continue
 
         if payload_type == "response.function_call_arguments.delta":
             output_index = _coerce_index(payload.get("output_index"))
             delta = payload.get("delta")
             if output_index is not None and isinstance(delta, str) and delta:
+                if output_index not in tool_by_index:
+                    tool_call_seen = True
+                    tool_oi_to_chat_index[output_index] = next_tool_index
+                    next_tool_index += 1
+                    tool_by_index[output_index] = {
+                        "index": tool_oi_to_chat_index[output_index],
+                        "id": f"call_{uuid.uuid4().hex[:24]}",
+                        "name": "",
+                        "args": "",
+                    }
+                tool_by_index[output_index]["args"] += delta
+                emitted_args[output_index] = emitted_args.get(output_index, "") + delta
                 yield _chat_stream_event(
                     response_id,
                     model,
@@ -532,7 +768,7 @@ async def responses_stream_to_chat_stream(
                     {
                         "tool_calls": [
                             {
-                                "index": output_to_tool_index.get(output_index, 0),
+                                "index": tool_by_index[output_index]["index"],
                                 "function": {"arguments": delta},
                             }
                         ]
@@ -540,55 +776,185 @@ async def responses_stream_to_chat_stream(
                 )
             continue
 
+        if payload_type == "response.function_call_arguments.done":
+            output_index = _coerce_index(payload.get("output_index"))
+            arguments = payload.get("arguments")
+            if output_index is not None and isinstance(arguments, str):
+                if output_index not in tool_by_index:
+                    tool_call_seen = True
+                    tool_oi_to_chat_index[output_index] = next_tool_index
+                    next_tool_index += 1
+                    tool_by_index[output_index] = {
+                        "index": tool_oi_to_chat_index[output_index],
+                        "id": f"call_{uuid.uuid4().hex[:24]}",
+                        "name": "",
+                        "args": arguments,
+                    }
+                    emitted_args[output_index] = arguments
+                    yield _chat_stream_event(
+                        response_id,
+                        model,
+                        created,
+                        {
+                            "tool_calls": [
+                                {
+                                    "index": tool_by_index[output_index]["index"],
+                                    "function": {"arguments": arguments},
+                                }
+                            ]
+                        },
+                    )
+                else:
+                    prev = emitted_args.get(output_index, "")
+                    if arguments.startswith(prev):
+                        suffix = arguments[len(prev) :]
+                        tool_by_index[output_index]["args"] = arguments
+                        emitted_args[output_index] = arguments
+                        if suffix:
+                            yield _chat_stream_event(
+                                response_id,
+                                model,
+                                created,
+                                {
+                                    "tool_calls": [
+                                        {
+                                            "index": tool_by_index[output_index][
+                                                "index"
+                                            ],
+                                            "function": {"arguments": suffix},
+                                        }
+                                    ]
+                                },
+                            )
+                    else:
+                        # A non-extending replacement cannot be expressed in a
+                        # Chat delta stream; record the final value only.
+                        tool_by_index[output_index]["args"] = arguments
+                        emitted_args[output_index] = arguments
+            continue
+
         if payload_type == "response.output_item.done":
             output_index = _coerce_index(payload.get("output_index"))
             item = payload.get("item")
-            if (
-                output_index is not None
-                and output_index not in output_to_tool_index
-                and isinstance(item, dict)
-                and item.get("type") == "function_call"
-            ):
-                output_to_tool_index[output_index] = next_tool_index
-                next_tool_index += 1
-                yield _chat_stream_event(
-                    response_id,
-                    model,
-                    created,
-                    {
-                        "tool_calls": [
-                            {
-                                "index": output_to_tool_index[output_index],
-                                "id": item.get("call_id")
-                                or item.get("id")
-                                or f"call_{uuid.uuid4().hex[:24]}",
-                                "type": "function",
-                                "function": {
-                                    "name": item.get("name") or "",
-                                    "arguments": _json_arguments(item.get("arguments")),
-                                },
-                            }
-                        ]
-                    },
+            if output_index is None or not isinstance(item, dict):
+                continue
+            item_type = item.get("type")
+            if item_type == "message":
+                parts = item.get("content") or []
+                full_text = "".join(
+                    part.get("text", "")
+                    for part in parts
+                    if isinstance(part, dict)
+                    and part.get("type") in ("output_text", "text", "refusal")
                 )
+                if full_text:
+                    text_by_index[output_index] = full_text
+            elif item_type == "function_call":
+                tool_call_seen = True
+                if output_index not in tool_by_index:
+                    tool_oi_to_chat_index[output_index] = next_tool_index
+                    next_tool_index += 1
+                    tool_by_index[output_index] = {
+                        "index": tool_oi_to_chat_index[output_index],
+                        "id": item.get("call_id")
+                        or item.get("id")
+                        or f"call_{uuid.uuid4().hex[:24]}",
+                        "name": item.get("name") or "",
+                        "args": item.get("arguments") or "",
+                    }
+                    emitted_args[output_index] = item.get("arguments") or ""
+                    state = tool_by_index[output_index]
+                    yield _chat_stream_event(
+                        response_id,
+                        model,
+                        created,
+                        {
+                            "tool_calls": [
+                                {
+                                    "index": state["index"],
+                                    "id": state["id"],
+                                    "type": "function",
+                                    "function": {
+                                        "name": state["name"],
+                                        "arguments": state["args"],
+                                    },
+                                }
+                            ]
+                        },
+                    )
+                else:
+                    state = tool_by_index[output_index]
+                    if item.get("call_id") or item.get("id"):
+                        state["id"] = (
+                            item.get("call_id") or item.get("id") or state["id"]
+                        )
+                    if item.get("name"):
+                        state["name"] = item["name"]
+                    args = item.get("arguments")
+                    if isinstance(args, str):
+                        prev = emitted_args.get(output_index, "")
+                        if args.startswith(prev):
+                            suffix = args[len(prev) :]
+                            state["args"] = args
+                            emitted_args[output_index] = args
+                            if suffix:
+                                yield _chat_stream_event(
+                                    response_id,
+                                    model,
+                                    created,
+                                    {
+                                        "tool_calls": [
+                                            {
+                                                "index": state["index"],
+                                                "function": {"arguments": suffix},
+                                            }
+                                        ]
+                                    },
+                                )
+                        else:
+                            state["args"] = args
+                            emitted_args[output_index] = args
+            elif item_type == "reasoning":
+                summary = item.get("summary") or item.get("content") or []
+                full = "\n\n".join(
+                    part.get("text", "") for part in summary if isinstance(part, dict)
+                )
+                if full:
+                    reasoning_by_index[output_index] = full
             continue
 
-        if payload_type == "response.completed" and isinstance(response, dict):
+        if payload_type in ("response.completed", "response.incomplete"):
+            if isinstance(response, dict):
+                if isinstance(response.get("usage"), dict):
+                    usage = response["usage"]
+                status = response.get("status") or (
+                    "incomplete"
+                    if payload_type == "response.incomplete"
+                    else "completed"
+                )
+                base_finish = _responses_status_to_chat_finish(status)
+            else:
+                base_finish = "stop"
+            finish_reason = "tool_calls" if tool_call_seen else base_finish
             yield _chat_stream_event(
                 response_id,
                 model,
                 created,
                 {},
-                finish_reason=_responses_status_to_chat_finish(response.get("status")),
-                usage=_responses_usage_to_chat_usage(response.get("usage")),
+                finish_reason=finish_reason,
+                usage=_responses_usage_to_chat_usage(usage),
             )
             yield b"data: [DONE]\n\n"
             done_sent = True
             continue
 
+        if payload_type == "response.failed":
+            raise ValueError("Upstream Responses stream failed")
+        if payload_type == "error":
+            raise ValueError("Upstream Responses stream error")
+
     if not done_sent:
-        yield _chat_stream_event(response_id, model, created, {}, finish_reason="stop")
-        yield b"data: [DONE]\n\n"
+        raise ValueError("Responses stream ended before a terminal event")
 
 
 def _derive_prompt_cache_key(
@@ -785,12 +1151,14 @@ def _int_value(value: Any) -> int:
     return 0
 
 
-def _coerce_index(value: Any) -> int | None:
+def _coerce_index(value: Any, default: int | None = None) -> int | None:
     if isinstance(value, bool):
-        return None
+        return default
     if isinstance(value, int) and value >= 0:
         return value
-    return None
+    if value is None:
+        return default
+    return default
 
 
 def _chat_stream_event(
@@ -812,39 +1180,3 @@ def _chat_stream_event(
     if usage is not None:
         payload["usage"] = usage
     return format_sse_event(None, payload)
-
-
-async def _parse_responses_sse_stream(
-    raw_iterator: AsyncIterator[bytes],
-) -> AsyncIterator[dict[str, Any]]:
-    buffer = b""
-    async for chunk in raw_iterator:
-        buffer += chunk
-        while b"\n\n" in buffer:
-            block, buffer = buffer.split(b"\n\n", 1)
-            payload = _parse_responses_sse_block(block)
-            if payload is not None:
-                yield payload
-    if buffer:
-        payload = _parse_responses_sse_block(buffer)
-        if payload is not None:
-            yield payload
-
-
-def _parse_responses_sse_block(block: bytes) -> dict[str, Any] | None:
-    data_parts: list[str] = []
-    for raw_line in block.splitlines():
-        line = raw_line.decode("utf-8", errors="replace").strip()
-        if not line.startswith("data:"):
-            continue
-        data_parts.append(line[5:].strip())
-    if not data_parts:
-        return None
-    data = "\n".join(data_parts)
-    if data == "[DONE]":
-        return None
-    try:
-        payload = json.loads(data)
-    except json.JSONDecodeError as exc:
-        raise ValueError("Invalid stream JSON") from exc
-    return payload if isinstance(payload, dict) else None

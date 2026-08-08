@@ -104,13 +104,17 @@ def build_upstream_request(
         payload = {
             key: value for key, value in body.items() if key not in {"model", "stream"}
         }
+        query_params: dict[str, str] = {"key": api_key}
+        if body.get("stream"):
+            # Google REST serves SSE for streaming only when alt=sse is present.
+            query_params["alt"] = "sse"
         return UpstreamRequest(
             method="POST",
             url=append_url_path(
                 _protocol_base_url(channel),
                 "models",
                 f"{model_name}:{path}",
-                query_params={"key": api_key},
+                query_params=query_params,
             ),
             headers=build_upstream_headers(
                 {"content-type": "application/json"},

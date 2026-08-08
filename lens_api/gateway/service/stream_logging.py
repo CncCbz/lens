@@ -320,6 +320,10 @@ async def _record_stream_request_log(
         if capture is not None:
             capture.parse_errors.append(str(exc))
         distilled_content = response_raw_content
+    if distilled_content is None:
+        # Logging-only fallback: keep raw SSE in the request log record when
+        # the stream cannot be restored; client delivery never sees this.
+        distilled_content = response_raw_content
     capture_issue = _describe_stream_capture_issue(
         channel.protocol, capture, raw_content
     )
@@ -594,7 +598,11 @@ async def _capture_converted_stream_iterator(
         await _cancel_stream_capture(capture, "client disconnected")
         raise
     except ValueError as exc:
+        # Record the failure and keep the stream from looking like a clean
+        # success; the generator must surface the conversion error instead of
+        # silently yielding a truncated stream.
         await _cancel_stream_capture(capture, str(exc))
+        raise
 
 
 def _capture_stream_event_chunk(

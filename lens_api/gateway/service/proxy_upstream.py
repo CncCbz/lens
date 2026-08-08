@@ -76,16 +76,16 @@ from .routing_plan import (
 )
 
 
-async def _build_anthropic_sse_to_json_result(
+async def _build_sse_to_json_result(
     response: httpx.Response,
     channel: ChannelConfig,
+    client_protocol: ProtocolKind | None,
+    original_model: str,
     pricing_group_name: str | None,
     request_content: str | None,
     log_body_enabled: bool,
 ) -> UpstreamResult:
-    content = (
-        response.content if hasattr(response, "content") else await response.aread()
-    )
+    content = await response.aread()
     raw_content = _decode_content_bytes(content)
     try:
         parsed = _extract_stream_usage(channel.protocol, raw_content)
@@ -105,16 +105,24 @@ async def _build_anthropic_sse_to_json_result(
             detail=f"Invalid upstream response: {exc}",
             router_status_code=502,
         ) from exc
+    if not distilled_content:
+        raise UpstreamRequestError(
+            status_code=502,
+            detail=(
+                "Upstream returned an incomplete stream for a non-streaming " "request"
+            ),
+            router_status_code=502,
+        )
+    content = distilled_content.encode("utf-8")
+    if client_protocol is not None and needs_conversion(
+        client_protocol, channel.protocol
+    ):
+        content = convert_response(
+            client_protocol, channel.protocol, content, original_model
+        )
+
     response_headers = _passthrough_headers(response.headers)
-    media_type = response.headers.get("content-type")
-    response_content = raw_content
-
-    if distilled_content and distilled_content != raw_content:
-        content = distilled_content.encode("utf-8")
-        response_content = distilled_content
-        media_type = "application/json"
-        response_headers.pop("content-type", None)
-
+    response_headers.pop("content-type", None)
     cost = await _safe_estimate_cost(
         pricing_group_name,
         parsed["input_tokens"],
@@ -122,12 +130,12 @@ async def _build_anthropic_sse_to_json_result(
         parsed["cache_read_input_tokens"],
         parsed["cache_write_input_tokens"],
     )
-    response_content = _sanitize_log_content_text(response_content)
+    response_content = _sanitize_log_content_text(_decode_log_content_bytes(content))
     return UpstreamResult(
         response=Response(
             content=content,
             status_code=response.status_code,
-            media_type=media_type,
+            media_type="application/json",
             headers=response_headers,
         ),
         status_code=response.status_code,
@@ -239,11 +247,18 @@ async def _build_stream_result(
         )
         converted_iter = _capture_converted_stream_iterator(converted_iter, capture)
         stream_media = "text/event-stream"
+        converted = True
     else:
         converted_iter = raw_iter
         stream_media = response.headers.get("content-type")
+        converted = False
 
     converted_iter = _stream_client_iterator(converted_iter, capture)
+
+    response_headers = _passthrough_headers(response.headers)
+    if converted:
+        # Never let the upstream media type override the converted target type.
+        response_headers.pop("content-type", None)
 
     return UpstreamResult(
         response=_GatewayStreamingResponse(
@@ -251,7 +266,7 @@ async def _build_stream_result(
             capture=capture,
             status_code=response.status_code,
             media_type=stream_media,
-            headers=_passthrough_headers(response.headers),
+            headers=response_headers,
         ),
         is_stream=True,
         status_code=response.status_code,
@@ -289,9 +304,7 @@ async def _build_json_result(
     request_content: str | None,
     log_body_enabled: bool,
 ) -> UpstreamResult:
-    content = (
-        response.content if hasattr(response, "content") else await response.aread()
-    )
+    content = await response.aread()
     try:
         parsed = _extract_response_usage(
             channel.protocol, response, fallback_model=body.get("model")
@@ -576,14 +589,24 @@ async def _call_channel(
         is_event_stream = (
             "text/event-stream" in (response.headers.get("content-type") or "").lower()
         )
+        chat_protocols = frozenset(
+            {
+                ProtocolKind.OPENAI_CHAT,
+                ProtocolKind.OPENAI_RESPONSES,
+                ProtocolKind.ANTHROPIC,
+                ProtocolKind.GEMINI,
+            }
+        )
         if (
             is_event_stream
             and not is_stream_request
-            and channel.protocol == ProtocolKind.ANTHROPIC
+            and channel.protocol in chat_protocols
         ):
-            result = await _build_anthropic_sse_to_json_result(
+            result = await _build_sse_to_json_result(
                 response,
                 channel,
+                client_protocol,
+                body.get("model", ""),
                 pricing_group_name,
                 request_content,
                 log_body_enabled,
@@ -602,6 +625,19 @@ async def _call_channel(
             )
             if close_client:
                 close_client = False
+        elif is_stream_request and channel.protocol in chat_protocols:
+            # A streaming request must receive a stream. Return an explicit
+            # protocol error rather than ordinary JSON under a stream contract.
+            await response.aread()
+            raise UpstreamRequestError(
+                status_code=502,
+                detail=(
+                    "Upstream returned a non-streaming response to a streaming "
+                    "request"
+                ),
+                router_status_code=502,
+                decision=decide_route_error(502),
+            )
         else:
             result = await _build_json_result(
                 response,

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import time
+import uuid
+
 from .runtime_context import (
     Any,
     ProtocolKind,
@@ -7,13 +10,25 @@ from .runtime_context import (
     json,
 )
 from .payload_serialization import _dump_log_json
-from .usage import _parse_sse_payloads
+from .usage import _parse_ndjson_payloads, _parse_sse_payloads
 
 
 def _distill_stream_response_content(
     protocol: ProtocolKind, raw_content: str | None
 ) -> str | None:
+    """Restore a complete upstream stream to one upstream-native JSON object.
+
+    Returns ``None`` when the stream lacks the protocol's required terminal
+    evidence, and raises ``ValueError`` for malformed content. Callers must
+    never fall back to returning raw SSE as if it were JSON.
+    """
     if not raw_content:
+        return None
+
+    if protocol == ProtocolKind.OPENAI_CHAT:
+        restored = _restore_openai_chat_stream(_parse_sse_payloads(raw_content))
+        if restored is not None:
+            return _dump_log_json(restored)
         return None
 
     if protocol == ProtocolKind.OPENAI_RESPONSES:
@@ -26,15 +41,171 @@ def _distill_stream_response_content(
                 compact_payload = _compact_openai_response_payload(
                     _restore_openai_response_output(response_payload, payloads)
                 )
-                return _dump_log_json(compact_payload) or raw_content
+                return _dump_log_json(compact_payload)
+        return None
     if protocol == ProtocolKind.ANTHROPIC:
-        restored_message = _restore_anthropic_stream_message(
-            _parse_sse_payloads(raw_content)
+        payloads = _parse_sse_payloads(raw_content)
+        has_start = any(p.get("type") == "message_start" for p in payloads)
+        has_stop = any(p.get("type") == "message_stop" for p in payloads)
+        if has_start and has_stop:
+            restored_message = _restore_anthropic_stream_message(payloads)
+            if restored_message is not None:
+                return _dump_log_json(restored_message)
+        return None
+    if protocol == ProtocolKind.GEMINI:
+        payloads = _parse_sse_payloads(raw_content) or _parse_ndjson_payloads(
+            raw_content
         )
-        if restored_message is not None:
-            return _dump_log_json(restored_message) or raw_content
+        restored = _restore_gemini_stream(payloads)
+        if restored is not None:
+            return _dump_log_json(restored)
+        return None
 
-    return raw_content
+    return None
+
+
+def _restore_openai_chat_stream(
+    payloads: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    if not payloads:
+        return None
+    model: Any = None
+    resp_id: Any = None
+    created: Any = None
+    usage: Any = None
+    finish_reason_seen = False
+    choices: dict[int, dict[str, Any]] = {}
+    tool_calls: dict[int, dict[int, dict[str, Any]]] = {}
+
+    for payload in payloads:
+        if not isinstance(payload, dict):
+            continue
+        model = payload.get("model") or model
+        resp_id = payload.get("id") or resp_id
+        created = payload.get("created") or created
+        if isinstance(payload.get("usage"), dict):
+            usage = payload["usage"]
+        for choice in payload.get("choices", []):
+            if not isinstance(choice, dict):
+                continue
+            idx = _coerce_openai_output_index(choice.get("index"), default=0) or 0
+            entry = choices.setdefault(
+                idx,
+                {
+                    "message": {"role": "assistant", "content": ""},
+                    "finish_reason": None,
+                },
+            )
+            finish_reason = choice.get("finish_reason")
+            if finish_reason:
+                finish_reason_seen = True
+                entry["finish_reason"] = finish_reason
+            delta = choice.get("delta") or {}
+            if not isinstance(delta, dict):
+                continue
+            content = delta.get("content")
+            if isinstance(content, str):
+                entry["message"]["content"] += content
+            reasoning = delta.get("reasoning_content") or delta.get("reasoning")
+            if isinstance(reasoning, str) and reasoning:
+                entry["message"]["reasoning_content"] = (
+                    entry["message"].get("reasoning_content", "") + reasoning
+                )
+            for tc in delta.get("tool_calls") or []:
+                if not isinstance(tc, dict):
+                    continue
+                tci = _coerce_openai_output_index(tc.get("index"), default=0) or 0
+                tc_entry = tool_calls.setdefault(idx, {}).setdefault(
+                    tci,
+                    {
+                        "id": "",
+                        "type": "function",
+                        "function": {"name": "", "arguments": ""},
+                    },
+                )
+                if tc.get("id"):
+                    tc_entry["id"] = tc["id"]
+                func = tc.get("function")
+                if isinstance(func, dict):
+                    if func.get("name"):
+                        tc_entry["function"]["name"] = func["name"]
+                    if isinstance(func.get("arguments"), str):
+                        tc_entry["function"]["arguments"] += func["arguments"]
+
+    if not finish_reason_seen:
+        return None
+
+    restored_choices: list[dict[str, Any]] = []
+    for idx in sorted(choices):
+        entry = choices[idx]
+        tc_map = tool_calls.get(idx, {})
+        if tc_map:
+            ordered_tool_calls: list[dict[str, Any]] = []
+            for tci in sorted(tc_map):
+                tc = tc_map[tci]
+                try:
+                    json.loads(tc["function"]["arguments"])
+                except json.JSONDecodeError as exc:
+                    raise ValueError("Invalid tool call arguments JSON") from exc
+                ordered_tool_calls.append(tc)
+            entry["message"]["tool_calls"] = ordered_tool_calls
+        restored_choices.append(
+            {
+                "index": idx,
+                "message": entry["message"],
+                "finish_reason": entry["finish_reason"],
+            }
+        )
+
+    return {
+        "id": resp_id or f"chatcmpl-{uuid.uuid4().hex[:24]}",
+        "object": "chat.completion",
+        "created": created or int(time.time()),
+        "model": model or "",
+        "choices": restored_choices,
+        "usage": usage or {},
+    }
+
+
+def _restore_gemini_stream(
+    payloads: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    if not payloads:
+        return None
+    model: Any = None
+    usage: Any = None
+    finish_seen = False
+    candidates: dict[int, dict[str, Any]] = {}
+
+    for payload in payloads:
+        if not isinstance(payload, dict):
+            continue
+        model = payload.get("modelVersion") or payload.get("model") or model
+        if isinstance(payload.get("usageMetadata"), dict):
+            usage = payload["usageMetadata"]
+        for cand in payload.get("candidates", []):
+            if not isinstance(cand, dict):
+                continue
+            idx = _coerce_openai_output_index(cand.get("index"), default=0) or 0
+            entry = candidates.setdefault(
+                idx, {"content": {"role": "model", "parts": []}, "index": idx}
+            )
+            content = cand.get("content")
+            if isinstance(content, dict):
+                for part in content.get("parts", []) or []:
+                    if isinstance(part, dict):
+                        entry["content"]["parts"].append(deepcopy(part))
+            if cand.get("finishReason"):
+                finish_seen = True
+                entry["finishReason"] = cand["finishReason"]
+
+    if not finish_seen:
+        return None
+    return {
+        "candidates": [candidates[i] for i in sorted(candidates)],
+        "usageMetadata": usage or {},
+        "modelVersion": model or "",
+    }
 
 
 def _restore_anthropic_stream_message(
