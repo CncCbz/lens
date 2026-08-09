@@ -185,7 +185,7 @@ class BackupLoadersMixin:
                     .where(ModelGroupItemEntity.group_id.in_(group_ids))
                     .order_by(
                         ModelGroupItemEntity.group_id.asc(),
-                        ModelGroupItemEntity.sort_order.asc(),
+                        ModelGroupItemEntity.priority.asc(),
                         ModelGroupItemEntity.id.asc(),
                     )
                 )
@@ -243,7 +243,8 @@ class BackupLoadersMixin:
                     "credential_name": credential_names.get(row.credential_id, ""),
                     "model_name": row.model_name,
                     "enabled": bool(row.enabled),
-                    "sort_order": row.sort_order,
+                    "priority": row.priority,
+                    "weight": row.weight,
                 }
             )
 

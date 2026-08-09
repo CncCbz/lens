@@ -14,6 +14,28 @@ from .shared import (
 )
 
 
+def _normalize_dump_group_items(data: object) -> object:
+    """Backfill older backups: map item sort_order to priority, weight to 1."""
+    if not isinstance(data, dict):
+        return data
+    groups = data.get("groups")
+    if not isinstance(groups, list):
+        return data
+    for group in groups:
+        if not isinstance(group, dict):
+            continue
+        items = group.get("items")
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            if "priority" not in item and "sort_order" in item:
+                item["priority"] = item.pop("sort_order")
+            item.setdefault("weight", 1)
+    return data
+
+
 class BackupExportImportMixin:
     @staticmethod
     def parse_dump(payload: bytes) -> "ConfigBackupDump":
@@ -21,6 +43,7 @@ class BackupExportImportMixin:
             data = json.loads(payload)
         except json.JSONDecodeError as exc:
             raise ValueError("Invalid backup file") from exc
+        data = _normalize_dump_group_items(data)
         try:
             return ConfigBackupDump.model_validate(data)
         except ValueError as exc:

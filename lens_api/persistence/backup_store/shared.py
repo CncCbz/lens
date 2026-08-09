@@ -82,7 +82,7 @@ from ..cronjob_store import (
     normalize_cronjob_schedule,
 )
 
-BACKUP_DUMP_VERSION = 7
+BACKUP_DUMP_VERSION = 8
 SETTING_STATS_LAST_PERSIST_AT = "stats_last_persist_at"
 
 

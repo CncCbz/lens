@@ -586,7 +586,7 @@ class GroupRepository:
                     select(ModelGroupItemEntity)
                     .where(ModelGroupItemEntity.group_id == entity.id)
                     .order_by(
-                        ModelGroupItemEntity.sort_order.asc(),
+                        ModelGroupItemEntity.priority.asc(),
                         ModelGroupItemEntity.id.asc(),
                     )
                 )
@@ -676,7 +676,8 @@ class GroupRepository:
                         credential_id=member.credential_id,
                         model_name=member.model_name,
                         enabled=1 if member.enabled else 0,
-                        sort_order=index,
+                        priority=index,
+                        weight=member.weight,
                     )
                 )
 
@@ -848,6 +849,8 @@ class GroupRepository:
                         credential_id=item.credential_id,
                         model_name=item.model_name,
                         enabled=item.enabled,
+                        priority=item.priority,
+                        weight=item.weight,
                     )
                     for item in current_items.get(group_id, [])
                 ]
@@ -1131,7 +1134,7 @@ class GroupRepository:
                     .where(ModelGroupItemEntity.group_id.in_(group_ids))
                     .order_by(
                         ModelGroupItemEntity.group_id.asc(),
-                        ModelGroupItemEntity.sort_order.asc(),
+                        ModelGroupItemEntity.priority.asc(),
                         ModelGroupItemEntity.id.asc(),
                     )
                 )
@@ -1165,7 +1168,8 @@ class GroupRepository:
                     ),
                     model_name=row.model_name,
                     enabled=bool(row.enabled),
-                    sort_order=row.sort_order,
+                    priority=row.priority,
+                    weight=row.weight,
                 )
             )
         return items_by_group
@@ -1176,7 +1180,7 @@ class GroupRepository:
         group_id: str,
         items: list[ModelGroupItemInput],
     ) -> None:
-        for index, item in enumerate(items):
+        for item in items:
             session.add(
                 ModelGroupItemEntity(
                     group_id=group_id,
@@ -1184,7 +1188,8 @@ class GroupRepository:
                     credential_id=item.credential_id,
                     model_name=item.model_name,
                     enabled=1 if item.enabled else 0,
-                    sort_order=index,
+                    priority=item.priority,
+                    weight=item.weight,
                 )
             )
 

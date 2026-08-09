@@ -124,6 +124,7 @@ class ChannelStatus(str, Enum):
 class RoutingStrategy(str, Enum):
     ROUND_ROBIN = "round_robin"
     FAILOVER = "failover"
+    PRIORITY_WEIGHTED = "priority_weighted"
 
 
 class ModelGroupSyncFilterMode(str, Enum):
@@ -524,6 +525,8 @@ class RoutePreviewTarget(StrictBaseModel):
     credential_id: str | None = None
     credential_name: str = ""
     model_name: str | None = None
+    priority: int = Field(default=0, ge=0)
+    weight: int = Field(default=1, ge=1)
     available: bool = False
     reason: str = ""
     cooldown_remaining_seconds: int = Field(default=0, ge=0)
@@ -635,7 +638,8 @@ class ModelGroupItem(StrictBaseModel):
     credential_number: int = Field(default=0, ge=0)
     model_name: str
     enabled: bool = True
-    sort_order: int = Field(default=0, ge=0)
+    priority: int = Field(default=0, ge=0)
+    weight: int = Field(default=1, ge=1)
 
 
 class ModelGroupItemInput(StrictBaseModel):
@@ -643,6 +647,8 @@ class ModelGroupItemInput(StrictBaseModel):
     credential_id: str = Field(min_length=1)
     model_name: str = Field(min_length=1)
     enabled: bool = True
+    priority: int = Field(default=0, ge=0)
+    weight: int = Field(default=1, ge=1)
 
 
 class ModelGroupCreate(StrictBaseModel):

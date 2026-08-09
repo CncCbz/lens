@@ -341,7 +341,7 @@ class BackupReplacersMixin:
                 )
             )
 
-            for index, item, resolved_channel_id, _ in resolved_items:
+            for _, item, resolved_channel_id, _ in resolved_items:
                 session.add(
                     ModelGroupItemEntity(
                         group_id=group.id,
@@ -349,7 +349,8 @@ class BackupReplacersMixin:
                         credential_id=item.credential_id,
                         model_name=item.model_name,
                         enabled=1 if item.enabled else 0,
-                        sort_order=item.sort_order if item.sort_order >= 0 else index,
+                        priority=item.priority,
+                        weight=item.weight,
                     )
                 )
 

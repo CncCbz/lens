@@ -150,6 +150,10 @@ class ModelGroupItemEntity(Base):
             "credential_id <> ''",
             name="ck_model_group_items_credential_id_not_empty",
         ),
+        CheckConstraint(
+            "priority >= 0", name="ck_model_group_items_priority_non_negative"
+        ),
+        CheckConstraint("weight >= 1", name="ck_model_group_items_weight_positive"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -158,7 +162,8 @@ class ModelGroupItemEntity(Base):
     credential_id: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
     model_name: Mapped[str] = mapped_column(String(200), nullable=False)
     enabled: Mapped[int] = enabled_column()
-    sort_order: Mapped[int] = sort_order_column()
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    weight: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
 
 class SettingEntity(Base):
