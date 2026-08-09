@@ -799,6 +799,20 @@ function RoutePreviewTargetRow({
           </Badge>
         </div>
       </div>
+      {target.weight != null || target.priority != null ? (
+        <div className="mt-1 flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
+          {target.weight != null ? (
+            <span>
+              {locale === "zh-CN" ? "权重" : "Weight"} {target.weight}
+            </span>
+          ) : null}
+          {target.priority != null ? (
+            <span>
+              {locale === "zh-CN" ? "优先级" : "Priority"} {target.priority}
+            </span>
+          ) : null}
+        </div>
+      ) : null}
       {reasonLabel ? (
         <div className="mt-1 text-xs text-muted-foreground">{reasonLabel}</div>
       ) : null}

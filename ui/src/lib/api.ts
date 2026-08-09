@@ -51,7 +51,7 @@ export function isItemValidForProtocols(
   return selectedProtocols.some((p) => canReachProtocol(itemProtocol, p));
 }
 
-export type RoutingStrategy = "round_robin" | "failover";
+export type RoutingStrategy = "round_robin" | "failover" | "priority_weighted";
 export type ModelGroupSyncFilterMode = "" | "contains" | "regex";
 
 export type ModelGroupItem = {
@@ -63,7 +63,8 @@ export type ModelGroupItem = {
   credential_number: number;
   model_name: string;
   enabled: boolean;
-  sort_order: number;
+  priority: number;
+  weight: number;
 };
 
 export type ModelGroup = {
@@ -89,6 +90,8 @@ export type ModelGroupItemPayload = {
   credential_id: string;
   model_name: string;
   enabled: boolean;
+  priority: number;
+  weight: number;
 };
 
 export type ModelGroupPayload = {
@@ -114,6 +117,8 @@ export type RoutePreviewTarget = {
   credential_id?: string | null;
   credential_name: string;
   model_name?: string | null;
+  priority?: number;
+  weight?: number;
   available: boolean;
   reason: string;
   cooldown_remaining_seconds: number;

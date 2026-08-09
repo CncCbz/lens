@@ -85,6 +85,26 @@ const ModelTestDialog = dynamic(async () => {
   return loaded.ModelTestDialog;
 });
 
+function renumberFailoverItems(items: FormItem[]): FormItem[] {
+  const orderMap = new Map<string, number>();
+  for (const item of items) {
+    const key = modelFoldKey(
+      protocolConfigIdFromChannelId(item.channel_id),
+      item.credential_id,
+      item.model_name,
+    );
+    if (!orderMap.has(key)) orderMap.set(key, orderMap.size);
+  }
+  return items.map((item) => {
+    const key = modelFoldKey(
+      protocolConfigIdFromChannelId(item.channel_id),
+      item.credential_id,
+      item.model_name,
+    );
+    return { ...item, priority: orderMap.get(key) ?? item.priority };
+  });
+}
+
 export function GroupsScreen() {
   const queryClient = useQueryClient();
   const { locale } = useI18n();
@@ -171,6 +191,8 @@ export function GroupsScreen() {
         credential_id: item.credential_id,
         model_name: item.model_name,
         enabled: item.enabled,
+        priority: item.priority,
+        weight: item.weight,
       })),
     }),
     [form.items, form.protocols],
@@ -238,7 +260,7 @@ export function GroupsScreen() {
         const isRouteGroup = Boolean(group.route_group_id);
         const items = group.items
           .slice()
-          .sort((a, b) => a.sort_order - b.sort_order);
+          .sort((a, b) => a.priority - b.priority);
         const displayMembers = isRouteGroup
           ? []
           : buildGroupDisplayMembers(items, channelMap);
@@ -476,6 +498,8 @@ export function GroupsScreen() {
           subItems: [],
           enabled: false,
           invalid: false,
+          priority: item.priority,
+          weight: item.weight,
         });
       }
       const member = memberMap.get(key)!;
@@ -780,7 +804,14 @@ export function GroupsScreen() {
       const existingKeys = new Set(current.items.map((m) => itemKey(m)));
       const toAdd = newFormItems.filter((fi) => !existingKeys.has(itemKey(fi)));
       if (!toAdd.length) return current;
-      return { ...current, items: [...current.items, ...toAdd] };
+      const nextItems = [...current.items, ...toAdd];
+      return {
+        ...current,
+        items:
+          current.strategy === "failover"
+            ? renumberFailoverItems(nextItems)
+            : nextItems,
+      };
     });
   }
 
@@ -848,6 +879,17 @@ export function GroupsScreen() {
       const nextKeys = moveItems(orderedKeys, fromIndex, toIndex);
       if (nextKeys === orderedKeys) return current;
       const nextItems = nextKeys.flatMap((k) => memberMap.get(k) ?? []);
+      if (current.strategy === "failover") {
+        const priorityByKey = new Map(nextKeys.map((k, i) => [k, i]));
+        for (const item of nextItems) {
+          const key = modelFoldKey(
+            protocolConfigIdFromChannelId(item.channel_id),
+            item.credential_id,
+            item.model_name,
+          );
+          item.priority = priorityByKey.get(key) ?? item.priority;
+        }
+      }
       return { ...current, items: nextItems };
     });
   }
@@ -1090,7 +1132,7 @@ export function GroupsScreen() {
     if (nextMembers === group.display_members) {
       return;
     }
-    const nextItems = nextMembers.flatMap((member) =>
+    const nextItems = nextMembers.flatMap((member, memberIndex) =>
       member.items.map((item) => ({
         channel_id: item.channel_id,
         channel_name: item.channel_name,
@@ -1100,6 +1142,8 @@ export function GroupsScreen() {
         credential_number: item.credential_number,
         model_name: item.model_name,
         enabled: item.enabled,
+        priority: memberIndex,
+        weight: item.weight,
       })),
     );
     await updateGroupPartial(group, { items: nextItems });
@@ -1180,13 +1224,17 @@ export function GroupsScreen() {
           (fi) => !existing.has(itemKey(fi)),
         ),
       );
+      const nextItems = additions.length
+        ? [...current.items, ...additions]
+        : current.items;
       return {
         ...current,
         sync_filter_mode: candidateSearch.trim() ? candidateSearchMode : "",
         sync_filter_query: candidateSearch.trim(),
-        items: additions.length
-          ? [...current.items, ...additions]
-          : current.items,
+        items:
+          current.strategy === "failover"
+            ? renumberFailoverItems(nextItems)
+            : nextItems,
       };
     });
   }
@@ -1237,7 +1285,7 @@ export function GroupsScreen() {
           if (seenKeys.has(k)) continue;
           seenKeys.add(k);
           const old = previous.get(k);
-          matchedFormItems.push(old ? { ...fi, enabled: old.enabled } : fi);
+          matchedFormItems.push(old ? { ...old } : fi);
         }
       }
       const existingKeys = new Set(
@@ -1250,7 +1298,13 @@ export function GroupsScreen() {
         (fi) => !existingKeys.has(itemKey(fi)),
       );
       const nextItems = [...existingItems, ...newItems];
-      setForm((current) => ({ ...current, items: nextItems }));
+      setForm((current) => ({
+        ...current,
+        items:
+          current.strategy === "failover"
+            ? renumberFailoverItems(nextItems)
+            : nextItems,
+      }));
       toast.success(
         locale === "zh-CN"
           ? `已按规则更新 ${nextItems.length} 个模型，保存后生效`

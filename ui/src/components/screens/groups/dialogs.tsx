@@ -1,9 +1,11 @@
 "use client";
 
+import { useMemo, useState } from "react";
 import type { Dispatch, FormEventHandler, SetStateAction } from "react";
 import {
   AlertCircle,
   ChevronDown,
+  Plus,
   RefreshCcw,
   Search,
   Sparkles,
@@ -18,6 +20,11 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Combobox, ComboboxOption } from "@/components/ui/combobox";
 import { ProtocolMultiSelect } from "@/components/ui/protocol-multi-select";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import {
   Select,
   SelectContent,
@@ -37,14 +44,19 @@ import {
   CandidateRow,
   EditablePriceRow,
   FoldedMemberRow,
+  PriorityLevelCard,
   StrategyToggle,
 } from "./components";
 import {
+  applyWeightPreset,
+  membersSharePct,
   modelFoldKey,
+  protocolConfigIdFromChannelId,
   protocolOptions,
   type CandidateChannelGroup,
   type CandidateSearchMode,
   type FoldedMember,
+  type FormItem,
   type FormState,
 } from "./shared";
 
@@ -159,6 +171,138 @@ export function GroupEditorDialog({
   moveFoldedMember: (fromIndex: number, toIndex: number) => void;
   onOpenModelTest: (member: FoldedMember) => void;
 }) {
+  const [candidateDrawerOpen, setCandidateDrawerOpen] = useState(false);
+
+  const priorityLevels = useMemo(() => {
+    const byPriority = new Map<number, FoldedMember[]>();
+    for (const member of foldedMembers) {
+      const list = byPriority.get(member.priority) ?? [];
+      list.push(member);
+      byPriority.set(member.priority, list);
+    }
+    return Array.from(byPriority.entries())
+      .sort((a, b) => a[0] - b[0])
+      .map(([priority, members]) => ({ priority, members }));
+  }, [foldedMembers]);
+
+  function foldedMemberKey(item: FormItem): string {
+    return modelFoldKey(
+      protocolConfigIdFromChannelId(item.channel_id),
+      item.credential_id,
+      item.model_name,
+    );
+  }
+
+  function setMemberWeight(member: FoldedMember, weight: number) {
+    const clamped = Math.max(1, Math.floor(weight) || 1);
+    setForm((current) => ({
+      ...current,
+      items: current.items.map((item) =>
+        foldedMemberKey(item) === member.key
+          ? { ...item, weight: clamped }
+          : item,
+      ),
+    }));
+  }
+
+  function applyWeightPresetToForm(kind: "equal" | "seq" | "main") {
+    setForm((current) => {
+      const orderedKeys: string[] = [];
+      const seen = new Set<string>();
+      for (const item of current.items) {
+        const key = foldedMemberKey(item);
+        if (!seen.has(key)) {
+          seen.add(key);
+          orderedKeys.push(key);
+        }
+      }
+      const preset = orderedKeys.map(() => ({ weight: 1 }));
+      applyWeightPreset(preset, kind);
+      const weightByKey = new Map<string, number>();
+      orderedKeys.forEach((key, index) =>
+        weightByKey.set(key, preset[index].weight),
+      );
+      return {
+        ...current,
+        items: current.items.map((item) => ({
+          ...item,
+          weight: weightByKey.get(foldedMemberKey(item)) ?? item.weight,
+        })),
+      };
+    });
+  }
+
+  function makeFirstPrimary() {
+    setForm((current) => {
+      const orderedKeys: string[] = [];
+      const seen = new Set<string>();
+      const itemsByKey = new Map<string, FormItem[]>();
+      for (const item of current.items) {
+        const key = foldedMemberKey(item);
+        if (!seen.has(key)) {
+          seen.add(key);
+          orderedKeys.push(key);
+        }
+        const list = itemsByKey.get(key) ?? [];
+        list.push(item);
+        itemsByKey.set(key, list);
+      }
+      const firstEnabledIndex = orderedKeys.findIndex((key) =>
+        (itemsByKey.get(key) ?? []).some((item) => item.enabled),
+      );
+      if (firstEnabledIndex <= 0) return current;
+      const [key] = orderedKeys.splice(firstEnabledIndex, 1);
+      orderedKeys.unshift(key);
+      const priorityByKey = new Map(orderedKeys.map((k, i) => [k, i]));
+      const nextItems = orderedKeys.flatMap((k) =>
+        (itemsByKey.get(k) ?? []).map((item) => ({
+          ...item,
+          priority: priorityByKey.get(foldedMemberKey(item)) ?? item.priority,
+        })),
+      );
+      return { ...current, items: nextItems };
+    });
+  }
+
+  function addPriorityLevel() {
+    setForm((current) => {
+      if (!current.items.length) return current;
+      const minPriority = Math.min(
+        ...current.items.map((item) => item.priority),
+      );
+      const newPriority =
+        Math.max(...current.items.map((item) => item.priority)) + 1;
+      let moved = false;
+      const items = current.items.map((item) => {
+        if (!moved && item.priority === minPriority) {
+          moved = true;
+          return { ...item, priority: newPriority };
+        }
+        return item;
+      });
+      if (!moved) return current;
+      return { ...current, items };
+    });
+  }
+
+  function setLevelPriority(oldPriority: number, newPriority: number) {
+    const clamped = Math.max(0, Math.floor(newPriority) || 0);
+    if (clamped === oldPriority) return;
+    setForm((current) => ({
+      ...current,
+      items: current.items.map((item) =>
+        item.priority === oldPriority ? { ...item, priority: clamped } : item,
+      ),
+    }));
+  }
+
+  function removeLevel(priority: number) {
+    setForm((current) => ({
+      ...current,
+      items: current.items.filter((item) => item.priority !== priority),
+    }));
+  }
+
   const advancedConfiguredCount =
     (hasConfiguredJson(form.headers) ? 1 : 0) +
     (hasConfiguredJson(form.param_override) ? 1 : 0) +
@@ -326,340 +470,517 @@ export function GroupEditorDialog({
               </TabsList>
               {!form.route_group_id ? (
                 <TabsContent value="members">
-                  <div className="grid gap-4 xl:grid-cols-[1.05fr_0.95fr]">
-                    <section className="flex flex-col rounded-lg bg-muted/10">
-                      <div className="grid gap-3 py-1 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
-                        <div className="grid min-w-0 gap-2 sm:grid-cols-[128px_minmax(0,1fr)]">
-                          <Select
-                            value={candidateSearchMode}
-                            onValueChange={(value) =>
-                              changeCandidateSearchMode(
-                                value as CandidateSearchMode,
-                              )
-                            }
-                          >
-                            <SelectTrigger className="h-7 w-full">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="contains">
-                                {locale === "zh-CN" ? "包含" : "Contains"}
-                              </SelectItem>
-                              <SelectItem value="regex">
-                                {locale === "zh-CN" ? "正则" : "Regex"}
-                              </SelectItem>
-                            </SelectContent>
-                          </Select>
-                          <div className="flex min-w-0 items-center gap-2 rounded-md border bg-background px-3">
-                            <Search
-                              size={14}
-                              className="text-muted-foreground"
-                            />
-                            <Input
-                              className="min-w-0 flex-1 border-0 bg-transparent px-0 py-0 text-sm shadow-none focus-visible:ring-0"
-                              value={candidateSearch}
-                              onChange={(e) =>
-                                changeCandidateSearch(e.target.value)
-                              }
-                              placeholder={
-                                candidateSearchMode === "regex"
-                                  ? locale === "zh-CN"
-                                    ? "输入正则表达式"
-                                    : "Enter regular expression"
-                                  : locale === "zh-CN"
-                                    ? "输入包含条件"
-                                    : "Enter contains filter"
-                              }
-                            />
-                          </div>
-                        </div>
-                        <div className="flex flex-wrap items-center justify-end gap-2">
-                          <Button
-                            type="button"
-                            variant="outline"
-                            onClick={addMatchedItems}
-                            disabled={
-                              form.protocols.length === 0 ||
-                              candidateRegexInvalid ||
-                              (!filteredCandidates.length &&
-                                !candidateSearch.trim())
-                            }
-                          >
-                            <Sparkles size={13} />
-                            {candidateSearch.trim()
-                              ? locale === "zh-CN"
-                                ? `加入并保存筛选 ${filteredCandidates.length}`
-                                : `Add and save filter ${filteredCandidates.length}`
-                              : locale === "zh-CN"
-                                ? `加入全部 ${filteredCandidates.length}`
-                                : `Add all ${filteredCandidates.length}`}
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            onClick={() => void refetchCandidates()}
-                            disabled={
-                              isFetchingCandidates ||
-                              form.protocols.length === 0
-                            }
-                          >
-                            <RefreshCcw size={13} />
-                            {locale === "zh-CN" ? "刷新列表" : "Refresh"}
-                          </Button>
-                        </div>
-                      </div>
-                      {candidateRegexInvalid ? (
-                        <div className="px-2 text-sm text-destructive">
-                          {locale === "zh-CN"
-                            ? "正则表达式无效"
-                            : "Invalid regex"}
-                        </div>
-                      ) : null}
-                      {form.sync_filter_mode && form.sync_filter_query ? (
-                        <div className="mx-2 mb-2 flex flex-col gap-2 rounded-md border bg-muted/20 px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
-                          <div className="min-w-0 text-sm text-muted-foreground">
-                            <span className="text-foreground">
-                              {locale === "zh-CN"
-                                ? "已保存筛选"
-                                : "Saved filter"}
-                            </span>
-                            <span className="mx-2">·</span>
-                            <span>
-                              {form.sync_filter_mode === "regex"
-                                ? locale === "zh-CN"
-                                  ? "正则"
-                                  : "Regex"
-                                : locale === "zh-CN"
-                                  ? "包含"
-                                  : "Contains"}
-                            </span>
-                            <span className="mx-2">·</span>
-                            <span className="break-all">
-                              {form.sync_filter_query}
-                            </span>
-                          </div>
-                          <div className="flex shrink-0 flex-wrap items-center gap-2">
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              onClick={() => void applySavedFilter()}
-                            >
-                              <RefreshCcw data-icon="inline-start" />
-                              {locale === "zh-CN"
-                                ? "按规则更新"
-                                : "Update by rule"}
-                            </Button>
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              className="text-muted-foreground"
-                              onClick={clearSavedFilter}
-                            >
-                              <X data-icon="inline-start" />
-                              {locale === "zh-CN" ? "清除规则" : "Clear rule"}
-                            </Button>
-                          </div>
-                        </div>
-                      ) : null}
-
-                      <div className="max-h-[min(420px,42vh)] overflow-y-auto px-2 pb-2">
-                        <div className="flex flex-col">
-                          {groupedCandidates.map((channelGroup) => {
-                            const channelKey = channelGroup.key;
-                            const isOpen =
-                              expandedChannels.includes(channelKey);
-                            return (
-                              <div
-                                key={channelKey}
-                                className="border-b last:border-b-0"
-                              >
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  className="h-auto min-h-11 w-full justify-start gap-3 rounded-none px-3 py-2 text-left hover:bg-muted"
-                                  onClick={() => toggleChannel(channelKey)}
-                                >
-                                  <div className="min-w-0 flex-1">
-                                    <div className="truncate text-sm font-medium text-foreground">
-                                      {channelGroup.channel_name}
-                                    </div>
-                                  </div>
-                                  <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
-                                    {channelGroup.candidates.length}
-                                  </span>
-                                  <ChevronDown
-                                    size={15}
-                                    className={cn(
-                                      "text-muted-foreground transition-transform",
-                                      isOpen && "rotate-180",
-                                    )}
-                                  />
-                                </Button>
-                                {isOpen ? (
-                                  <div className="flex flex-col gap-0.5 px-3 pb-2 pt-1">
-                                    <Separator className="mb-1" />
-                                    {channelGroup.candidates.map(
-                                      (candidate) => {
-                                        const fk = modelFoldKey(
-                                          candidate.protocol_config_id,
-                                          candidate.credential_id,
-                                          candidate.model_name,
-                                        );
-                                        const isActive = foldedMembers.some(
-                                          (m) => m.key === fk,
-                                        );
-                                        return (
-                                          <CandidateRow
-                                            key={`${candidate.protocol_config_id}-${candidate.credential_id}-${candidate.model_name}`}
-                                            candidate={candidate}
-                                            active={isActive}
-                                            selectedProtocols={form.protocols}
-                                            locale={locale}
-                                            onClick={() =>
-                                              addCandidate(candidate)
-                                            }
-                                          />
-                                        );
-                                      },
-                                    )}
-                                  </div>
-                                ) : null}
-                              </div>
-                            );
-                          })}
-                          {sitesIsError || candidateIsError ? (
-                            <Alert variant="destructive" className="my-2">
-                              <AlertCircle />
-                              <AlertTitle>
-                                {candidateIsError
-                                  ? locale === "zh-CN"
-                                    ? "候选模型加载失败"
-                                    : "Failed to load candidates"
-                                  : locale === "zh-CN"
-                                    ? "渠道加载失败"
-                                    : "Failed to load channels"}
-                              </AlertTitle>
-                              <AlertDescription>
-                                {candidateListError instanceof Error
-                                  ? candidateListError.message
-                                  : locale === "zh-CN"
-                                    ? "无法读取候选模型"
-                                    : "Unable to read candidates"}
-                              </AlertDescription>
-                            </Alert>
-                          ) : !groupedCandidates.length ? (
-                            <p className="px-1 py-6 text-center text-sm text-muted-foreground">
-                              {form.protocols.length === 0
-                                ? locale === "zh-CN"
-                                  ? "请先在上方选择对外协议以加载候选节点。"
-                                  : "Select external protocols above to load candidates."
-                                : locale === "zh-CN"
-                                  ? "暂无可选模型"
-                                  : "No candidates found"}
-                            </p>
-                          ) : null}
-                        </div>
-                      </div>
-                    </section>
-
-                    <section className="flex flex-col rounded-lg bg-muted/10">
-                      <div className="flex flex-col items-start justify-between gap-3 px-2 py-1 sm:flex-row sm:items-center">
-                        <div className="text-sm font-medium text-foreground">
-                          {locale === "zh-CN" ? "已选模型" : "Selected models"}
-                        </div>
-                        <div className="flex flex-wrap items-center justify-end gap-2">
-                          {invalidSelectedMemberCount > 0 ? (
-                            <Button
-                              type="button"
-                              variant="outline"
-                              className="text-destructive"
-                              onClick={removeInvalidItems}
-                            >
-                              <AlertCircle size={13} />
-                              {locale === "zh-CN"
-                                ? "一键移除失效节点"
-                                : "Remove invalid items"}
-                            </Button>
-                          ) : null}
-                          <Button
-                            type="button"
-                            variant="outline"
-                            className="text-muted-foreground"
-                            onClick={() => setAllMembersEnabled(true)}
-                          >
-                            {locale === "zh-CN" ? "全开" : "Enable all"}
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            className="text-muted-foreground"
-                            onClick={() => setAllMembersEnabled(false)}
-                          >
-                            {locale === "zh-CN" ? "全关" : "Disable all"}
-                          </Button>
-                          <Button
-                            type="button"
-                            variant={showEnabledOnly ? "default" : "outline"}
-                            className={cn(
-                              !showEnabledOnly && "text-muted-foreground",
-                            )}
-                            onClick={() =>
-                              setShowEnabledOnly((current) => !current)
-                            }
-                          >
-                            {locale === "zh-CN" ? "仅看启用" : "Enabled only"}
-                          </Button>
-                          <span className="rounded-full bg-muted px-2.5 py-1 text-xs text-muted-foreground">
-                            {visibleFoldedMembers.length}/{foldedMembers.length}
+                  <Popover
+                    open={candidateDrawerOpen}
+                    onOpenChange={setCandidateDrawerOpen}
+                  >
+                    <div className="relative flex flex-col gap-4">
+                      {/* candidate picker */}
+                      <PopoverContent
+                        align="end"
+                        side="bottom"
+                        sideOffset={8}
+                        className="w-[min(520px,calc(100vw-2rem))] max-h-[calc(100dvh-2rem)] gap-0 overflow-hidden p-0"
+                      >
+                        <div className="flex items-center justify-between border-b px-4 py-3">
+                          <span className="text-sm font-semibold text-foreground">
+                            {locale === "zh-CN" ? "候选节点" : "Candidates"}
                           </span>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => setCandidateDrawerOpen(false)}
+                          >
+                            <X size={15} />
+                          </Button>
                         </div>
-                      </div>
-                      <div className="max-h-[min(420px,42vh)] overflow-y-auto px-2 pb-2 pt-1">
-                        <div className="flex flex-col gap-1.5">
-                          {visibleFoldedMembers.length ? (
-                            visibleFoldedMembers.map(({ member, index }) => (
-                              <FoldedMemberRow
-                                key={member.key}
-                                member={member}
-                                index={index}
-                                dragging={draggingIndex === index}
-                                busy={false}
-                                testingDisabled={testingModel}
-                                onTest={() => onOpenModelTest(member)}
-                                onToggle={() =>
-                                  toggleFoldedMember(
-                                    member.key,
-                                    !member.enabled,
+                        <section className="flex flex-col bg-muted/10">
+                          <div className="grid gap-3 px-3 py-2">
+                            <div className="grid min-w-0 gap-2 sm:grid-cols-[128px_minmax(0,1fr)]">
+                              <Select
+                                value={candidateSearchMode}
+                                onValueChange={(value) =>
+                                  changeCandidateSearchMode(
+                                    value as CandidateSearchMode,
                                   )
                                 }
-                                onRemove={() => removeFoldedMember(member.key)}
-                                onDragStart={() => setDraggingIndex(index)}
-                                onDragEnter={() => {
-                                  if (
-                                    draggingIndex === null ||
-                                    draggingIndex === index
-                                  )
-                                    return;
-                                  moveFoldedMember(draggingIndex, index);
-                                  setDraggingIndex(index);
-                                }}
-                                onDragEnd={() => setDraggingIndex(null)}
-                                locale={locale}
-                              />
-                            ))
-                          ) : (
-                            <p className="px-1 py-6 text-center text-sm text-muted-foreground">
+                              >
+                                <SelectTrigger className="h-7 w-full">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="contains">
+                                    {locale === "zh-CN" ? "包含" : "Contains"}
+                                  </SelectItem>
+                                  <SelectItem value="regex">
+                                    {locale === "zh-CN" ? "正则" : "Regex"}
+                                  </SelectItem>
+                                </SelectContent>
+                              </Select>
+                              <div className="flex min-w-0 items-center gap-2 rounded-md border bg-background px-3">
+                                <Search
+                                  size={14}
+                                  className="text-muted-foreground"
+                                />
+                                <Input
+                                  className="min-w-0 flex-1 border-0 bg-transparent px-0 py-0 text-sm shadow-none focus-visible:ring-0"
+                                  value={candidateSearch}
+                                  onChange={(e) =>
+                                    changeCandidateSearch(e.target.value)
+                                  }
+                                  placeholder={
+                                    candidateSearchMode === "regex"
+                                      ? locale === "zh-CN"
+                                        ? "输入正则表达式"
+                                        : "Enter regular expression"
+                                      : locale === "zh-CN"
+                                        ? "输入包含条件"
+                                        : "Enter contains filter"
+                                  }
+                                />
+                              </div>
+                            </div>
+                            <div className="flex min-w-0 flex-wrap items-center justify-start gap-2">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                onClick={addMatchedItems}
+                                disabled={
+                                  form.protocols.length === 0 ||
+                                  candidateRegexInvalid ||
+                                  (!filteredCandidates.length &&
+                                    !candidateSearch.trim())
+                                }
+                              >
+                                <Sparkles size={13} />
+                                {candidateSearch.trim()
+                                  ? locale === "zh-CN"
+                                    ? `加入并保存筛选 ${filteredCandidates.length}`
+                                    : `Add and save filter ${filteredCandidates.length}`
+                                  : locale === "zh-CN"
+                                    ? `加入全部 ${filteredCandidates.length}`
+                                    : `Add all ${filteredCandidates.length}`}
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                onClick={() => void refetchCandidates()}
+                                disabled={
+                                  isFetchingCandidates ||
+                                  form.protocols.length === 0
+                                }
+                              >
+                                <RefreshCcw size={13} />
+                                {locale === "zh-CN" ? "刷新列表" : "Refresh"}
+                              </Button>
+                            </div>
+                          </div>
+                          {candidateRegexInvalid ? (
+                            <div className="px-2 text-sm text-destructive">
                               {locale === "zh-CN"
-                                ? "当前筛选下没有成员"
-                                : "No members under current filter"}
-                            </p>
+                                ? "正则表达式无效"
+                                : "Invalid regex"}
+                            </div>
+                          ) : null}
+                          {form.sync_filter_mode && form.sync_filter_query ? (
+                            <div className="mx-2 mb-2 flex flex-col gap-2 rounded-md border bg-muted/20 px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
+                              <div className="min-w-0 text-sm text-muted-foreground">
+                                <span className="text-foreground">
+                                  {locale === "zh-CN"
+                                    ? "已保存筛选"
+                                    : "Saved filter"}
+                                </span>
+                                <span className="mx-2">·</span>
+                                <span>
+                                  {form.sync_filter_mode === "regex"
+                                    ? locale === "zh-CN"
+                                      ? "正则"
+                                      : "Regex"
+                                    : locale === "zh-CN"
+                                      ? "包含"
+                                      : "Contains"}
+                                </span>
+                                <span className="mx-2">·</span>
+                                <span className="break-all">
+                                  {form.sync_filter_query}
+                                </span>
+                              </div>
+                              <div className="flex shrink-0 flex-wrap items-center gap-2">
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => void applySavedFilter()}
+                                >
+                                  <RefreshCcw data-icon="inline-start" />
+                                  {locale === "zh-CN"
+                                    ? "按规则更新"
+                                    : "Update by rule"}
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  className="text-muted-foreground"
+                                  onClick={clearSavedFilter}
+                                >
+                                  <X data-icon="inline-start" />
+                                  {locale === "zh-CN"
+                                    ? "清除规则"
+                                    : "Clear rule"}
+                                </Button>
+                              </div>
+                            </div>
+                          ) : null}
+
+                          <div className="max-h-[min(420px,42vh)] overflow-y-auto px-2 pb-2">
+                            <div className="flex flex-col">
+                              {groupedCandidates.map((channelGroup) => {
+                                const channelKey = channelGroup.key;
+                                const isOpen =
+                                  expandedChannels.includes(channelKey);
+                                return (
+                                  <div
+                                    key={channelKey}
+                                    className="border-b last:border-b-0"
+                                  >
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      className="h-auto min-h-11 w-full justify-start gap-3 rounded-none px-3 py-2 text-left hover:bg-muted"
+                                      onClick={() => toggleChannel(channelKey)}
+                                    >
+                                      <div className="min-w-0 flex-1">
+                                        <div className="truncate text-sm font-medium text-foreground">
+                                          {channelGroup.channel_name}
+                                        </div>
+                                      </div>
+                                      <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+                                        {channelGroup.candidates.length}
+                                      </span>
+                                      <ChevronDown
+                                        size={15}
+                                        className={cn(
+                                          "text-muted-foreground transition-transform",
+                                          isOpen && "rotate-180",
+                                        )}
+                                      />
+                                    </Button>
+                                    {isOpen ? (
+                                      <div className="flex flex-col gap-0.5 px-3 pb-2 pt-1">
+                                        <Separator className="mb-1" />
+                                        {channelGroup.candidates.map(
+                                          (candidate) => {
+                                            const fk = modelFoldKey(
+                                              candidate.protocol_config_id,
+                                              candidate.credential_id,
+                                              candidate.model_name,
+                                            );
+                                            const isActive = foldedMembers.some(
+                                              (m) => m.key === fk,
+                                            );
+                                            return (
+                                              <CandidateRow
+                                                key={`${candidate.protocol_config_id}-${candidate.credential_id}-${candidate.model_name}`}
+                                                candidate={candidate}
+                                                active={isActive}
+                                                selectedProtocols={
+                                                  form.protocols
+                                                }
+                                                locale={locale}
+                                                onClick={() =>
+                                                  addCandidate(candidate)
+                                                }
+                                              />
+                                            );
+                                          },
+                                        )}
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                );
+                              })}
+                              {sitesIsError || candidateIsError ? (
+                                <Alert variant="destructive" className="my-2">
+                                  <AlertCircle />
+                                  <AlertTitle>
+                                    {candidateIsError
+                                      ? locale === "zh-CN"
+                                        ? "候选模型加载失败"
+                                        : "Failed to load candidates"
+                                      : locale === "zh-CN"
+                                        ? "渠道加载失败"
+                                        : "Failed to load channels"}
+                                  </AlertTitle>
+                                  <AlertDescription>
+                                    {candidateListError instanceof Error
+                                      ? candidateListError.message
+                                      : locale === "zh-CN"
+                                        ? "无法读取候选模型"
+                                        : "Unable to read candidates"}
+                                  </AlertDescription>
+                                </Alert>
+                              ) : !groupedCandidates.length ? (
+                                <p className="px-1 py-6 text-center text-sm text-muted-foreground">
+                                  {form.protocols.length === 0
+                                    ? locale === "zh-CN"
+                                      ? "请先在上方选择对外协议以加载候选节点。"
+                                      : "Select external protocols above to load candidates."
+                                    : locale === "zh-CN"
+                                      ? "暂无可选模型"
+                                      : "No candidates found"}
+                                </p>
+                              ) : null}
+                            </div>
+                          </div>
+                        </section>
+                        <div className="mt-auto border-t px-4 py-3">
+                          <Button
+                            type="button"
+                            className="w-full"
+                            onClick={() => setCandidateDrawerOpen(false)}
+                          >
+                            {locale === "zh-CN" ? "完成" : "Done"}
+                          </Button>
+                        </div>
+                      </PopoverContent>
+
+                      <section className="flex flex-col rounded-lg bg-muted/10">
+                        <div className="flex flex-col items-start justify-between gap-3 px-2 py-1 sm:flex-row sm:items-center">
+                          <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+                            {locale === "zh-CN"
+                              ? "已选模型"
+                              : "Selected models"}
+                            <span className="rounded-full bg-muted px-2.5 py-0.5 text-xs text-muted-foreground">
+                              {visibleFoldedMembers.length}/
+                              {foldedMembers.length}
+                            </span>
+                          </div>
+                          <div className="flex flex-wrap items-center justify-end gap-2">
+                            <PopoverTrigger asChild>
+                              <Button type="button">
+                                <Plus size={13} />
+                                {locale === "zh-CN"
+                                  ? "添加成员"
+                                  : "Add members"}
+                              </Button>
+                            </PopoverTrigger>
+                            {form.strategy === "round_robin" ? (
+                              <>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  onClick={() =>
+                                    applyWeightPresetToForm("equal")
+                                  }
+                                >
+                                  {locale === "zh-CN"
+                                    ? "平权 1:1:1"
+                                    : "Equal 1:1:1"}
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  onClick={() => applyWeightPresetToForm("seq")}
+                                >
+                                  {locale === "zh-CN"
+                                    ? "按序 3:2:1"
+                                    : "Sequence 3:2:1"}
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  onClick={() =>
+                                    applyWeightPresetToForm("main")
+                                  }
+                                >
+                                  {locale === "zh-CN" ? "主备 9:1" : "Main 9:1"}
+                                </Button>
+                              </>
+                            ) : null}
+                            {form.strategy === "failover" ? (
+                              <Button
+                                type="button"
+                                variant="outline"
+                                onClick={makeFirstPrimary}
+                              >
+                                {locale === "zh-CN"
+                                  ? "置顶为主"
+                                  : "Make primary"}
+                              </Button>
+                            ) : null}
+                            {form.strategy === "priority_weighted" ? (
+                              <Button
+                                type="button"
+                                variant="outline"
+                                onClick={addPriorityLevel}
+                              >
+                                {locale === "zh-CN"
+                                  ? "新增优先级层"
+                                  : "Add level"}
+                              </Button>
+                            ) : null}
+                            {invalidSelectedMemberCount > 0 ? (
+                              <Button
+                                type="button"
+                                variant="outline"
+                                className="text-destructive"
+                                onClick={removeInvalidItems}
+                              >
+                                <AlertCircle size={13} />
+                                {locale === "zh-CN"
+                                  ? "一键移除失效节点"
+                                  : "Remove invalid items"}
+                              </Button>
+                            ) : null}
+                            <Button
+                              type="button"
+                              variant="outline"
+                              className="text-muted-foreground"
+                              onClick={() => setAllMembersEnabled(true)}
+                            >
+                              {locale === "zh-CN" ? "全开" : "Enable all"}
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              className="text-muted-foreground"
+                              onClick={() => setAllMembersEnabled(false)}
+                            >
+                              {locale === "zh-CN" ? "全关" : "Disable all"}
+                            </Button>
+                            <Button
+                              type="button"
+                              variant={showEnabledOnly ? "default" : "outline"}
+                              className={cn(
+                                !showEnabledOnly && "text-muted-foreground",
+                              )}
+                              onClick={() =>
+                                setShowEnabledOnly((current) => !current)
+                              }
+                            >
+                              {locale === "zh-CN" ? "仅看启用" : "Enabled only"}
+                            </Button>
+                          </div>
+                        </div>
+                        <div className="max-h-[min(420px,42vh)] overflow-y-auto px-2 pb-2 pt-1">
+                          {form.strategy === "priority_weighted" ? (
+                            <div className="flex flex-col gap-2">
+                              {priorityLevels.map((level, levelIndex) => (
+                                <PriorityLevelCard
+                                  key={level.priority}
+                                  priority={level.priority}
+                                  isTop={levelIndex === 0}
+                                  memberCount={level.members.length}
+                                  locale={locale}
+                                  onPriorityChange={(value) =>
+                                    setLevelPriority(level.priority, value)
+                                  }
+                                  onRemoveLevel={() =>
+                                    removeLevel(level.priority)
+                                  }
+                                >
+                                  {level.members.map((member, index) => (
+                                    <FoldedMemberRow
+                                      key={member.key}
+                                      member={member}
+                                      index={index}
+                                      mode="priority_weighted"
+                                      weight={member.weight}
+                                      onWeightChange={(weight) =>
+                                        setMemberWeight(member, weight)
+                                      }
+                                      dragging={false}
+                                      busy={false}
+                                      testingDisabled={testingModel}
+                                      onTest={() => onOpenModelTest(member)}
+                                      onToggle={() =>
+                                        toggleFoldedMember(
+                                          member.key,
+                                          !member.enabled,
+                                        )
+                                      }
+                                      onRemove={() =>
+                                        removeFoldedMember(member.key)
+                                      }
+                                      draggable={false}
+                                      onDragStart={() => {}}
+                                      onDragEnter={() => {}}
+                                      onDragEnd={() => {}}
+                                      locale={locale}
+                                    />
+                                  ))}
+                                </PriorityLevelCard>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="flex flex-col gap-1.5">
+                              {visibleFoldedMembers.length ? (
+                                visibleFoldedMembers.map(
+                                  ({ member, index }) => (
+                                    <FoldedMemberRow
+                                      key={member.key}
+                                      member={member}
+                                      index={index}
+                                      mode={form.strategy}
+                                      weight={member.weight}
+                                      onWeightChange={(weight) =>
+                                        setMemberWeight(member, weight)
+                                      }
+                                      sharePct={
+                                        form.strategy === "round_robin"
+                                          ? membersSharePct(
+                                              visibleFoldedMembers.map(
+                                                (visible) => visible.member,
+                                              ),
+                                              index,
+                                            )
+                                          : undefined
+                                      }
+                                      dragging={draggingIndex === index}
+                                      busy={false}
+                                      testingDisabled={testingModel}
+                                      onTest={() => onOpenModelTest(member)}
+                                      onToggle={() =>
+                                        toggleFoldedMember(
+                                          member.key,
+                                          !member.enabled,
+                                        )
+                                      }
+                                      onRemove={() =>
+                                        removeFoldedMember(member.key)
+                                      }
+                                      onDragStart={() =>
+                                        setDraggingIndex(index)
+                                      }
+                                      onDragEnter={() => {
+                                        if (
+                                          draggingIndex === null ||
+                                          draggingIndex === index
+                                        )
+                                          return;
+                                        moveFoldedMember(draggingIndex, index);
+                                        setDraggingIndex(index);
+                                      }}
+                                      onDragEnd={() => setDraggingIndex(null)}
+                                      locale={locale}
+                                    />
+                                  ),
+                                )
+                              ) : (
+                                <p className="px-1 py-6 text-center text-sm text-muted-foreground">
+                                  {locale === "zh-CN"
+                                    ? "当前筛选下没有成员"
+                                    : "No members under current filter"}
+                                </p>
+                              )}
+                            </div>
                           )}
                         </div>
-                      </div>
-                    </section>
-                  </div>
+                      </section>
+                    </div>
+                  </Popover>
                 </TabsContent>
               ) : null}
               <TabsContent value="advanced">

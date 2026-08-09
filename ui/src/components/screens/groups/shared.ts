@@ -21,6 +21,8 @@ export type FormItem = {
   credential_number: number;
   model_name: string;
   enabled: boolean;
+  priority: number;
+  weight: number;
 };
 
 export type FormState = {
@@ -57,6 +59,8 @@ export type FoldedMember = {
   subItems: FormItem[];
   enabled: boolean;
   invalid: boolean;
+  priority: number;
+  weight: number;
 };
 
 export type GroupDisplayMember = {
@@ -189,6 +193,8 @@ export function candidatePayloadToFormItems(
       credential_number: candidate.credential_number,
       model_name: payloadItem.model_name,
       enabled: true,
+      priority: 0,
+      weight: 1,
     };
   });
 }
@@ -279,6 +285,7 @@ export const strategyOptions: Array<{
 }> = [
   { value: "round_robin", zh: "轮询", en: "Round Robin" },
   { value: "failover", zh: "故障转移", en: "Failover" },
+  { value: "priority_weighted", zh: "优先级负载均衡", en: "Priority Weighted" },
 ];
 
 export function credentialDisplayLabel(
@@ -372,6 +379,39 @@ export function moveItems<T>(items: T[], fromIndex: number, toIndex: number) {
   return nextItems;
 }
 
+export function membersSharePct(
+  items: Array<{ weight: number }>,
+  index: number,
+): number {
+  const total = items.reduce((sum, item) => sum + Math.max(item.weight, 1), 0);
+  if (total <= 0 || index < 0 || index >= items.length) return 0;
+  return Math.round((Math.max(items[index].weight, 1) / total) * 100);
+}
+
+export function applyWeightPreset(
+  items: Array<{ weight: number }>,
+  kind: "equal" | "seq" | "main",
+): void {
+  items.forEach((item, index) => {
+    if (kind === "equal") {
+      item.weight = 1;
+    } else if (kind === "seq") {
+      item.weight = items.length - index;
+    } else {
+      item.weight = index === 0 ? 9 : 1;
+    }
+  });
+}
+
+export function renumberPriorities(members: FoldedMember[]): void {
+  members.forEach((member, index) => {
+    member.priority = index;
+    member.subItems.forEach((sub) => {
+      sub.priority = index;
+    });
+  });
+}
+
 export type ProtocolMeta = {
   id: string;
   site_id: string;
@@ -407,7 +447,7 @@ export function toForm(group: ModelGroup): FormState {
     cache_write_price_per_million: String(group.cache_write_price_per_million),
     items: group.items
       .slice()
-      .sort((a, b) => a.sort_order - b.sort_order)
+      .sort((a, b) => a.priority - b.priority)
       .map((item) => ({
         channel_id: item.channel_id,
         channel_name: item.channel_name,
@@ -417,6 +457,8 @@ export function toForm(group: ModelGroup): FormState {
         credential_number: item.credential_number,
         model_name: item.model_name,
         enabled: item.enabled,
+        priority: item.priority ?? 0,
+        weight: item.weight ?? 1,
       })),
   };
 }
@@ -462,6 +504,8 @@ export function toPayload(form: FormState): ModelGroupPayload {
       credential_id: item.credential_id,
       model_name: item.model_name,
       enabled: item.enabled,
+      priority: item.priority,
+      weight: item.weight,
     })),
   };
 }
