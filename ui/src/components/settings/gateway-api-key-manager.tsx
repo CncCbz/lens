@@ -54,11 +54,13 @@ export function GatewayApiKeyManager({ locale }: { locale: Locale }) {
     queryFn: () => apiRequest<GatewayApiKey[]>("/admin/gateway-api-keys"),
     staleTime: 5_000,
     refetchInterval: 10_000,
+    refetchOnMount: "always",
   });
   const { data: modelGroups = [] } = useQuery({
     queryKey: ["model-groups"],
     queryFn: () => apiRequest<ModelGroup[]>("/admin/model-groups"),
     staleTime: 5 * 60_000,
+    refetchOnMount: "always",
   });
 
   const modelGroupOptions = useMemo(

@@ -487,6 +487,7 @@ export function CronjobsScreen() {
     queryKey: ["cronjobs"],
     queryFn: () => apiRequest<CronjobItem[]>("/admin/cronjobs"),
     staleTime: 10_000,
+    refetchOnMount: "always",
   });
 
   const {
@@ -498,6 +499,7 @@ export function CronjobsScreen() {
     queryKey: ["settings"],
     queryFn: () => apiRequest<SettingItem[]>("/admin/settings"),
     staleTime: 5 * 60_000,
+    refetchOnMount: "always",
   });
 
   const retentionDraft =

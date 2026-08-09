@@ -15,9 +15,9 @@ function createQueryClient() {
       queries: {
         staleTime: 60_000,
         gcTime: 5 * 60_000,
-        refetchOnWindowFocus: false,
-        refetchOnReconnect: false,
-        refetchOnMount: false,
+        refetchOnWindowFocus: true,
+        refetchOnReconnect: true,
+        refetchOnMount: true,
         retry: 1,
       },
     },

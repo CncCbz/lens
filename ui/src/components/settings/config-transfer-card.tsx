@@ -406,7 +406,68 @@ function ImportCard({ locale }: { locale: Locale }) {
       setSelectedFile(null);
       setPreview(null);
       setPreviewError("");
-      await queryClient.invalidateQueries();
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: ["settings"],
+          refetchType: "all",
+        }),
+        queryClient.invalidateQueries({
+          queryKey: ["app-info"],
+          refetchType: "all",
+        }),
+        queryClient.invalidateQueries({
+          queryKey: ["public-branding"],
+          refetchType: "all",
+        }),
+        queryClient.invalidateQueries({
+          queryKey: ["model-groups"],
+          refetchType: "all",
+        }),
+        queryClient.invalidateQueries({
+          queryKey: ["sites"],
+          refetchType: "all",
+        }),
+        queryClient.invalidateQueries({
+          queryKey: ["cronjobs"],
+          refetchType: "all",
+        }),
+        queryClient.invalidateQueries({
+          queryKey: ["gateway-api-keys"],
+          refetchType: "all",
+        }),
+        queryClient.invalidateQueries({
+          queryKey: ["group-candidates"],
+          refetchType: "all",
+        }),
+        queryClient.invalidateQueries({
+          queryKey: ["route-preview"],
+          refetchType: "all",
+        }),
+        queryClient.invalidateQueries({
+          queryKey: ["request-logs"],
+          refetchType: "all",
+        }),
+        queryClient.invalidateQueries({
+          queryKey: ["overview-summary"],
+          refetchType: "all",
+        }),
+        queryClient.invalidateQueries({
+          queryKey: ["overview-daily"],
+          refetchType: "all",
+        }),
+        queryClient.invalidateQueries({
+          queryKey: ["overview-health"],
+          refetchType: "all",
+        }),
+        queryClient.invalidateQueries({
+          queryKey: ["overview-usage"],
+          refetchType: "all",
+        }),
+        queryClient.invalidateQueries({
+          queryKey: ["overview-performance"],
+          refetchType: "all",
+        }),
+      ]);
       toast.success(titleForLocale(locale, "备份已导入", "Backup imported"));
     } catch (error) {
       const message =

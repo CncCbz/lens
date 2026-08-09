@@ -137,9 +137,10 @@ export function GroupsScreen() {
     isError: groupsIsError,
     isLoading,
   } = useQuery({
-    queryKey: ["groups"],
+    queryKey: ["model-groups"],
     queryFn: () => apiRequest<ModelGroup[]>("/admin/model-groups"),
     staleTime: 2 * 60_000,
+    refetchOnMount: "always",
   });
   const {
     data: sites,
@@ -149,6 +150,7 @@ export function GroupsScreen() {
     queryKey: ["sites"],
     queryFn: () => apiRequest<Site[]>("/admin/sites"),
     staleTime: 2 * 60_000,
+    refetchOnMount: "always",
   });
   const { data: settings } = useQuery({
     queryKey: ["settings"],
@@ -586,9 +588,10 @@ export function GroupsScreen() {
 
   async function invalidateGroupData() {
     await Promise.all([
-      queryClient.invalidateQueries({ queryKey: ["groups"] }),
+      queryClient.invalidateQueries({ queryKey: ["model-groups"] }),
       queryClient.invalidateQueries({ queryKey: ["sites"] }),
       queryClient.invalidateQueries({ queryKey: ["group-candidates"] }),
+      queryClient.invalidateQueries({ queryKey: ["route-preview"] }),
     ]);
   }
 
@@ -646,7 +649,8 @@ export function GroupsScreen() {
         ...payload,
       }),
     });
-    await queryClient.invalidateQueries({ queryKey: ["groups"] });
+    await queryClient.invalidateQueries({ queryKey: ["model-groups"] });
+    void queryClient.invalidateQueries({ queryKey: ["route-preview"] });
   }
 
   function parsePriceForm(payload: FormState) {
@@ -730,7 +734,8 @@ export function GroupsScreen() {
     setSyncingPrices(true);
     try {
       await apiRequest("/admin/model-price-sync-jobs", { method: "POST" });
-      await queryClient.invalidateQueries({ queryKey: ["groups"] });
+      await queryClient.invalidateQueries({ queryKey: ["model-groups"] });
+      void queryClient.invalidateQueries({ queryKey: ["route-preview"] });
       toast.success(
         locale === "zh-CN" ? "模型价格已同步" : "Model prices synced",
       );

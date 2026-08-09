@@ -11,6 +11,7 @@ export function useAppTimeZone() {
     queryKey: ["app-info"],
     queryFn: () => apiRequest<AppInfo>("/admin/app-info"),
     staleTime: 5 * 60_000,
+    refetchInterval: 5 * 60_000,
   });
 
   return data?.time_zone || DEFAULT_APP_TIME_ZONE;

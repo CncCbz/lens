@@ -219,11 +219,13 @@ export function SettingsScreen() {
     queryKey: ["settings"],
     queryFn: () => apiRequest<SettingItem[]>("/admin/settings"),
     staleTime: 5 * 60_000,
+    refetchOnMount: "always",
   });
   const { data: profile } = useQuery({
     queryKey: ["auth-me"],
     queryFn: () => apiRequest<AdminProfile>("/admin/session"),
     staleTime: 5 * 60_000,
+    refetchOnMount: "always",
   });
 
   const [draft, setDraft] = useState<DraftState>(EMPTY_DRAFT);
@@ -274,19 +276,24 @@ export function SettingsScreen() {
     setDraft((current) => ({ ...current, [key]: value }));
   }
 
-  async function refresh() {
+  async function invalidateSettingsDerived() {
     await Promise.all([
-      queryClient.invalidateQueries({ queryKey: ["settings"] }),
       queryClient.invalidateQueries({ queryKey: ["public-branding"] }),
       queryClient.invalidateQueries({ queryKey: ["app-info"] }),
       queryClient.invalidateQueries({ queryKey: ["model-groups"] }),
+      queryClient.invalidateQueries({ queryKey: ["cronjobs"] }),
       queryClient.invalidateQueries({ queryKey: ["overview-summary"] }),
       queryClient.invalidateQueries({ queryKey: ["overview-daily"] }),
-      queryClient.invalidateQueries({ queryKey: ["overview-models"] }),
-      queryClient.invalidateQueries({ queryKey: ["overview-channels"] }),
       queryClient.invalidateQueries({ queryKey: ["overview-health"] }),
       queryClient.invalidateQueries({ queryKey: ["overview-usage"] }),
       queryClient.invalidateQueries({ queryKey: ["overview-performance"] }),
+    ]);
+  }
+
+  async function refresh() {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["settings"] }),
+      invalidateSettingsDerived(),
     ]);
   }
 
@@ -371,12 +378,13 @@ export function SettingsScreen() {
           }),
         },
       ];
-      await apiRequest<SettingItem[]>("/admin/settings", {
+      const updatedSettings = await apiRequest<SettingItem[]>("/admin/settings", {
         method: "PUT",
         body: JSON.stringify({ items }),
       });
+      queryClient.setQueryData<SettingItem[]>(["settings"], updatedSettings);
       toast.success(titleForLocale(locale, "设置已保存", "Settings saved"));
-      await refresh();
+      await invalidateSettingsDerived();
     } catch (requestError) {
       const message =
         requestError instanceof ApiError

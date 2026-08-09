@@ -159,6 +159,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
     queryKey: ["app-info"],
     queryFn: () => apiRequest<AppInfo>("/admin/app-info"),
     staleTime: 5 * 60_000,
+    refetchInterval: 5 * 60_000,
   });
   useEffect(() => {
     hydrateProtocolConversions(appInfo?.protocol_conversions);

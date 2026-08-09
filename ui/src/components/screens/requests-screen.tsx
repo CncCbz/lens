@@ -301,12 +301,11 @@ export function RequestsScreen() {
 				queryClient.invalidateQueries({ queryKey: ["request-logs"] }),
 				queryClient.invalidateQueries({ queryKey: ["overview-summary"] }),
 				queryClient.invalidateQueries({ queryKey: ["overview-daily"] }),
-				queryClient.invalidateQueries({ queryKey: ["overview-models"] }),
-				queryClient.invalidateQueries({ queryKey: ["overview-channels"] }),
 				queryClient.invalidateQueries({ queryKey: ["overview-health"] }),
 				queryClient.invalidateQueries({ queryKey: ["overview-usage"] }),
 				queryClient.invalidateQueries({ queryKey: ["overview-performance"] }),
 				queryClient.invalidateQueries({ queryKey: ["gateway-api-keys"] }),
+				queryClient.invalidateQueries({ queryKey: ["site-runtime-summaries"] }),
 			]);
 			toast.success(
 				titleForLocale(locale, "请求日志已清空", "Request logs cleared"),

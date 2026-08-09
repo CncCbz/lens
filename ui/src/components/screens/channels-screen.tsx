@@ -286,12 +286,14 @@ export function ChannelsScreen() {
     queryKey: ["sites"],
     queryFn: () => apiRequest<Site[]>("/admin/sites"),
     staleTime: 2 * 60_000,
+    refetchOnMount: "always",
   });
   const { data: siteRuntimeSummaries } = useQuery({
     queryKey: ["site-runtime-summaries"],
     queryFn: () => apiRequest<SiteRuntimeSummary[]>("/admin/sites/runtime"),
     staleTime: 5_000,
     refetchInterval: 5000,
+    refetchOnMount: "always",
   });
   const { data: routerSnapshot } = useQuery({
     queryKey: ["router-cooldowns"],
@@ -299,11 +301,13 @@ export function ChannelsScreen() {
       apiRequest<Pick<RouteSnapshot, "health">>("/admin/routes/cooldowns"),
     staleTime: 1_000,
     refetchInterval: 1000,
+    refetchOnMount: "always",
   });
   const { data: settings } = useQuery({
     queryKey: ["settings"],
     queryFn: () => apiRequest<SettingItem[]>("/admin/settings"),
     staleTime: 5 * 60_000,
+    refetchOnMount: "always",
   });
 
   const siteRuntimeById = useMemo(
@@ -513,17 +517,12 @@ export function ChannelsScreen() {
 
   function markChannelRelatedStale() {
     void queryClient.invalidateQueries({
-      queryKey: ["group-candidates"],
-      refetchType: "none",
-    });
-    void queryClient.invalidateQueries({
-      queryKey: ["groups"],
-      refetchType: "none",
-    });
-    void queryClient.invalidateQueries({
       queryKey: ["model-groups"],
-      refetchType: "none",
     });
+    void queryClient.invalidateQueries({
+      queryKey: ["group-candidates"],
+    });
+    void queryClient.invalidateQueries({ queryKey: ["route-preview"] });
   }
 
   function refreshChannelSideData() {
@@ -541,6 +540,7 @@ export function ChannelsScreen() {
         method: "DELETE",
       });
       await queryClient.invalidateQueries({ queryKey: ["router-cooldowns"] });
+      void queryClient.invalidateQueries({ queryKey: ["route-preview"] });
       toast.success(locale === "zh-CN" ? "已取消冷却" : "Cooldown cleared");
     } catch (error) {
       const message =

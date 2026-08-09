@@ -75,10 +75,12 @@ export function OverviewScreen() {
   const summaryQuery = useQuery({
     queryKey: ["overview-summary", days],
     queryFn: () => apiRequest<OverviewSummary>(queryUrls.summary),
+    refetchOnMount: "always",
   });
   const dailyQuery = useQuery({
     queryKey: ["overview-daily", days],
     queryFn: () => apiRequest<OverviewDailyPoint[]>(queryUrls.daily),
+    refetchOnMount: "always",
   });
   const heatmapQuery = useQuery({
     queryKey: ["overview-daily", 365],
@@ -89,26 +91,31 @@ export function OverviewScreen() {
     queryKey: ["overview-health", "channels", days],
     queryFn: () =>
       apiRequest<OverviewChannelHealthPoint[]>(queryUrls.channelHealth),
+    refetchOnMount: "always",
   });
   const modelUsageQuery = useQuery({
     queryKey: ["overview-usage", "models", days, metric],
     queryFn: () =>
       apiRequest<OverviewDimensionUsageAnalytics>(queryUrls.modelUsage),
+    refetchOnMount: "always",
   });
   const gatewayKeyUsageQuery = useQuery({
     queryKey: ["overview-usage", "gateway-keys", days, metric],
     queryFn: () =>
       apiRequest<OverviewDimensionUsageAnalytics>(queryUrls.gatewayKeyUsage),
+    refetchOnMount: "always",
   });
   const channelPerformanceQuery = useQuery({
     queryKey: ["overview-performance", "channels", days],
     queryFn: () =>
       apiRequest<OverviewPerformanceAnalytics>(queryUrls.channelPerformance),
+    refetchOnMount: "always",
   });
   const modelPerformanceQuery = useQuery({
     queryKey: ["overview-performance", "models", days],
     queryFn: () =>
       apiRequest<OverviewPerformanceAnalytics>(queryUrls.modelPerformance),
+    refetchOnMount: "always",
   });
 
   return (
