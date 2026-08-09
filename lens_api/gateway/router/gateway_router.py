@@ -478,6 +478,8 @@ class RouteTarget:
     model_name: str | None = None
     credential_id: str | None = None
     credential_name: str | None = None
+    priority: int = 0
+    weight: int = 1
     probe_owner: object | None = field(default=None, repr=False, compare=False)
 
 
@@ -529,7 +531,9 @@ class GatewayRouter:
         circuit_failure_rate_threshold: float = 0.6,
     ) -> None:
         self._lock = Lock()
-        self._channel_health: dict[str, _ScopedHealthState] = defaultdict(_ScopedHealthState)
+        self._channel_health: dict[str, _ScopedHealthState] = defaultdict(
+            _ScopedHealthState
+        )
         self._credential_health: dict[tuple[str, str], _ScopedHealthState] = {}
         self._target_health: dict[tuple[str, str], _ScopedHealthState] = {}
         self._channel_windows: dict[str, _HealthWindow] = defaultdict(_HealthWindow)
@@ -581,6 +585,7 @@ class GatewayRouter:
                 allowed_channel_ids,
                 use_model_matching,
                 route_targets,
+                strategy=strategy,
             )
             if not active:
                 all_matching = self._build_active_pool(
@@ -591,6 +596,7 @@ class GatewayRouter:
                     use_model_matching,
                     route_targets,
                     skip_health_filter=True,
+                    strategy=strategy,
                 )
                 if all_matching:
                     recovery = 0
@@ -611,16 +617,17 @@ class GatewayRouter:
                         f"All {len(all_matching)} matching channels are in cooldown",
                         recovery_seconds=recovery,
                     )
-                detail = (
-                    f"No enabled channels available for protocol={protocol.value}"
-                )
+                detail = f"No enabled channels available for protocol={protocol.value}"
                 if requested_model:
                     detail = f"No enabled channels matched {requested_model}"
                 raise LookupError(detail)
 
             route_key = cursor_key or protocol.value
             if strategy == RoutingStrategy.FAILOVER:
+                active = sorted(active, key=lambda target: target.priority)
                 primary_index = 0
+            elif strategy == RoutingStrategy.PRIORITY_WEIGHTED:
+                return self._select_priority_weighted(active, route_key, mutate=mutate)
             else:
                 primary_index = self._swrr_pick_index(active, route_key, mutate=mutate)
 
@@ -901,6 +908,7 @@ class GatewayRouter:
         route_targets: list[RouteTarget] | None = None,
         *,
         skip_health_filter: bool = False,
+        strategy: RoutingStrategy = RoutingStrategy.ROUND_ROBIN,
     ) -> list[RouteTarget]:
         active = self._filter_enabled_targets(
             channels,
@@ -919,7 +927,7 @@ class GatewayRouter:
                 if self._target_is_available(target, now=now)
             ]
             active = self._prefer_native_targets(active, protocol)
-            if len(active) > 1:
+            if strategy == RoutingStrategy.ROUND_ROBIN and len(active) > 1:
                 active.sort(key=lambda t: self._score_target(t), reverse=True)
 
         return active
@@ -1006,6 +1014,8 @@ class GatewayRouter:
                     model_name=target.model_name,
                     credential_id=key.id,
                     credential_name=target.credential_name or key.remark,
+                    priority=target.priority,
+                    weight=target.weight,
                 )
             ]
 
@@ -1018,6 +1028,8 @@ class GatewayRouter:
                 model_name=target.model_name,
                 credential_id=key.id,
                 credential_name=key.remark,
+                priority=target.priority,
+                weight=target.weight,
             )
             for key in self._candidate_keys(target.channel, target.model_name)
         ]
@@ -1036,6 +1048,32 @@ class GatewayRouter:
         }
         return [key for key in enabled_keys if key.id in credential_ids]
 
+    def _select_priority_weighted(
+        self,
+        active: list[RouteTarget],
+        route_key: str,
+        *,
+        mutate: bool,
+    ) -> RouteSelection:
+        min_priority = min(target.priority for target in active)
+        layer_indices = [
+            index
+            for index, target in enumerate(active)
+            if target.priority == min_priority
+        ]
+        layer = [active[index] for index in layer_indices]
+        picked_in_layer = self._swrr_pick_index(layer, route_key, mutate=mutate)
+        primary_index = layer_indices[picked_in_layer]
+        primary = active[primary_index]
+        layer_remaining = [
+            active[index] for index in layer_indices if index != primary_index
+        ]
+        lower = [
+            target for index, target in enumerate(active) if index not in layer_indices
+        ]
+        lower.sort(key=lambda target: (target.priority, -target.weight))
+        return RouteSelection(primary=primary, fallbacks=layer_remaining + lower)
+
     @staticmethod
     def _find_key(channel: ChannelConfig, credential_id: str) -> ChannelKeyItem | None:
         for key in channel.keys:
@@ -1051,10 +1089,15 @@ class GatewayRouter:
         next_weights: list[int] = []
 
         for i, target in enumerate(active):
-            node_key = (route_key, target.channel.id, target.credential_id or "")
+            node_key = (
+                route_key,
+                target.channel.id,
+                target.credential_id or "",
+                target.model_name or "",
+            )
             node = self._swrr_nodes.get(node_key)
             current_weight = node.current_weight if node is not None else 0
-            weight = 1
+            weight = max(int(target.weight), 1)
             next_weight = current_weight + weight
             next_weights.append(next_weight)
             total_weight += weight
@@ -1063,7 +1106,12 @@ class GatewayRouter:
 
         if mutate:
             for i, target in enumerate(active):
-                node_key = (route_key, target.channel.id, target.credential_id or "")
+                node_key = (
+                    route_key,
+                    target.channel.id,
+                    target.credential_id or "",
+                    target.model_name or "",
+                )
                 node = self._swrr_nodes.get(node_key)
                 if node is None:
                     node = _SWRRNode()
@@ -1071,7 +1119,12 @@ class GatewayRouter:
                 node.current_weight = next_weights[i]
             best = active[best_idx]
             self._swrr_nodes[
-                (route_key, best.channel.id, best.credential_id or "")
+                (
+                    route_key,
+                    best.channel.id,
+                    best.credential_id or "",
+                    best.model_name or "",
+                )
             ].current_weight -= total_weight
         return best_idx
 
@@ -1143,18 +1196,44 @@ class GatewayRouter:
             (
                 available if self._target_is_available(target, now=now) else cooled
             ).append(target)
-        available.sort(key=lambda target: self._score_target(target), reverse=True)
-        cooled.sort(key=lambda target: self._score_target(target), reverse=True)
+        if strategy == RoutingStrategy.ROUND_ROBIN:
+            available.sort(key=lambda target: self._score_target(target), reverse=True)
+            cooled.sort(key=lambda target: self._score_target(target), reverse=True)
 
         if not available:
             return cooled, 0, None
 
         route_key = cursor_key or protocol.value
         if strategy == RoutingStrategy.FAILOVER:
+            available = sorted(available, key=lambda target: target.priority)
             primary_index = 0
+            ordered_available = available
+        elif strategy == RoutingStrategy.PRIORITY_WEIGHTED:
+            min_priority = min(target.priority for target in available)
+            layer_indices = [
+                index
+                for index, target in enumerate(available)
+                if target.priority == min_priority
+            ]
+            layer = [available[index] for index in layer_indices]
+            picked = self._swrr_pick_index(layer, route_key, mutate=False)
+            primary_index = layer_indices[picked]
+            ordered_available = (
+                [available[primary_index]]
+                + [
+                    available[index]
+                    for index in layer_indices
+                    if index != primary_index
+                ]
+                + [
+                    target
+                    for index, target in enumerate(available)
+                    if index not in layer_indices
+                ]
+            )
         else:
             primary_index = self._swrr_pick_index(available, route_key, mutate=False)
-        ordered_available = available[primary_index:] + available[:primary_index]
+            ordered_available = available[primary_index:] + available[:primary_index]
         return (
             ordered_available + cooled,
             primary_index,
@@ -1245,9 +1324,7 @@ class GatewayRouter:
             ("channel", self._channel_health.get(channel_id)),
         ]
         if model_name:
-            items.append(
-                ("target", self._target_health.get((channel_id, model_name)))
-            )
+            items.append(("target", self._target_health.get((channel_id, model_name))))
         if credential_id:
             items.append(
                 (
@@ -1460,7 +1537,10 @@ class GatewayRouter:
             and window.total >= self._circuit_minimum_requests
             and window.failure_rate >= self._circuit_failure_rate_threshold
         )
-        if state.consecutive_failures < policy.failure_threshold and not failure_rate_open:
+        if (
+            state.consecutive_failures < policy.failure_threshold
+            and not failure_rate_open
+        ):
             return 0.0
 
         max_cooldown = max(policy.max_cooldown_seconds, 0)
@@ -1470,7 +1550,9 @@ class GatewayRouter:
             and retry_after_seconds > 0
         ):
             # Clamp to policy max only (plan: 1..max_cooldown_seconds).
-            upper = max_cooldown if max_cooldown > 0 else max(policy.cooldown_seconds, 1)
+            upper = (
+                max_cooldown if max_cooldown > 0 else max(policy.cooldown_seconds, 1)
+            )
             cooldown = min(max(float(retry_after_seconds), 1.0), float(upper))
             # Explicit Retry-After replaces exponential history for this open.
             state.last_cooldown = cooldown
@@ -1568,11 +1650,7 @@ class GatewayRouter:
         display_state = (
             "open"
             if opened_until > now
-            else (
-                "probe"
-                if consecutive > 0 and last_cooldown > 0
-                else "available"
-            )
+            else ("probe" if consecutive > 0 and last_cooldown > 0 else "available")
         )
         return ChannelHealth(
             channel_id=channel_id,
@@ -1624,19 +1702,17 @@ class GatewayRouter:
             not channel.keys or available_key_count > 0
         )
         window = self._channel_windows.get(channel.id) or _HealthWindow()
-        display_state = "open" if opened_until > now else (
-            "probe"
-            if consecutive > 0 and last_cooldown > 0
-            else "available"
+        display_state = (
+            "open"
+            if opened_until > now
+            else ("probe" if consecutive > 0 and last_cooldown > 0 else "available")
         )
         return ChannelHealth(
             channel_id=channel.id,
             state=display_state,
             consecutive_failures=consecutive,
             last_error=last_error,
-            last_error_category=(
-                last_category.value if last_category else None
-            ),
+            last_error_category=(last_category.value if last_category else None),
             opened_until=opened_until,
             cooldown_remaining_seconds=self._remaining_seconds(opened_until, now=now),
             last_cooldown_seconds=int(last_cooldown),

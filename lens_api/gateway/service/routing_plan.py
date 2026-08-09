@@ -68,6 +68,8 @@ async def _resolve_routing_plan(
             model_name=item.model_name,
             credential_id=item.credential_id,
             credential_name=item.credential_name or None,
+            priority=item.priority,
+            weight=item.weight,
         )
         for item in resolved_group.items
         if item.enabled

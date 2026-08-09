@@ -347,6 +347,8 @@ def _route_preview_target(
         credential_id=target.credential_id,
         credential_name=_route_preview_credential_name(target),
         model_name=target.model_name,
+        priority=target.priority,
+        weight=target.weight,
         available=available,
         reason=reason,
         cooldown_remaining_seconds=cooldown_remaining_seconds,
