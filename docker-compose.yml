@@ -19,6 +19,8 @@ services:
       start_period: 10s
     volumes:
       - lens-postgres-data:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5432:5432"
 
   app:
     image: lens:local
