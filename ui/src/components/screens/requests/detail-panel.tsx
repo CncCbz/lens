@@ -398,20 +398,26 @@ function TraceDetail({
   const isAttempt = isRequestNode || isResponseNode;
   const attemptIndex = isAttempt ? Number(trace.key.split("-")[1]) : -1;
   const attempt = isAttempt ? detail.attempts[attemptIndex] : undefined;
+  const isFinalAttempt = attemptIndex === detail.attempts.length - 1;
   const isRelayAttempt = Boolean(attempt?.relay_kind);
   const headers = isInboundRequest
     ? detail.request_headers
     : isRequestNode
       ? (attempt?.request_headers ?? null)
       : isResponseNode
-        ? (attempt?.response_headers ?? null)
+        ? (attempt?.response_headers ??
+          (isFinalAttempt ? detail.upstream_response_headers : null))
         : detail.client_response_headers;
   const rawContent = isInboundRequest
     ? detail.client_request_content
     : isRequestNode
       ? (attempt?.request_body ?? null)
       : isResponseNode
-        ? (attempt?.response_body ?? null)
+        ? (attempt?.response_body ??
+          (isFinalAttempt
+            ? (detail.upstream_response_distilled ??
+              detail.upstream_response_content)
+            : null))
         : isClientResponse
           ? detail.response_content
           : null;
