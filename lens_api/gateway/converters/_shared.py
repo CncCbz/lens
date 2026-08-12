@@ -526,6 +526,19 @@ def responses_input_to_chat_messages(
     input_items: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
+    pending_tool_calls: list[dict[str, Any]] = []
+
+    def flush_pending_tool_calls() -> None:
+        if pending_tool_calls:
+            result.append(
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": list(pending_tool_calls),
+                }
+            )
+            pending_tool_calls.clear()
+
     for item in input_items:
         role = item.get("role", "user")
         if role == "developer":
@@ -534,6 +547,7 @@ def responses_input_to_chat_messages(
         item_type = item.get("type")
 
         if item_type == "function_call_output":
+            flush_pending_tool_calls()
             output = item.get("output", "")
             message = {
                 "role": "tool",
@@ -545,21 +559,21 @@ def responses_input_to_chat_messages(
             continue
 
         if item_type == "function_call":
-            result.append(
-                {
-                    "role": "assistant",
-                    "content": None,
-                    "tool_calls": [
-                        _build_chat_tool_call(
-                            item.get("call_id", ""),
-                            item.get("name", ""),
-                            item.get("arguments", "{}"),
-                            item,
-                        )
-                    ],
-                }
+            # Consecutive function_call items are parallel tool calls; merge
+            # them into one assistant message so the resulting Chat history
+            # keeps each assistant tool_calls message followed by its tool
+            # responses, which upstreams require.
+            pending_tool_calls.append(
+                _build_chat_tool_call(
+                    item.get("call_id", ""),
+                    item.get("name", ""),
+                    item.get("arguments", "{}"),
+                    item,
+                )
             )
             continue
+
+        flush_pending_tool_calls()
 
         if isinstance(content, str):
             message = {"role": role, "content": content}
@@ -597,6 +611,7 @@ def responses_input_to_chat_messages(
         if role or content is not None:
             result.append({"role": role or "user", "content": content})
 
+    flush_pending_tool_calls()
     return result
 
 

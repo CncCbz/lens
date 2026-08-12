@@ -5,7 +5,10 @@ import json
 from collections.abc import AsyncIterator
 
 from lens_api.gateway.converters import convert_stream_iterator
-from lens_api.gateway.converters._shared import _parse_sse_stream
+from lens_api.gateway.converters._shared import (
+    _parse_sse_stream,
+    responses_input_to_chat_messages,
+)
 from lens_api.gateway.converters.chat_to_anthropic import (
     anthropic_request_to_chat,
     anthropic_stream_to_chat_stream,
@@ -382,6 +385,68 @@ def test_anthropic_to_chat_missing_stop_reason_raises() -> None:
         raise AssertionError("expected ValueError")
     except ValueError:
         pass
+
+
+# ---------------------------------------------------------------------------
+# Responses -> Chat (request)
+# ---------------------------------------------------------------------------
+
+
+def test_responses_input_to_chat_merges_parallel_function_calls() -> None:
+    input_items = [
+        {
+            "type": "function_call",
+            "call_id": "call_1",
+            "name": "bash",
+            "arguments": '{"cmd":"a"}',
+        },
+        {
+            "type": "function_call",
+            "call_id": "call_2",
+            "name": "bash",
+            "arguments": '{"cmd":"b"}',
+        },
+        {
+            "type": "function_call_output",
+            "call_id": "call_1",
+            "output": "out1",
+        },
+        {
+            "type": "function_call_output",
+            "call_id": "call_2",
+            "output": "out2",
+        },
+    ]
+    messages = responses_input_to_chat_messages(input_items)
+    assert [m["role"] for m in messages] == ["assistant", "tool", "tool"]
+    assistant = messages[0]
+    assert assistant["content"] is None
+    assert [tc["id"] for tc in assistant["tool_calls"]] == ["call_1", "call_2"]
+    assert messages[1]["tool_call_id"] == "call_1"
+    assert messages[2]["tool_call_id"] == "call_2"
+
+
+def test_responses_input_to_chat_keeps_single_tool_call_ordering() -> None:
+    input_items = [
+        {
+            "type": "function_call",
+            "call_id": "call_1",
+            "name": "bash",
+            "arguments": "{}",
+        },
+        {
+            "type": "function_call_output",
+            "call_id": "call_1",
+            "output": "out1",
+        },
+        {
+            "type": "message",
+            "role": "user",
+            "content": [{"type": "input_text", "text": "next"}],
+        },
+    ]
+    messages = responses_input_to_chat_messages(input_items)
+    assert [m["role"] for m in messages] == ["assistant", "tool", "user"]
 
 
 # ---------------------------------------------------------------------------
