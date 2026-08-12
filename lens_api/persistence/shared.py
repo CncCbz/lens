@@ -36,6 +36,7 @@ from ..models import (
     ModelGroupEnsureResultItem,
     ModelGroupItem,
     ModelGroupItemInput,
+    ModelGroupMultimodalMode,
     ModelGroupUpdate,
     ModelPriceItem,
     ModelPriceListResponse,
@@ -215,6 +216,9 @@ SETTING_MODEL_LIST_COMPAT_MODE_ENABLED = "model_list_compat_mode_enabled"
 SETTING_ROUTER_ERROR_POLICY_CONFIG = "router_error_policy_config"
 SETTING_SITE_NAME = "site_name"
 SETTING_SITE_LOGO_URL = "site_logo_url"
+SETTING_MULTIMODAL_RELAY_ENABLED = "multimodal_relay_enabled"
+SETTING_MULTIMODAL_IMAGE_GROUP_ID = "multimodal_image_group_id"
+SETTING_MULTIMODAL_AUDIO_GROUP_ID = "multimodal_audio_group_id"
 GATEWAY_API_KEY_CHARS = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
 CHANNEL_HEALTH_BUCKET_SECONDS = 300
 CHANNEL_HEALTH_BUCKET_COUNT = 12

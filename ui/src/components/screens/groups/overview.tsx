@@ -55,6 +55,7 @@ import type {
   RoutingStrategy,
 } from "@/lib/api";
 import { getModelGroupAvatar } from "@/lib/model-icons";
+import { ModalityIcons } from "@/components/screens/multimodal-relay/modality-icons";
 import { cn } from "@/lib/utils";
 import { CompactPriceSummary, SeriesChip, StrategyToggle } from "./components";
 import {
@@ -288,6 +289,12 @@ export function GroupsOverview({
                                 </Badge>
                               ))}
                             </div>
+                            {group.effective_modalities.length > 0 ? (
+                              <ModalityIcons
+                                modalities={group.effective_modalities}
+                                className="gap-1"
+                              />
+                            ) : null}
                             {group.is_route_group ? (
                               <Badge
                                 variant="outline"

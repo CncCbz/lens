@@ -141,6 +141,15 @@ class ModelGroupEntity(Base):
     param_override_json: Mapped[str] = mapped_column(
         Text, nullable=False, default="{}", server_default="{}"
     )
+    multimodal: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="auto", server_default="auto"
+    )
+    multimodal_resolved_json: Mapped[str] = mapped_column(
+        Text, nullable=False, default="{}", server_default="{}"
+    )
+    multimodal_overrides_json: Mapped[str] = mapped_column(
+        Text, nullable=False, default="{}", server_default="{}"
+    )
 
 
 class ModelGroupItemEntity(Base):

@@ -1,6 +1,7 @@
 import type {
   ModelGroup,
   ModelGroupCandidateItem,
+  ModelGroupMultimodalMode,
   ModelGroupPayload,
   ModelGroupSyncFilterMode,
   ProtocolKind,
@@ -34,6 +35,9 @@ export type FormState = {
   param_override: string;
   sync_filter_mode: ModelGroupSyncFilterMode;
   sync_filter_query: string;
+  multimodal: ModelGroupMultimodalMode;
+  multimodal_overrides: Record<string, boolean>;
+  autodetected_modalities: Record<string, boolean>;
   input_price_per_million: string;
   output_price_per_million: string;
   cache_read_price_per_million: string;
@@ -103,6 +107,9 @@ export const emptyForm: FormState = {
   param_override: "{}",
   sync_filter_mode: "",
   sync_filter_query: "",
+  multimodal: "auto",
+  multimodal_overrides: {},
+  autodetected_modalities: {},
   input_price_per_million: "0",
   output_price_per_million: "0",
   cache_read_price_per_million: "0",
@@ -441,6 +448,9 @@ export function toForm(group: ModelGroup): FormState {
     param_override: JSON.stringify(group.param_override ?? {}, null, 2),
     sync_filter_mode: group.sync_filter_mode,
     sync_filter_query: group.sync_filter_query,
+    multimodal: group.multimodal ?? "auto",
+    multimodal_overrides: group.multimodal_overrides ?? {},
+    autodetected_modalities: group.multimodal_resolved ?? {},
     input_price_per_million: String(group.input_price_per_million),
     output_price_per_million: String(group.output_price_per_million),
     cache_read_price_per_million: String(group.cache_read_price_per_million),
@@ -499,6 +509,8 @@ export function toPayload(form: FormState): ModelGroupPayload {
     sync_filter_query: form.route_group_id.trim()
       ? ""
       : form.sync_filter_query.trim(),
+    multimodal: form.multimodal,
+    multimodal_overrides: form.multimodal_overrides,
     items: form.items.map((item) => ({
       channel_id: item.channel_id,
       credential_id: item.credential_id,

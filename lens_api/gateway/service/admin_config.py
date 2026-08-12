@@ -24,10 +24,14 @@ from .runtime_context import (
     ModelGroupCreate,
     ModelGroupEnsureFromSiteRequest,
     ModelGroupEnsureFromSiteResponse,
+    ModelGroupMultimodalMode,
     ModelGroupUpdate,
     ModelPriceItem,
     ModelPriceListResponse,
     ModelPriceUpdate,
+    MultimodalRelayConfig,
+    MultimodalRelayGroupStatus,
+    MultimodalRelayUpdate,
     Response,
     SETTING_SITE_LOGO_URL,
     SETTING_SITE_NAME,
@@ -35,6 +39,9 @@ from .runtime_context import (
     SETTING_CIRCUIT_BREAKER_COOLDOWN,
     SETTING_CIRCUIT_BREAKER_MAX_COOLDOWN,
     SETTING_CIRCUIT_BREAKER_THRESHOLD,
+    SETTING_MULTIMODAL_AUDIO_GROUP_ID,
+    SETTING_MULTIMODAL_IMAGE_GROUP_ID,
+    SETTING_MULTIMODAL_RELAY_ENABLED,
     SETTING_ROUTER_ERROR_POLICY_CONFIG,
     SettingItem,
     SettingsUpdate,
@@ -213,6 +220,139 @@ async def update_settings(
         if next_time_zone_value is not None:
             await app_state.cronjob_runner.reschedule_cronjobs(next_time_zone_value)
     return stored_items
+
+
+def _relay_group_supports(group: ModelGroup, kind: str) -> bool:
+    mode = getattr(group, "multimodal", ModelGroupMultimodalMode.AUTO)
+    if mode == ModelGroupMultimodalMode.ON:
+        return True
+    if mode == ModelGroupMultimodalMode.OFF:
+        return False
+    if mode == ModelGroupMultimodalMode.MANUAL:
+        overrides = getattr(group, "multimodal_overrides", None)
+        if isinstance(overrides, dict):
+            return bool(overrides.get(kind))
+        return False
+    resolved = getattr(group, "multimodal_resolved", None)
+    if isinstance(resolved, dict):
+        return bool(resolved.get(kind))
+    return False
+
+
+async def _load_multimodal_relay_config() -> MultimodalRelayConfig:
+    runtime = await app_state.settings_repo.get_runtime_settings()
+    groups = await app_state.group_repo.list_groups()
+    image_group_id = str(runtime["multimodal_image_group_id"] or "").strip()
+    audio_group_id = str(runtime["multimodal_audio_group_id"] or "").strip()
+    group_by_id = {group.id: group for group in groups}
+    image_group = group_by_id.get(image_group_id)
+    audio_group = group_by_id.get(audio_group_id)
+    return MultimodalRelayConfig(
+        enabled=bool(runtime["multimodal_relay_enabled"]),
+        image_group_id=image_group_id,
+        audio_group_id=audio_group_id,
+        image_group_name=image_group.name if image_group else "",
+        audio_group_name=audio_group.name if audio_group else "",
+        image_group_valid=bool(
+            image_group
+            and not image_group.route_group_id.strip()
+            and _relay_group_supports(image_group, "image")
+        ),
+        audio_group_valid=bool(
+            audio_group
+            and not audio_group.route_group_id.strip()
+            and _relay_group_supports(audio_group, "audio")
+        ),
+        groups=[
+            MultimodalRelayGroupStatus(
+                group_id=group.id,
+                name=group.name,
+                route_group_id=group.route_group_id,
+                multimodal=group.multimodal,
+                multimodal_overrides=group.multimodal_overrides,
+                effective_modalities=group.effective_modalities,
+                supports_image=bool((group.multimodal_resolved or {}).get("image")),
+                supports_audio=bool((group.multimodal_resolved or {}).get("audio")),
+                effective_supports_image=_relay_group_supports(group, "image"),
+                effective_supports_audio=_relay_group_supports(group, "audio"),
+                modalities=sorted(
+                    modality
+                    for modality, supported in (group.multimodal_resolved or {}).items()
+                    if supported
+                ),
+                items=group.items,
+            )
+            for group in groups
+        ],
+    )
+
+
+async def get_multimodal_relay_config(
+    _: Any = Depends(get_current_admin),
+) -> MultimodalRelayConfig:
+    return await _load_multimodal_relay_config()
+
+
+async def update_multimodal_relay_config(
+    payload: MultimodalRelayUpdate, _: Any = Depends(get_current_admin)
+) -> MultimodalRelayConfig:
+    groups = await app_state.group_repo.list_groups()
+    group_by_id = {group.id: group for group in groups}
+    # Apply per-group capability overrides first so helper validation sees
+    # the modes the caller is actually saving.
+    if payload.group_multimodal:
+        normalized_modes = {
+            group_id: mode.value
+            for group_id, mode in payload.group_multimodal.items()
+            if group_id in group_by_id
+        }
+        await app_state.group_repo.update_multimodal_modes(normalized_modes)
+        groups = await app_state.group_repo.list_groups()
+        group_by_id = {group.id: group for group in groups}
+    if payload.group_multimodal_overrides:
+        normalized_overrides = {
+            group_id: {
+                modality: bool(supported) for modality, supported in overrides.items()
+            }
+            for group_id, overrides in payload.group_multimodal_overrides.items()
+            if group_id in group_by_id
+        }
+        await app_state.group_repo.update_multimodal_overrides(normalized_overrides)
+    for key, kind in (
+        ("image_group_id", "image"),
+        ("audio_group_id", "audio"),
+    ):
+        group_id = str(getattr(payload, key) or "").strip()
+        if not group_id:
+            continue
+        group = group_by_id.get(group_id)
+        if group is None:
+            raise ValueError(f"Multimodal relay {kind} group not found")
+        if group.route_group_id.strip():
+            raise ValueError(
+                f"Multimodal relay {kind} group must be an execution group"
+            )
+        if not _relay_group_supports(group, kind):
+            raise ValueError(
+                f"Multimodal relay {kind} group {group.name} does not support {kind}"
+            )
+    await app_state.settings_repo.upsert_settings(
+        [
+            SettingItem(
+                key=SETTING_MULTIMODAL_RELAY_ENABLED,
+                value="true" if payload.enabled else "false",
+            ),
+            SettingItem(
+                key=SETTING_MULTIMODAL_IMAGE_GROUP_ID,
+                value=str(payload.image_group_id or "").strip(),
+            ),
+            SettingItem(
+                key=SETTING_MULTIMODAL_AUDIO_GROUP_ID,
+                value=str(payload.audio_group_id or "").strip(),
+            ),
+        ]
+    )
+    return await _load_multimodal_relay_config()
 
 
 async def list_gateway_api_keys(

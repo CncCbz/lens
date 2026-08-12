@@ -1,8 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type CSSProperties } from "react";
 import { Badge } from "@/components/ui/badge";
-import type { RequestLogDetail, RequestLogItem } from "@/lib/api";
+import type {
+  RequestLogAttempt,
+  RequestLogDetail,
+  RequestLogItem,
+} from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { ProtocolBadge, RequestOutcomeBadge } from "./components";
 import {
@@ -10,11 +14,9 @@ import {
   formatErrorDisplay,
   formatMaybeMoney,
   formatMs,
-  formatSseAsJson,
   formatTps,
   getModelChain,
   getResolvedGroupName,
-  isSseText,
   titleForLocale,
 } from "./shared";
 import { JsonViewer } from "./viewer";
@@ -34,10 +36,7 @@ function SummaryStat({ label, value }: { label: string; value: string }) {
 }
 
 type TraceKey =
-  | "inbound-request"
-  | "upstream-request"
-  | "upstream-response"
-  | "client-response";
+  "inbound-request" | "client-response" | `req-${number}` | `resp-${number}`;
 
 type TraceDefinition = {
   key: TraceKey;
@@ -48,7 +47,7 @@ type TraceDefinition = {
   titleEn: string;
   protocolZh: string;
   protocolEn: string;
-  tone: "chat" | "responses";
+  tone: "chat" | "responses" | "relay" | "error";
   request: boolean;
 };
 
@@ -64,30 +63,6 @@ const TRACE_DEFINITIONS: TraceDefinition[] = [
     protocolEn: "Chat",
     tone: "chat",
     request: true,
-  },
-  {
-    key: "upstream-request",
-    step: "02",
-    directionZh: "Lens → 上游",
-    directionEn: "Lens → Upstream",
-    titleZh: "上游请求",
-    titleEn: "Upstream request",
-    protocolZh: "上游",
-    protocolEn: "Upstream",
-    tone: "responses",
-    request: true,
-  },
-  {
-    key: "upstream-response",
-    step: "03",
-    directionZh: "上游 → Lens",
-    directionEn: "Upstream → Lens",
-    titleZh: "上游响应",
-    titleEn: "Upstream response",
-    protocolZh: "上游",
-    protocolEn: "Upstream",
-    tone: "responses",
-    request: false,
   },
   {
     key: "client-response",
@@ -123,10 +98,56 @@ const PROTOCOL_ROUTES: Partial<Record<RequestLogItem["protocol"], string>> = {
   gemini: "/v1beta/models/{model}:generateContent",
 };
 
-function getTraceDefinition(key: TraceKey) {
+function getTraceDefinition(key: TraceKey, attempts: RequestLogAttempt[]) {
+  if (key.startsWith("req-")) {
+    const index = Number(key.split("-")[1]);
+    return requestTraceDefinition(index, attempts[index]);
+  }
+  if (key.startsWith("resp-")) {
+    const index = Number(key.split("-")[1]);
+    return responseTraceDefinition(index, attempts[index]);
+  }
   return (
     TRACE_DEFINITIONS.find((trace) => trace.key === key) ?? TRACE_DEFINITIONS[0]
   );
+}
+
+function requestTraceDefinition(
+  index: number,
+  attempt: RequestLogAttempt,
+): TraceDefinition {
+  const isRelay = Boolean(attempt.relay_kind);
+  return {
+    key: `req-${index}`,
+    step: String(index * 2 + 2).padStart(2, "0"),
+    directionZh: isRelay ? "Lens → 降级组" : "Lens → 上游",
+    directionEn: isRelay ? "Lens → Helper" : "Lens → Upstream",
+    titleZh: isRelay ? "多模态降级请求" : "上游请求",
+    titleEn: isRelay ? "Relay request" : "Upstream request",
+    protocolZh: "上游",
+    protocolEn: "Upstream",
+    tone: isRelay ? "relay" : "responses",
+    request: true,
+  };
+}
+
+function responseTraceDefinition(
+  index: number,
+  attempt: RequestLogAttempt,
+): TraceDefinition {
+  const isRelay = Boolean(attempt.relay_kind);
+  return {
+    key: `resp-${index}`,
+    step: String(index * 2 + 3).padStart(2, "0"),
+    directionZh: isRelay ? "降级组 → Lens" : "上游 → Lens",
+    directionEn: isRelay ? "Helper → Lens" : "Upstream → Lens",
+    titleZh: isRelay ? "降级响应" : "上游响应",
+    titleEn: isRelay ? "Relay response" : "Upstream response",
+    protocolZh: "上游",
+    protocolEn: "Upstream",
+    tone: isRelay ? "relay" : attempt.success ? "responses" : "error",
+    request: false,
+  };
 }
 
 function protocolLabel(
@@ -144,6 +165,12 @@ function traceProtocolLabel(
   const clientProtocol =
     trace.key === "inbound-request" || trace.key === "client-response";
   if (clientProtocol) return protocolLabel(detail.protocol, locale);
+  if (
+    typeof trace.key === "string" &&
+    (trace.key.startsWith("req-") || trace.key.startsWith("resp-"))
+  ) {
+    return titleForLocale(locale, trace.protocolZh, trace.protocolEn);
+  }
   return detail.upstream_protocol
     ? protocolLabel(detail.upstream_protocol, locale)
     : titleForLocale(locale, trace.protocolZh, trace.protocolEn);
@@ -153,8 +180,25 @@ function traceBadgeLabel(
   trace: TraceDefinition,
   detail: RequestLogDetail,
   locale: "zh-CN" | "en-US",
+  attempt?: RequestLogAttempt,
 ) {
-  if (trace.tone === "responses") {
+  if (attempt) {
+    if (attempt.relay_kind) {
+      return `${titleForLocale(locale, "降级", "Relay")} · ${attempt.relay_kind}`;
+    }
+    if (!trace.request) {
+      if (!attempt.success) {
+        return `${attempt.status_code ?? "ERR"} · ${titleForLocale(locale, "报错", "Failed")}`;
+      }
+      return `${attempt.status_code ?? 200} · ${titleForLocale(locale, "成功", "OK")}`;
+    }
+    return `${titleForLocale(locale, "上游", "Upstream")} ${titleForLocale(
+      locale,
+      "请求",
+      "request",
+    )}`;
+  }
+  if (trace.tone === "responses" || trace.tone === "error") {
     const upstreamProtocol = detail.upstream_protocol
       ? protocolLabel(detail.upstream_protocol, locale)
       : titleForLocale(locale, "上游", "Upstream");
@@ -185,17 +229,21 @@ function traceRoute(
   trace: TraceDefinition,
   detail: RequestLogDetail,
   locale: "zh-CN" | "en-US",
+  attempt?: RequestLogAttempt,
 ) {
   if (trace.key === "inbound-request") {
     return inboundRoute(detail.protocol, locale);
   }
-  if (trace.key === "upstream-request") {
-    return detail.channel_name || detail.channel_id || "Upstream channel";
-  }
-  if (trace.key === "upstream-response") {
-    return detail.status_code
-      ? `${detail.status_code} · ${titleForLocale(locale, "上游响应", "Upstream response")}`
-      : titleForLocale(locale, "上游响应", "Upstream response");
+  if (attempt) {
+    if (!trace.request) {
+      return attempt.success
+        ? `${attempt.status_code ?? 200} · ${titleForLocale(locale, "上游响应", "Upstream response")}`
+        : `${attempt.status_code ?? "ERR"} · ${titleForLocale(locale, "上游报错", "Upstream error")}`;
+    }
+    const channel = attempt.channel_name || "Upstream channel";
+    if (attempt.request_url) return attempt.request_url;
+    if (attempt.model_name) return `${channel} · ${attempt.model_name}`;
+    return channel;
   }
   const responseLabel = detail.is_stream
     ? titleForLocale(locale, "流式响应", "Streaming response")
@@ -212,6 +260,8 @@ function TraceCard({
   active,
   onSelect,
   className,
+  attempt,
+  style,
 }: {
   trace: TraceDefinition;
   detail: RequestLogDetail;
@@ -219,11 +269,17 @@ function TraceCard({
   active: boolean;
   onSelect: () => void;
   className: string;
+  attempt?: RequestLogAttempt;
+  style?: CSSProperties;
 }) {
   const toneClass =
     trace.tone === "chat"
       ? "bg-primary/10 text-primary"
-      : "bg-violet-500/10 text-violet-700 dark:text-violet-300";
+      : trace.tone === "relay"
+        ? "bg-amber-500/15 text-amber-700 dark:text-amber-300"
+        : trace.tone === "error"
+          ? "bg-red-500/15 text-red-700 dark:text-red-300"
+          : "bg-violet-500/10 text-violet-700 dark:text-violet-300";
 
   return (
     <button
@@ -234,6 +290,7 @@ function TraceCard({
         active && "border-primary shadow-md ring-1 ring-primary/15",
         className,
       )}
+      style={style}
       onClick={onSelect}
       aria-label={titleForLocale(
         locale,
@@ -252,14 +309,14 @@ function TraceCard({
             toneClass,
           )}
         >
-          {traceBadgeLabel(trace, detail, locale)}
+          {traceBadgeLabel(trace, detail, locale, attempt)}
         </Badge>
       </span>
       <span className="mt-0.5 flex min-w-0 items-center gap-1 text-[9px] text-muted-foreground">
         <span className="shrink-0 font-bold tabular-nums">{trace.step}</span>
         <span aria-hidden="true">·</span>
         <span className="truncate font-mono">
-          {traceRoute(trace, detail, locale)}
+          {traceRoute(trace, detail, locale, attempt)}
         </span>
       </span>
     </button>
@@ -272,18 +329,21 @@ function FlowLane({
   subtitle,
   tone,
   connectionYs,
+  relayYs,
 }: {
   left: string;
   title: string;
   subtitle: string;
   tone: "client" | "gateway" | "upstream";
   connectionYs: number[];
+  relayYs?: number[];
 }) {
   const toneClass = {
     client: "bg-primary",
     gateway: "bg-stone-400",
     upstream: "bg-violet-600",
   }[tone];
+  const relaySet = new Set(relayYs ?? []);
 
   const headerLeft = tone === "upstream" ? "88%" : `calc(${left} + 8px)`;
 
@@ -297,7 +357,10 @@ function FlowLane({
         {connectionYs.map((connectionY) => (
           <span
             key={connectionY}
-            className={cn("absolute -left-px h-7 w-1 rounded-full", toneClass)}
+            className={cn(
+              "absolute -left-px h-7 w-1 rounded-full",
+              relaySet.has(connectionY) ? "bg-amber-500" : toneClass,
+            )}
             style={{ top: connectionY - 14 }}
           />
         ))}
@@ -327,41 +390,53 @@ function TraceDetail({
   locale: "zh-CN" | "en-US";
 }) {
   const isInboundRequest = trace.key === "inbound-request";
-  const isUpstreamRequest = trace.key === "upstream-request";
-  const isUpstreamResponse = trace.key === "upstream-response";
+  const isClientResponse = trace.key === "client-response";
+  const isRequestNode =
+    typeof trace.key === "string" && trace.key.startsWith("req-");
+  const isResponseNode =
+    typeof trace.key === "string" && trace.key.startsWith("resp-");
+  const isAttempt = isRequestNode || isResponseNode;
+  const attemptIndex = isAttempt ? Number(trace.key.split("-")[1]) : -1;
+  const attempt = isAttempt ? detail.attempts[attemptIndex] : undefined;
+  const isRelayAttempt = Boolean(attempt?.relay_kind);
   const headers = isInboundRequest
     ? detail.request_headers
-    : isUpstreamRequest
-      ? detail.upstream_headers
-      : isUpstreamResponse
-        ? detail.upstream_response_headers
+    : isRequestNode
+      ? (attempt?.request_headers ?? null)
+      : isResponseNode
+        ? (attempt?.response_headers ?? null)
         : detail.client_response_headers;
   const rawContent = isInboundRequest
     ? detail.client_request_content
-    : isUpstreamRequest && detail.channel_id
-      ? (detail.upstream_request_content ?? detail.request_content)
-      : isUpstreamResponse
-        ? detail.upstream_response_content
-        : detail.response_content;
-  const content = isUpstreamResponse
-    ? (detail.upstream_response_distilled ??
-      (rawContent && isSseText(rawContent)
-        ? formatSseAsJson(rawContent)
-        : rawContent))
-    : rawContent;
+    : isRequestNode
+      ? (attempt?.request_body ?? null)
+      : isResponseNode
+        ? (attempt?.response_body ?? null)
+        : isClientResponse
+          ? detail.response_content
+          : null;
+  const content = rawContent;
   const headerTitle = isInboundRequest
     ? titleForLocale(locale, "入站请求头", "Inbound headers")
-    : isUpstreamRequest
-      ? titleForLocale(locale, "上游请求头", "Upstream headers")
-      : isUpstreamResponse
-        ? titleForLocale(locale, "上游响应头", "Upstream response headers")
+    : isRequestNode
+      ? isRelayAttempt
+        ? titleForLocale(locale, "降级请求头", "Relay headers")
+        : titleForLocale(locale, "上游请求头", "Upstream headers")
+      : isResponseNode
+        ? isRelayAttempt
+          ? titleForLocale(locale, "降级响应头", "Relay response headers")
+          : titleForLocale(locale, "上游响应头", "Upstream response headers")
         : titleForLocale(locale, "下游响应头", "Client response headers");
   const contentTitle = isInboundRequest
     ? titleForLocale(locale, "入站请求体", "Inbound body")
-    : isUpstreamRequest
-      ? titleForLocale(locale, "上游请求体", "Upstream body")
-      : isUpstreamResponse
-        ? titleForLocale(locale, "上游响应体", "Upstream body")
+    : isRequestNode
+      ? isRelayAttempt
+        ? titleForLocale(locale, "降级请求体", "Relay body")
+        : titleForLocale(locale, "上游请求体", "Upstream body")
+      : isResponseNode
+        ? isRelayAttempt
+          ? titleForLocale(locale, "降级响应体", "Relay response body")
+          : titleForLocale(locale, "上游响应体", "Upstream response body")
         : titleForLocale(locale, "下游响应体", "Client response body");
   const headerEmptyText = isInboundRequest
     ? titleForLocale(
@@ -369,13 +444,19 @@ function TraceDetail({
         "当前日志未保存下游请求头",
         "Client request headers are not stored",
       )
-    : isUpstreamRequest
-      ? titleForLocale(
-          locale,
-          "当前日志未保存上游请求头",
-          "Upstream request headers are not stored",
-        )
-      : isUpstreamResponse
+    : isRequestNode
+      ? isRelayAttempt
+        ? titleForLocale(
+            locale,
+            "当前日志未保存降级请求头",
+            "Relay request headers are not stored",
+          )
+        : titleForLocale(
+            locale,
+            "当前日志未保存上游请求头",
+            "Upstream request headers are not stored",
+          )
+      : isResponseNode
         ? titleForLocale(
             locale,
             "当前日志未保存上游响应头",
@@ -392,11 +473,11 @@ function TraceDetail({
         "当前日志未保存下游原始请求体",
         "Raw client request body is not stored",
       )
-    : isUpstreamResponse
+    : isResponseNode
       ? titleForLocale(
           locale,
-          "当前日志未保存上游原始响应体",
-          "Raw upstream response body is not stored",
+          "当前日志未保存上游响应体",
+          "Upstream response body is not stored",
         )
       : titleForLocale(locale, "无内容", "No content");
 
@@ -415,21 +496,27 @@ function TraceDetail({
                 "h-5 px-1.5 text-[10px] font-semibold",
                 trace.tone === "chat"
                   ? "bg-primary/10 text-primary"
-                  : "bg-violet-500/10 text-violet-700 dark:text-violet-300",
+                  : trace.tone === "relay"
+                    ? "bg-amber-500/15 text-amber-700 dark:text-amber-300"
+                    : trace.tone === "error"
+                      ? "bg-red-500/15 text-red-700 dark:text-red-300"
+                      : "bg-violet-500/10 text-violet-700 dark:text-violet-300",
               )}
             >
-              {traceBadgeLabel(trace, detail, locale)}
+              {traceBadgeLabel(trace, detail, locale, attempt)}
             </Badge>
-            <Badge variant="outline" className="h-5 px-1.5 text-[10px]">
-              {titleForLocale(
-                locale,
-                isInboundRequest || isUpstreamResponse ? "原始" : "已转换",
-                isInboundRequest || isUpstreamResponse ? "Raw" : "Converted",
-              )}
-            </Badge>
+            {!isAttempt ? (
+              <Badge variant="outline" className="h-5 px-1.5 text-[10px]">
+                {titleForLocale(
+                  locale,
+                  isInboundRequest ? "原始" : "已转换",
+                  isInboundRequest ? "Raw" : "Converted",
+                )}
+              </Badge>
+            ) : null}
           </div>
           <div className="mt-1 truncate font-mono text-[10px] text-muted-foreground">
-            {traceRoute(trace, detail, locale)}
+            {traceRoute(trace, detail, locale, attempt)}
           </div>
         </div>
         <span className="text-[10px] text-muted-foreground">
@@ -440,6 +527,51 @@ function TraceDetail({
           )}
         </span>
       </header>
+      {isAttempt && attempt ? (
+        <div className="flex flex-wrap gap-x-4 gap-y-1 border-b bg-muted/20 px-3 py-2 text-[10px] text-muted-foreground sm:px-4">
+          <span>
+            {titleForLocale(locale, "上游：", "Upstream: ")}
+            <strong className="font-semibold text-foreground">
+              {attempt.channel_name || "n/a"}
+            </strong>
+          </span>
+          {attempt.model_name ? (
+            <span>
+              {titleForLocale(locale, "模型：", "Model: ")}
+              <strong className="font-semibold text-foreground">
+                {attempt.model_name}
+              </strong>
+            </span>
+          ) : null}
+          <span>
+            {titleForLocale(locale, "耗时：", "Duration: ")}
+            <strong className="font-semibold text-foreground">
+              {formatMs(attempt.duration_ms)}
+            </strong>
+          </span>
+          {isRequestNode ? (
+            attempt.request_url ? (
+              <span className="min-w-0 flex-1 truncate text-right">
+                {attempt.request_url}
+              </span>
+            ) : null
+          ) : (
+            <span>
+              {titleForLocale(locale, "状态码：", "Status: ")}
+              <strong
+                className={cn(
+                  "font-semibold",
+                  attempt.success
+                    ? "text-foreground"
+                    : "text-red-600 dark:text-red-400",
+                )}
+              >
+                {attempt.status_code ?? "ERR"}
+              </strong>
+            </span>
+          )}
+        </div>
+      ) : null}
       <div className="grid min-h-0 flex-1 sm:grid-cols-2">
         <JsonViewer
           key={`${trace.key}-headers-${detail.id}`}
@@ -463,18 +595,30 @@ function TraceDetail({
           {isInboundRequest
             ? titleForLocale(locale, "Lens 接收到的格式：", "Lens received: ") +
               protocolLabel(detail.protocol, locale)
-            : isUpstreamRequest
-              ? titleForLocale(
-                  locale,
-                  "上游请求由 Lens 转换生成",
-                  "Upstream request generated by Lens",
-                )
-              : isUpstreamResponse
+            : isRequestNode
+              ? isRelayAttempt
                 ? titleForLocale(
                     locale,
-                    "当前日志展示下游最终响应内容",
-                    "Current log stores the final client response",
+                    "媒体内容转发至降级组生成描述",
+                    "Media forwarded to helper group for description",
                   )
+                : titleForLocale(
+                    locale,
+                    "上游请求由 Lens 转换生成",
+                    "Upstream request generated by Lens",
+                  )
+              : isResponseNode
+                ? attempt?.success
+                  ? titleForLocale(
+                      locale,
+                      "上游请求成功，响应已接收",
+                      "Upstream succeeded, response received",
+                    )
+                  : titleForLocale(
+                      locale,
+                      "上游请求失败，错误已记录",
+                      "Upstream request failed, error recorded",
+                    )
                 : titleForLocale(
                     locale,
                     "下游最终收到的格式：",
@@ -482,11 +626,19 @@ function TraceDetail({
                   ) + protocolLabel(detail.protocol, locale)}
         </span>
         <span>
-          {isInboundRequest || isUpstreamRequest
+          {isInboundRequest || isRequestNode
             ? titleForLocale(locale, "下一跳：", "Next: ") +
-              (isInboundRequest ? "Lens → 上游" : "上游")
+              (isInboundRequest
+                ? "Lens → 上游"
+                : isRelayAttempt
+                  ? titleForLocale(locale, "降级组", "Helper")
+                  : "上游")
             : titleForLocale(locale, "上一跳：", "Previous: ") +
-              (isUpstreamResponse ? "Lens → 下游" : "上游 → Lens")}
+              (isResponseNode
+                ? isRelayAttempt
+                  ? titleForLocale(locale, "降级组", "Helper")
+                  : "上游"
+                : "上游 → Lens")}
         </span>
       </footer>
     </section>
@@ -501,6 +653,14 @@ export function RequestLogDetailPanel({
   locale: "zh-CN" | "en-US";
 }) {
   const [activeTrace, setActiveTrace] = useState<TraceKey>("inbound-request");
+  const attempts = detail.attempts;
+  const reqYs = attempts.map((_, index) => 137 + index * 112);
+  const respYs = reqYs.map((y) => y + 56);
+  const footerY = respYs.length > 0 ? respYs[respYs.length - 1] + 56 : 193;
+  const flowHeight = footerY + 40;
+  const relayYs = attempts.flatMap((attempt, index) =>
+    attempt.relay_kind ? [reqYs[index], respYs[index]] : [],
+  );
   const errorDisplay = formatErrorDisplay(detail.error_message);
   const running =
     detail.lifecycle_status === "connecting" ||
@@ -508,8 +668,14 @@ export function RequestLogDetailPanel({
   const modelName = detail.reasoning_effort
     ? `${getModelChain(detail)} ${detail.reasoning_effort}`
     : getModelChain(detail);
-  const trace = getTraceDefinition(activeTrace);
-  const channelLabel = detail.channel_name || detail.channel_id || "n/a";
+  const trace = getTraceDefinition(activeTrace, attempts);
+  const channelLabel = [
+    ...new Set(
+      attempts
+        .map((attempt) => attempt.channel_name)
+        .filter((name): name is string => Boolean(name)),
+    ),
+  ].join(" · ");
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-3">
@@ -582,8 +748,9 @@ export function RequestLogDetailPanel({
         </header>
         <div className="overflow-x-auto">
           <div
-            className="relative h-[360px] min-w-[800px] overflow-hidden bg-muted/10"
+            className="relative min-w-[800px] overflow-hidden bg-muted/10"
             style={{
+              height: flowHeight,
               backgroundImage:
                 "radial-gradient(circle, var(--border) 0.75px, transparent 0.75px)",
               backgroundSize: "16px 16px",
@@ -596,7 +763,7 @@ export function RequestLogDetailPanel({
                 detail.user_agent || titleForLocale(locale, "客户端", "Client")
               }
               tone="client"
-              connectionYs={[78, 290]}
+              connectionYs={[78, footerY]}
             />
             <FlowLane
               left="50%"
@@ -607,19 +774,21 @@ export function RequestLogDetailPanel({
                 "Routing · conversion",
               )}
               tone="gateway"
-              connectionYs={[78, 138, 214, 290]}
+              connectionYs={[78, ...reqYs, ...respYs, footerY]}
+              relayYs={relayYs}
             />
             <FlowLane
               left="95%"
               title={titleForLocale(locale, "上游渠道", "Upstream")}
-              subtitle={channelLabel}
+              subtitle={channelLabel || "n/a"}
               tone="upstream"
-              connectionYs={[138, 214]}
+              connectionYs={[...reqYs, ...respYs]}
+              relayYs={relayYs}
             />
 
             <svg
               className="pointer-events-none absolute inset-0 h-full w-full"
-              viewBox="0 0 1000 360"
+              viewBox={`0 0 1000 ${flowHeight}`}
               preserveAspectRatio="none"
               aria-hidden="true"
             >
@@ -637,6 +806,26 @@ export function RequestLogDetailPanel({
                     fill="var(--muted-foreground)"
                   />
                 </marker>
+                <marker
+                  id="trace-arrow-amber"
+                  markerWidth="8"
+                  markerHeight="8"
+                  refX="7"
+                  refY="4"
+                  orient="auto"
+                >
+                  <path d="M 0 0 L 8 4 L 0 8 z" fill="#f59e0b" />
+                </marker>
+                <marker
+                  id="trace-arrow-red"
+                  markerWidth="8"
+                  markerHeight="8"
+                  refX="7"
+                  refY="4"
+                  orient="auto"
+                >
+                  <path d="M 0 0 L 8 4 L 0 8 z" fill="#ef4444" />
+                </marker>
               </defs>
               <g
                 stroke="var(--muted-foreground)"
@@ -651,28 +840,68 @@ export function RequestLogDetailPanel({
                   y2="78"
                   markerEnd="url(#trace-arrow-right)"
                 />
-                <line x1="500" y1="138" x2="560" y2="138" />
-                <line
-                  x1="810"
-                  y1="138"
-                  x2="950"
-                  y2="138"
-                  markerEnd="url(#trace-arrow-right)"
-                />
-                <line x1="950" y1="214" x2="810" y2="214" />
-                <line
-                  x1="560"
-                  y1="214"
-                  x2="500"
-                  y2="214"
-                  markerEnd="url(#trace-arrow-right)"
-                />
-                <line x1="500" y1="290" x2="350" y2="290" />
+                {reqYs.map((rowY, index) => {
+                  const attempt = attempts[index];
+                  const stroke = attempt.relay_kind
+                    ? "#f59e0b"
+                    : "var(--muted-foreground)";
+                  const marker = attempt.relay_kind
+                    ? "url(#trace-arrow-amber)"
+                    : "url(#trace-arrow-right)";
+                  return (
+                    <g
+                      key={`req-${index}`}
+                      stroke={stroke}
+                      strokeOpacity="0.75"
+                      strokeWidth="1.8"
+                    >
+                      <line x1="500" y1={rowY} x2="560" y2={rowY} />
+                      <line
+                        x1="810"
+                        y1={rowY}
+                        x2="950"
+                        y2={rowY}
+                        markerEnd={marker}
+                      />
+                    </g>
+                  );
+                })}
+                {respYs.map((rowY, index) => {
+                  const attempt = attempts[index];
+                  const stroke = attempt.relay_kind
+                    ? "#f59e0b"
+                    : attempt.success
+                      ? "var(--muted-foreground)"
+                      : "#ef4444";
+                  const marker = attempt.relay_kind
+                    ? "url(#trace-arrow-amber)"
+                    : attempt.success
+                      ? "url(#trace-arrow-right)"
+                      : "url(#trace-arrow-red)";
+                  return (
+                    <g
+                      key={`resp-${index}`}
+                      stroke={stroke}
+                      strokeOpacity="0.75"
+                      strokeWidth="1.8"
+                    >
+                      <line x1="950" y1={rowY} x2="810" y2={rowY} />
+                      <line
+                        x1="560"
+                        y1={rowY}
+                        x2="500"
+                        y2={rowY}
+                        markerEnd={marker}
+                      />
+                    </g>
+                  );
+                })}
+                <line x1="500" y1={footerY} x2="350" y2={footerY} />
                 <line
                   x1="100"
-                  y1="290"
+                  y1={footerY}
                   x2="50"
-                  y2="290"
+                  y2={footerY}
                   markerEnd="url(#trace-arrow-right)"
                 />
               </g>
@@ -686,29 +915,40 @@ export function RequestLogDetailPanel({
               onSelect={() => setActiveTrace("inbound-request")}
               className="left-[10%] top-[54px] w-[25%]"
             />
+            {reqYs.map((rowY, index) => (
+              <TraceCard
+                key={`req-${index}`}
+                trace={requestTraceDefinition(index, attempts[index])}
+                attempt={attempts[index]}
+                detail={detail}
+                locale={locale}
+                active={activeTrace === `req-${index}`}
+                onSelect={() => setActiveTrace(`req-${index}`)}
+                className="left-[56%] w-[25%]"
+                {...{ style: { top: rowY - 23 } }}
+              />
+            ))}
+            {respYs.map((rowY, index) => (
+              <TraceCard
+                key={`resp-${index}`}
+                trace={responseTraceDefinition(index, attempts[index])}
+                attempt={attempts[index]}
+                detail={detail}
+                locale={locale}
+                active={activeTrace === `resp-${index}`}
+                onSelect={() => setActiveTrace(`resp-${index}`)}
+                className="left-[56%] w-[25%]"
+                {...{ style: { top: rowY - 23 } }}
+              />
+            ))}
             <TraceCard
               trace={TRACE_DEFINITIONS[1]}
               detail={detail}
               locale={locale}
-              active={activeTrace === "upstream-request"}
-              onSelect={() => setActiveTrace("upstream-request")}
-              className="left-[56%] top-[114px] w-[25%]"
-            />
-            <TraceCard
-              trace={TRACE_DEFINITIONS[2]}
-              detail={detail}
-              locale={locale}
-              active={activeTrace === "upstream-response"}
-              onSelect={() => setActiveTrace("upstream-response")}
-              className="left-[56%] top-[190px] w-[25%]"
-            />
-            <TraceCard
-              trace={TRACE_DEFINITIONS[3]}
-              detail={detail}
-              locale={locale}
               active={activeTrace === "client-response"}
               onSelect={() => setActiveTrace("client-response")}
-              className="left-[10%] top-[266px] w-[25%]"
+              className="left-[10%] w-[25%]"
+              {...{ style: { top: footerY - 23 } }}
             />
           </div>
         </div>

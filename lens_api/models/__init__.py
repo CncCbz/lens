@@ -9,6 +9,7 @@ from pydantic import (
     ConfigDict,
     Field,
     HttpUrl,
+    computed_field,
     field_validator,
     model_validator,
 )
@@ -16,6 +17,27 @@ from pydantic import (
 
 class StrictBaseModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+
+_ALL_MODALITIES = ("text", "image", "video", "pdf", "audio")
+
+
+def resolve_effective_modalities(group: "ModelGroup") -> list[str]:
+    """Modalities a group effectively supports, honoring manual overrides."""
+    mode = getattr(group, "multimodal", ModelGroupMultimodalMode.AUTO)
+    if mode == ModelGroupMultimodalMode.ON:
+        return list(_ALL_MODALITIES)
+    if mode == ModelGroupMultimodalMode.OFF:
+        return []
+    if mode == ModelGroupMultimodalMode.MANUAL:
+        overrides = getattr(group, "multimodal_overrides", None)
+        if isinstance(overrides, dict):
+            return [modality for modality, supported in overrides.items() if supported]
+        return []
+    resolved = getattr(group, "multimodal_resolved", None)
+    if isinstance(resolved, dict):
+        return [modality for modality, supported in resolved.items() if supported]
+    return []
 
 
 def normalize_base_url(value: Any) -> Any:
@@ -131,6 +153,14 @@ class ModelGroupSyncFilterMode(str, Enum):
     NONE = ""
     CONTAINS = "contains"
     REGEX = "regex"
+
+
+class ModelGroupMultimodalMode(str, Enum):
+    AUTO = "auto"
+    MANUAL = "manual"
+    # Legacy values kept for backward compatibility with stored groups.
+    ON = "on"
+    OFF = "off"
 
 
 class CronjobStatus(str, Enum):
@@ -610,6 +640,14 @@ class ModelGroup(StrictBaseModel):
     cache_read_price_per_million: float = 0.0
     cache_write_price_per_million: float = 0.0
     items: list["ModelGroupItem"] = Field(default_factory=list)
+    multimodal: ModelGroupMultimodalMode = ModelGroupMultimodalMode.AUTO
+    multimodal_resolved: dict[str, bool] = Field(default_factory=dict)
+    multimodal_overrides: dict[str, bool] = Field(default_factory=dict)
+
+    @computed_field
+    @property
+    def effective_modalities(self) -> list[str]:
+        return resolve_effective_modalities(self)
 
     @model_validator(mode="after")
     def validate_param_override(self) -> "ModelGroup":
@@ -661,6 +699,8 @@ class ModelGroupCreate(StrictBaseModel):
     sync_filter_mode: ModelGroupSyncFilterMode = ModelGroupSyncFilterMode.NONE
     sync_filter_query: str = ""
     items: list[ModelGroupItemInput] = Field(default_factory=list)
+    multimodal: ModelGroupMultimodalMode = ModelGroupMultimodalMode.AUTO
+    multimodal_overrides: dict[str, bool] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def validate_param_override(self) -> "ModelGroupCreate":
@@ -690,6 +730,8 @@ class ModelGroupUpdate(StrictBaseModel):
     sync_filter_mode: ModelGroupSyncFilterMode | None = None
     sync_filter_query: str | None = None
     items: list[ModelGroupItemInput] | None = None
+    multimodal: ModelGroupMultimodalMode | None = None
+    multimodal_overrides: dict[str, bool] | None = None
 
     @model_validator(mode="after")
     def validate_param_override(self) -> "ModelGroupUpdate":
@@ -1051,6 +1093,40 @@ class SettingsUpdate(StrictBaseModel):
     items: list[SettingItem]
 
 
+class MultimodalRelayGroupStatus(StrictBaseModel):
+    group_id: str
+    name: str
+    route_group_id: str = ""
+    multimodal: ModelGroupMultimodalMode
+    multimodal_overrides: dict[str, bool] = Field(default_factory=dict)
+    effective_modalities: list[str] = Field(default_factory=list)
+    supports_image: bool
+    supports_audio: bool
+    effective_supports_image: bool
+    effective_supports_audio: bool
+    modalities: list[str] = Field(default_factory=list)
+    items: list[ModelGroupItem] = Field(default_factory=list)
+
+
+class MultimodalRelayConfig(StrictBaseModel):
+    enabled: bool = False
+    image_group_id: str = ""
+    audio_group_id: str = ""
+    image_group_name: str = ""
+    audio_group_name: str = ""
+    image_group_valid: bool = False
+    audio_group_valid: bool = False
+    groups: list[MultimodalRelayGroupStatus] = Field(default_factory=list)
+
+
+class MultimodalRelayUpdate(StrictBaseModel):
+    enabled: bool = False
+    image_group_id: str = ""
+    audio_group_id: str = ""
+    group_multimodal: dict[str, ModelGroupMultimodalMode] = Field(default_factory=dict)
+    group_multimodal_overrides: dict[str, dict[str, bool]] = Field(default_factory=dict)
+
+
 class RequestLogItem(StrictBaseModel):
     id: int
     request_id: str = ""
@@ -1111,6 +1187,12 @@ class RequestLogAttempt(StrictBaseModel):
     cooldown_scope: str | None = None
     cooldown_seconds_applied: float | None = None
     reasoning_effort: str | None = None
+    relay_kind: str | None = None
+    request_headers: str | None = None
+    request_url: str | None = None
+    request_body: str | None = None
+    response_headers: str | None = None
+    response_body: str | None = None
 
 
 class RequestLogDetail(RequestLogItem):
@@ -1569,6 +1651,10 @@ __all__ = [
     "ModelGroupItemInput",
     "ModelGroupCreate",
     "ModelGroupUpdate",
+    "ModelGroupMultimodalMode",
+    "MultimodalRelayGroupStatus",
+    "MultimodalRelayConfig",
+    "MultimodalRelayUpdate",
     "normalize_model_group_sync_filter",
     "RouterErrorCooldownScope",
     "RouterErrorPolicy",

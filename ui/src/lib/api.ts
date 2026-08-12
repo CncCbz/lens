@@ -83,6 +83,46 @@ export type ModelGroup = {
   cache_read_price_per_million: number;
   cache_write_price_per_million: number;
   items: ModelGroupItem[];
+  multimodal: ModelGroupMultimodalMode;
+  multimodal_resolved: Record<string, boolean>;
+  multimodal_overrides: Record<string, boolean>;
+  effective_modalities: string[];
+};
+
+export type ModelGroupMultimodalMode = "auto" | "manual" | "on" | "off";
+
+export type MultimodalRelayGroupStatus = {
+  group_id: string;
+  name: string;
+  route_group_id: string;
+  multimodal: ModelGroupMultimodalMode;
+  multimodal_overrides: Record<string, boolean>;
+  effective_modalities: string[];
+  supports_image: boolean;
+  supports_audio: boolean;
+  effective_supports_image: boolean;
+  effective_supports_audio: boolean;
+  modalities: string[];
+  items: ModelGroupItem[];
+};
+
+export type MultimodalRelayConfig = {
+  enabled: boolean;
+  image_group_id: string;
+  audio_group_id: string;
+  image_group_name: string;
+  audio_group_name: string;
+  image_group_valid: boolean;
+  audio_group_valid: boolean;
+  groups: MultimodalRelayGroupStatus[];
+};
+
+export type MultimodalRelayUpdate = {
+  enabled: boolean;
+  image_group_id: string;
+  audio_group_id: string;
+  group_multimodal?: Record<string, ModelGroupMultimodalMode>;
+  group_multimodal_overrides?: Record<string, Record<string, boolean>>;
 };
 
 export type ModelGroupItemPayload = {
@@ -103,6 +143,8 @@ export type ModelGroupPayload = {
   param_override: Record<string, unknown>;
   sync_filter_mode: ModelGroupSyncFilterMode;
   sync_filter_query: string;
+  multimodal?: ModelGroupMultimodalMode;
+  multimodal_overrides?: Record<string, boolean>;
   items: ModelGroupItemPayload[];
 };
 
@@ -919,6 +961,12 @@ export type RequestLogAttempt = {
   error_policy_key?: string | null;
   cooldown_scope?: string | null;
   cooldown_seconds_applied?: number | null;
+  relay_kind?: string | null;
+  request_headers?: string | null;
+  request_url?: string | null;
+  request_body?: string | null;
+  response_headers?: string | null;
+  response_body?: string | null;
 };
 
 export type RequestLogDetail = RequestLogItem & {

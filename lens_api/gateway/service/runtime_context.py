@@ -44,7 +44,9 @@ from ...core.config import settings
 from ...core.db import create_engine, create_session_factory
 from ...core.model_prices import (
     build_group_price_payloads,
+    build_models_dev_capability_index,
     build_models_dev_price_index,
+    resolve_model_capabilities,
 )
 from ...core.protocol_reachability import conversion_matrix
 from ...core.time_zone import resolve_time_zone
@@ -71,10 +73,14 @@ from ...models import (
     ModelGroupCreate,
     ModelGroupEnsureFromSiteRequest,
     ModelGroupEnsureFromSiteResponse,
+    ModelGroupMultimodalMode,
     ModelGroupUpdate,
     ModelPriceItem,
     ModelPriceListResponse,
     ModelPriceUpdate,
+    MultimodalRelayConfig,
+    MultimodalRelayGroupStatus,
+    MultimodalRelayUpdate,
     OverviewDailyPoint,
     OverviewChannelAnalytics,
     OverviewChannelHealthPoint,
@@ -122,6 +128,9 @@ from ...persistence.shared import (
     SETTING_HEALTH_PENALTY_WEIGHT,
     SETTING_HEALTH_WINDOW_SECONDS,
     SETTING_MAX_ATTEMPTS,
+    SETTING_MULTIMODAL_AUDIO_GROUP_ID,
+    SETTING_MULTIMODAL_IMAGE_GROUP_ID,
+    SETTING_MULTIMODAL_RELAY_ENABLED,
     SETTING_RELAY_LOG_BODY_ENABLED,
     SETTING_RELAY_LOG_KEEP_PERIOD,
     SETTING_ROUTER_CIRCUIT_FAILURE_RATE_THRESHOLD,
@@ -233,7 +242,10 @@ FLOAT_SETTING_KEYS = {
     SETTING_HEALTH_PENALTY_WEIGHT,
     SETTING_ROUTER_CIRCUIT_FAILURE_RATE_THRESHOLD,
 }
-BOOLEAN_SETTING_KEYS = {SETTING_RELAY_LOG_BODY_ENABLED}
+BOOLEAN_SETTING_KEYS = {
+    SETTING_RELAY_LOG_BODY_ENABLED,
+    SETTING_MULTIMODAL_RELAY_ENABLED,
+}
 
 
 @lru_cache(maxsize=1)
@@ -358,6 +370,12 @@ class AttemptLog:
     cooldown_scope: str | None = None
     cooldown_seconds_applied: float | None = None
     reasoning_effort: str | None = None
+    relay_kind: str | None = None
+    request_headers: str | None = None
+    request_url: str | None = None
+    request_body: str | None = None
+    response_headers: str | None = None
+    response_body: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -466,6 +484,12 @@ def _attempt_logs_to_dicts(attempts: list[AttemptLog]) -> list[dict[str, Any]]:
             "cooldown_scope",
             "cooldown_seconds_applied",
             "reasoning_effort",
+            "relay_kind",
+            "request_headers",
+            "request_url",
+            "request_body",
+            "response_headers",
+            "response_body",
         ):
             value = getattr(attempt, key)
             if value is not None:

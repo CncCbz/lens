@@ -19,6 +19,9 @@ from ..shared import (
     SETTING_HEALTH_WINDOW_SECONDS,
     SETTING_MODEL_LIST_COMPAT_MODE_ENABLED,
     SETTING_MAX_ATTEMPTS,
+    SETTING_MULTIMODAL_AUDIO_GROUP_ID,
+    SETTING_MULTIMODAL_IMAGE_GROUP_ID,
+    SETTING_MULTIMODAL_RELAY_ENABLED,
     SETTING_PROXY_URL,
     SETTING_RELAY_LOG_BODY_ENABLED,
     SETTING_RELAY_LOG_KEEP_ENABLED,
@@ -181,6 +184,15 @@ class SettingsRepository:
             "model_list_compat_mode_enabled": self._parse_bool(
                 mapping.get(SETTING_MODEL_LIST_COMPAT_MODE_ENABLED), default=False
             ),
+            "multimodal_relay_enabled": self._parse_bool(
+                mapping.get(SETTING_MULTIMODAL_RELAY_ENABLED), default=False
+            ),
+            "multimodal_image_group_id": mapping.get(
+                SETTING_MULTIMODAL_IMAGE_GROUP_ID, ""
+            ).strip(),
+            "multimodal_audio_group_id": mapping.get(
+                SETTING_MULTIMODAL_AUDIO_GROUP_ID, ""
+            ).strip(),
             "router_error_policy_config": self._parse_router_error_policy_config(
                 mapping.get(SETTING_ROUTER_ERROR_POLICY_CONFIG)
             ),

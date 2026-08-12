@@ -789,6 +789,10 @@ class GroupRepository:
                 param_override_json=json.dumps(
                     payload.param_override, ensure_ascii=True
                 ),
+                multimodal=payload.multimodal.value,
+                multimodal_overrides_json=json.dumps(
+                    payload.multimodal_overrides, ensure_ascii=True
+                ),
             )
             session.add(entity)
             await session.flush()
@@ -887,6 +891,12 @@ class GroupRepository:
                         continue
                     entity.sync_filter_mode = ""
                     entity.sync_filter_query = ""
+                elif key == "multimodal" and value is not None:
+                    entity.multimodal = value.value
+                elif key == "multimodal_overrides" and value is not None:
+                    entity.multimodal_overrides_json = json.dumps(
+                        value, ensure_ascii=True
+                    )
                 else:
                     setattr(entity, key, value)
 
@@ -906,6 +916,80 @@ class GroupRepository:
             await session.refresh(entity)
             hydrated = await self._hydrate_groups(session, [entity])
             return hydrated[0]
+
+    async def update_multimodal_modes(self, modes_by_group_id: dict[str, str]) -> None:
+        if not modes_by_group_id:
+            return
+        async with self._session_factory() as session:
+            entities = (
+                (
+                    await session.execute(
+                        select(ModelGroupEntity).where(
+                            ModelGroupEntity.id.in_(list(modes_by_group_id.keys()))
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            for entity in entities:
+                mode = modes_by_group_id.get(entity.id)
+                if mode in {"auto", "manual", "on", "off"}:
+                    entity.multimodal = mode
+            await session.commit()
+
+    async def update_multimodal_overrides(
+        self, overrides_by_group_id: dict[str, dict[str, bool]]
+    ) -> None:
+        if not overrides_by_group_id:
+            return
+        async with self._session_factory() as session:
+            entities = (
+                (
+                    await session.execute(
+                        select(ModelGroupEntity).where(
+                            ModelGroupEntity.id.in_(list(overrides_by_group_id.keys()))
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            for entity in entities:
+                overrides = overrides_by_group_id.get(entity.id)
+                if overrides is None:
+                    continue
+                entity.multimodal_overrides_json = json.dumps(overrides)
+            await session.commit()
+
+    async def update_multimodal_resolved(
+        self, resolved_by_group_id: dict[str, dict[str, bool]]
+    ) -> None:
+        if not resolved_by_group_id:
+            return
+        async with self._session_factory() as session:
+            entities = (
+                (
+                    await session.execute(
+                        select(ModelGroupEntity).where(
+                            ModelGroupEntity.id.in_(list(resolved_by_group_id.keys()))
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            for entity in entities:
+                resolved = resolved_by_group_id.get(entity.id)
+                if resolved is None:
+                    continue
+                entity.multimodal_resolved_json = json.dumps(
+                    {
+                        modality: bool(supported)
+                        for modality, supported in resolved.items()
+                    }
+                )
+            await session.commit()
 
     async def delete_group(self, group_id: str) -> None:
         async with self._session_factory() as session:
@@ -1343,6 +1427,9 @@ class GroupRepository:
             param_override=_parse_json_object(entity.param_override_json),
             sync_filter_mode=entity.sync_filter_mode,
             sync_filter_query=entity.sync_filter_query,
+            multimodal=entity.multimodal,
+            multimodal_resolved=_parse_json_object(entity.multimodal_resolved_json),
+            multimodal_overrides=_parse_json_object(entity.multimodal_overrides_json),
             input_price_per_million=(
                 float(price.input_price_per_million) if price is not None else 0.0
             ),

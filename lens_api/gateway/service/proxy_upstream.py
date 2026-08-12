@@ -399,6 +399,8 @@ async def _record_target_failure(
     effective_user_agent: str,
     upstream_body: dict[str, Any],
     request_content: str | None = None,
+    request_url: str | None = None,
+    request_headers: str | None = None,
     exc: UpstreamRequestError,
 ) -> Response | None:
     message = _format_channel_error(exc.detail)
@@ -483,6 +485,9 @@ async def _record_target_failure(
             reasoning_effort=_extract_request_reasoning_effort(
                 log_ctx.body, upstream_body
             ),
+            request_url=request_url,
+            request_headers=request_headers,
+            request_body=(_dump_log_json(upstream_body) if log_body_enabled else None),
         )
     )
     await log_ctx.update(

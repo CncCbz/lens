@@ -19,6 +19,7 @@ type Copy = {
   requests: string;
   channels: string;
   groups: string;
+  multimodalRelay: string;
   settings: string;
   apiKeys: string;
   cronjobs: string;
@@ -42,6 +43,7 @@ const messages: Record<Locale, Copy> = {
     requests: "请求日志",
     channels: "渠道",
     groups: "模型组",
+    multimodalRelay: "多模态降级",
     settings: "系统设置",
     apiKeys: "API 密钥",
     cronjobs: "定时任务",
@@ -63,6 +65,7 @@ const messages: Record<Locale, Copy> = {
     requests: "Requests",
     channels: "Channels",
     groups: "Group Management",
+    multimodalRelay: "Multimodal Relay",
     settings: "Settings",
     apiKeys: "API Keys",
     cronjobs: "Cron jobs",

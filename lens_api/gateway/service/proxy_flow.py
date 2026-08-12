@@ -41,6 +41,7 @@ from .upstream_http import (
     _is_generic_user_agent,
     _normalize_user_agent,
 )
+from .multimodal_relay import _maybe_relay_multimodal
 from .payload_serialization import _dump_log_json
 from .proxy_upstream import (
     _call_channel,
@@ -227,6 +228,17 @@ async def _proxy_protocol(
             return routing_error
         if plan is None or selection is None:
             raise RuntimeError("Routing plan was not resolved")
+
+        body = await _maybe_relay_multimodal(
+            body=body,
+            protocol=protocol,
+            plan=plan,
+            channels=channels,
+            runtime=runtime,
+            deadline=deadline,
+            log_ctx=log_ctx,
+        )
+        is_stream_body = bool(body.get("stream"))
 
         errors: list[str] = []
         failure_status_codes: list[int | None] = []
@@ -755,6 +767,8 @@ async def _try_target(
             effective_user_agent=effective_user_agent,
             upstream_body=upstream_body,
             request_content=upstream_request_content,
+            request_url=str(upstream.url),
+            request_headers=upstream_headers_content,
             exc=exc,
         )
 
@@ -770,6 +784,11 @@ async def _try_target(
             success=True,
             duration_ms=_elapsed_ms(attempt_started_at),
             reasoning_effort=reasoning_effort,
+            request_url=str(upstream.url),
+            request_headers=upstream_headers_content,
+            request_body=upstream_request_content,
+            response_headers=result.upstream_response_headers,
+            response_body=result.upstream_response_content,
         )
     )
 
