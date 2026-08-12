@@ -149,10 +149,18 @@ def convert_request(
     elif channel_protocol == ProtocolKind.OPENAI_CHAT:
         result = _request_to_chat(client_protocol, body, preserve_reasoning)
     elif client_protocol == ProtocolKind.OPENAI_CHAT:
-        result = _FROM_CHAT_REQUEST[channel_protocol](body)
+        result = (
+            chat_request_to_responses(body, preserve_reasoning=preserve_reasoning)
+            if channel_protocol == ProtocolKind.OPENAI_RESPONSES
+            else _FROM_CHAT_REQUEST[channel_protocol](body)
+        )
     else:
         chat_body = _request_to_chat(client_protocol, body, preserve_reasoning)
-        result = _FROM_CHAT_REQUEST[channel_protocol](chat_body)
+        result = (
+            chat_request_to_responses(chat_body, preserve_reasoning=preserve_reasoning)
+            if channel_protocol == ProtocolKind.OPENAI_RESPONSES
+            else _FROM_CHAT_REQUEST[channel_protocol](chat_body)
+        )
     if target_model:
         result["model"] = target_model
     return result

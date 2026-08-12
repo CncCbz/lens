@@ -7,6 +7,7 @@ from starlette.responses import Response
 
 from lens_api.core.auth import REDACTED_CREDENTIAL_VALUE, redact_sensitive_header_json
 from lens_api.core.config import Settings
+from lens_api.gateway.converters import convert_request
 from lens_api.gateway.converters.chat_to_anthropic import (
     anthropic_request_to_chat,
     chat_request_to_anthropic,
@@ -336,6 +337,119 @@ def test_chat_to_responses_preserves_prompt_cache_routing_fields() -> None:
     assert responses["client_metadata"] == {"x-codex-installation-id": "install-1"}
     assert chat["prompt_cache_key"] == "session-123"
     assert chat["prompt_cache_retention"] == "24h"
+
+
+def test_chat_to_responses_preserves_reasoning_before_tool_calls() -> None:
+    responses = convert_request(
+        ProtocolKind.OPENAI_CHAT,
+        ProtocolKind.OPENAI_RESPONSES,
+        {
+            "model": "deepseek-v4-flash",
+            "messages": [
+                {"role": "user", "content": "look up both values"},
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "reasoning_content": "first reasoning",
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {"name": "lookup", "arguments": '{"id":1}'},
+                        },
+                        {
+                            "id": "call_2",
+                            "type": "function",
+                            "function": {"name": "lookup", "arguments": '{"id":2}'},
+                        },
+                    ],
+                },
+                {"role": "tool", "tool_call_id": "call_1", "content": "one"},
+                {"role": "tool", "tool_call_id": "call_2", "content": "two"},
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "reasoning": "second reasoning",
+                    "tool_calls": [
+                        {
+                            "id": "call_3",
+                            "type": "function",
+                            "function": {"name": "lookup", "arguments": '{"id":3}'},
+                        }
+                    ],
+                },
+                {"role": "tool", "tool_call_id": "call_3", "content": "three"},
+            ],
+        },
+        preserve_reasoning=True,
+    )
+
+    input_items = responses["input"]
+    assert [item.get("type") or item.get("role") for item in input_items] == [
+        "user",
+        "reasoning",
+        "function_call",
+        "function_call",
+        "function_call_output",
+        "function_call_output",
+        "reasoning",
+        "function_call",
+        "function_call_output",
+    ]
+    assert [
+        item["content"][0]["text"]
+        for item in input_items
+        if item.get("type") == "reasoning"
+    ] == ["first reasoning", "second reasoning"]
+
+
+def test_chat_to_responses_pads_missing_tool_call_reasoning() -> None:
+    responses = convert_request(
+        ProtocolKind.OPENAI_CHAT,
+        ProtocolKind.OPENAI_RESPONSES,
+        {
+            "model": "deepseek-v4-flash",
+            "messages": [
+                {"role": "user", "content": "question"},
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {"name": "lookup", "arguments": "{}"},
+                        }
+                    ],
+                },
+                {"role": "tool", "tool_call_id": "call_1", "content": "result"},
+            ],
+        },
+        preserve_reasoning=True,
+    )
+
+    assert responses["input"][1] == {
+        "type": "reasoning",
+        "content": [{"type": "reasoning_text", "text": " "}],
+    }
+
+
+def test_chat_to_responses_drops_reasoning_by_default() -> None:
+    responses = chat_request_to_responses(
+        {
+            "model": "model",
+            "messages": [
+                {"role": "user", "content": "question"},
+                {
+                    "role": "assistant",
+                    "content": "answer",
+                    "reasoning_content": "private reasoning",
+                },
+            ],
+        }
+    )
+
+    assert not any(item.get("type") == "reasoning" for item in responses["input"])
 
 
 def test_responses_roundtrip_preserves_cache_control_breakpoints() -> None:

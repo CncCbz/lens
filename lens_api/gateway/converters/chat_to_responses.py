@@ -77,7 +77,9 @@ def responses_request_to_chat(body: dict[str, Any]) -> dict[str, Any]:
     return chat
 
 
-def chat_request_to_responses(body: dict[str, Any]) -> dict[str, Any]:
+def chat_request_to_responses(
+    body: dict[str, Any], *, preserve_reasoning: bool = False
+) -> dict[str, Any]:
     raw_messages = body.get("messages")
     if not isinstance(raw_messages, list):
         raise ValueError("Chat request messages must be a list")
@@ -105,7 +107,20 @@ def chat_request_to_responses(body: dict[str, Any]) -> dict[str, Any]:
                 _copy_cache_control_from_chat_content(item, message.get("content"))
             input_items.append(item)
             continue
-        if role == "assistant" and isinstance(message.get("tool_calls"), list):
+        tool_calls = message.get("tool_calls")
+        if role == "assistant" and preserve_reasoning:
+            reasoning_text = _chat_message_reasoning_text(message)
+            if not reasoning_text and isinstance(tool_calls, list) and tool_calls:
+                # DeepSeek rejects missing or empty reasoning_text on tool-call replay.
+                reasoning_text = " "
+            if reasoning_text:
+                input_items.append(
+                    {
+                        "type": "reasoning",
+                        "content": [{"type": "reasoning_text", "text": reasoning_text}],
+                    }
+                )
+        if role == "assistant" and isinstance(tool_calls, list):
             text = _chat_content_to_text(message.get("content"))
             if text:
                 content = _chat_content_to_responses_content(
@@ -113,7 +128,7 @@ def chat_request_to_responses(body: dict[str, Any]) -> dict[str, Any]:
                 )
                 _apply_message_cache_control(content, message)
                 input_items.append({"role": "assistant", "content": content})
-            for tool_call in message["tool_calls"]:
+            for tool_call in tool_calls:
                 if not isinstance(tool_call, dict):
                     continue
                 function = tool_call.get("function")
@@ -1049,6 +1064,14 @@ def _chat_content_to_text(content: Any) -> str:
                 if isinstance(text, str):
                     parts.append(text)
         return "\n".join(parts)
+    return ""
+
+
+def _chat_message_reasoning_text(message: dict[str, Any]) -> str:
+    for key in ("reasoning_content", "reasoning"):
+        value = message.get(key)
+        if isinstance(value, str) and value:
+            return value
     return ""
 
 
