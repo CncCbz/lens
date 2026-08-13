@@ -335,8 +335,8 @@ export function GatewayApiKeyDialog({
                         <CommandGroup
                           heading={titleForLocale(
                             locale,
-                            "当前启用模型组",
-                            "Enabled model groups",
+                            "模型组",
+                            "Model groups",
                           )}
                         >
                           {modelGroupOptions.map((option) => {
@@ -387,8 +387,8 @@ export function GatewayApiKeyDialog({
                       )
                     : titleForLocale(
                         locale,
-                        "权限来源于当前启用模型组；留空将无法保存",
-                        "Permissions come from currently enabled model groups; choose at least one",
+                        "权限来源于当前模型组；留空将无法保存",
+                        "Permissions come from the current model groups; choose at least one",
                       )}
                 </FieldDescription>
                 {form.modelMode !== "none" && selectedModels.length > 0 ? (

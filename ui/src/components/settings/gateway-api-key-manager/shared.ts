@@ -272,15 +272,13 @@ export function isGatewayKeyOutOfBalance(item: GatewayApiKey) {
 
 export function buildGatewayModelGroupOptions(groups: ModelGroup[]) {
   const mapping = new Map<string, GatewayModelGroupOption>();
+  const groupById = new Map(groups.map((group) => [group.id, group]));
 
   for (const group of groups) {
-    if (group.route_group_id) {
-      continue;
-    }
-    const enabledItems = group.items.filter((item) => item.enabled);
-    if (enabledItems.length === 0) {
-      continue;
-    }
+    const target = group.route_group_id
+      ? (groupById.get(group.route_group_id) ?? group)
+      : group;
+    const enabledItems = target.items.filter((item) => item.enabled);
     const current =
       mapping.get(group.name) ??
       ({
