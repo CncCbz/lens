@@ -67,6 +67,10 @@ export function GatewayApiKeyManager({ locale }: { locale: Locale }) {
     () => buildGatewayModelGroupOptions(modelGroups),
     [modelGroups],
   );
+  const availableModelGroupNames = useMemo(
+    () => new Set(modelGroupOptions.map((option) => option.name)),
+    [modelGroupOptions],
+  );
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingKey, setEditingKey] = useState<GatewayApiKey | null>(null);
@@ -81,7 +85,15 @@ export function GatewayApiKeyManager({ locale }: { locale: Locale }) {
   }
 
   function openEditDialog(item: GatewayApiKey) {
-    setEditingKey(item);
+    setEditingKey({
+      ...item,
+      allowed_models: item.allowed_models.filter((name) =>
+        availableModelGroupNames.has(name),
+      ),
+      excluded_models: item.excluded_models.filter((name) =>
+        availableModelGroupNames.has(name),
+      ),
+    });
     setDialogOpen(true);
   }
 
