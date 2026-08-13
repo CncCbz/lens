@@ -56,6 +56,17 @@ from .shared import (
     resolve_time_zone,
 )
 from .value_parsing import parse_backup_datetime, parse_optional_datetime
+from ...persistence.shared import primary_attempt_from_list
+
+
+def _restored_attempt_field(attempts: Any, field: str) -> str | None:
+    attempt = primary_attempt_from_list(
+        [item.model_dump(mode="json") for item in attempts or []]
+    )
+    if attempt is None:
+        return None
+    value = str(attempt.get(field) or "").strip()
+    return value or None
 
 
 class BackupReplacersMixin:
@@ -715,6 +726,18 @@ class BackupReplacersMixin:
                     attempts_json=json.dumps(
                         [attempt.model_dump(mode="json") for attempt in item.attempts],
                         ensure_ascii=True,
+                    ),
+                    primary_credential_id=_restored_attempt_field(
+                        item.attempts, "credential_id"
+                    ),
+                    primary_credential_name=_restored_attempt_field(
+                        item.attempts, "credential_name"
+                    ),
+                    primary_attempt_channel_id=_restored_attempt_field(
+                        item.attempts, "channel_id"
+                    ),
+                    primary_attempt_channel_name=_restored_attempt_field(
+                        item.attempts, "channel_name"
                     ),
                     error_message=item.error_message,
                     stats_archived=1 if item.stats_archived else 0,

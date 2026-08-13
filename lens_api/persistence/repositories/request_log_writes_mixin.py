@@ -13,6 +13,7 @@ from ...core.runtime_channel_ids import (
 from ..shared import (
     Any,
     OverviewChannelDailyStatsEntity,
+    primary_attempt_from_list,
     OverviewDimensionDailyStatsEntity,
     OverviewModelDailyStatsEntity,
     REQUEST_LOG_RUNNING_STATUSES,
@@ -33,6 +34,16 @@ from ..shared import (
     update,
     uuid,
 )
+
+
+def _primary_attempt_field(
+    attempts: list[dict[str, Any]] | None, field: str
+) -> str | None:
+    attempt = primary_attempt_from_list(attempts or [])
+    if attempt is None:
+        return None
+    value = str(attempt.get(field) or "").strip()
+    return value or None
 
 
 def _protocol_config_id_for_channel(channel_id: str | None) -> str | None:
@@ -516,6 +527,16 @@ class RequestLogWriteMixin:
                 ),
                 upstream_protocol=upstream_protocol,
                 attempts_json=json.dumps(attempts or [], ensure_ascii=True),
+                primary_credential_id=_primary_attempt_field(attempts, "credential_id"),
+                primary_credential_name=_primary_attempt_field(
+                    attempts, "credential_name"
+                ),
+                primary_attempt_channel_id=_primary_attempt_field(
+                    attempts, "channel_id"
+                ),
+                primary_attempt_channel_name=_primary_attempt_field(
+                    attempts, "channel_name"
+                ),
                 error_message=error_message,
                 stats_archived=(
                     0 if lifecycle_value in REQUEST_LOG_TERMINAL_STATUSES else 1

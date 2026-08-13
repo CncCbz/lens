@@ -261,6 +261,18 @@ class RequestLogEntity(Base):
     client_response_headers: Mapped[str | None] = mapped_column(Text, nullable=True)
     upstream_protocol: Mapped[str | None] = mapped_column(String(40), nullable=True)
     attempts_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    primary_credential_id: Mapped[str | None] = mapped_column(
+        String(160), nullable=True
+    )
+    primary_credential_name: Mapped[str | None] = mapped_column(
+        String(200), nullable=True
+    )
+    primary_attempt_channel_id: Mapped[str | None] = mapped_column(
+        String(160), nullable=True
+    )
+    primary_attempt_channel_name: Mapped[str | None] = mapped_column(
+        String(200), nullable=True
+    )
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     stats_archived: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(

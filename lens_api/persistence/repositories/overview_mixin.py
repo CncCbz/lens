@@ -1,10 +1,18 @@
 from __future__ import annotations
 
+import asyncio
+import time
+
+import time
+
+from sqlalchemy import Float, and_, case, union_all
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from ..shared import (
     Any,
     AsyncSession,
+    cast,
     GatewayApiKeyEntity,
     ImportedStatsDailyEntity,
     ImportedStatsTotalEntity,
@@ -653,75 +661,116 @@ class OverviewMixin:
             await self._settings_repo.get_runtime_settings()
         )
         model_expr = func.nullif(func.trim(RequestLogEntity.upstream_model_name), "")
-        async with self._session_factory() as session:
-            stmt = (
-                select(
-                    model_expr,
-                    RequestLogEntity.channel_id,
-                    RequestLogEntity.channel_name,
-                    RequestLogEntity.success,
-                    RequestLogEntity.latency_ms,
-                    RequestLogEntity.input_tokens,
-                    RequestLogEntity.cache_read_input_tokens,
-                    RequestLogEntity.cache_write_input_tokens,
-                    RequestLogEntity.output_tokens,
-                    RequestLogEntity.total_tokens,
-                    RequestLogEntity.input_cost_usd,
-                    RequestLogEntity.output_cost_usd,
-                    RequestLogEntity.total_cost_usd,
-                    RequestLogEntity.attempts_json,
-                )
-                .where(
-                    RequestLogEntity.lifecycle_status.in_(
-                        [
-                            RequestLogLifecycleStatus.SUCCEEDED.value,
-                            RequestLogLifecycleStatus.FAILED.value,
-                        ]
+
+        async def fetch_rows() -> list[Any]:
+            async with self._session_factory() as session:
+                inner = (
+                    select(
+                        model_expr.label("model"),
+                        self._primary_attempt_field_expr("credential_id").label(
+                            "credential_id"
+                        ),
+                        self._primary_attempt_field_expr("credential_name").label(
+                            "credential_name"
+                        ),
+                        RequestLogEntity.channel_id.label("channel_id"),
+                        RequestLogEntity.channel_name.label("channel_name"),
+                        RequestLogEntity.success,
+                        RequestLogEntity.latency_ms,
+                        RequestLogEntity.input_tokens,
+                        RequestLogEntity.cache_read_input_tokens,
+                        RequestLogEntity.cache_write_input_tokens,
+                        RequestLogEntity.output_tokens,
+                        RequestLogEntity.total_tokens,
+                        RequestLogEntity.input_cost_usd,
+                        RequestLogEntity.output_cost_usd,
+                        RequestLogEntity.total_cost_usd,
                     )
+                    .where(
+                        RequestLogEntity.lifecycle_status.in_(
+                            [
+                                RequestLogLifecycleStatus.SUCCEEDED.value,
+                                RequestLogLifecycleStatus.FAILED.value,
+                            ]
+                        )
+                    )
+                    .where(model_expr.in_(sorted(normalized_model_ids)))
                 )
-                .where(model_expr.in_(sorted(normalized_model_ids)))
-            )
-            stmt = self._apply_request_log_window(stmt, days=days, time_zone=time_zone)
-            stmt = self._apply_gateway_key_filter(stmt, gateway_key_id=gateway_key_id)
-            rows = (await session.execute(stmt)).all()
+                inner = self._apply_request_log_window(
+                    inner, days=days, time_zone=time_zone
+                )
+                inner = self._apply_gateway_key_filter(
+                    inner, gateway_key_id=gateway_key_id
+                )
+                sub = inner.subquery()
+                credential_id_col = sub.c.credential_id
+                credential_name_col = sub.c.credential_name
+                stmt = select(
+                    sub.c.model,
+                    credential_id_col.label("credential_id"),
+                    sub.c.channel_id,
+                    func.max(func.nullif(func.trim(sub.c.channel_name), "")).label(
+                        "channel_name"
+                    ),
+                    func.max(func.nullif(func.trim(credential_name_col), "")).label(
+                        "credential_name"
+                    ),
+                    func.count().label("request_count"),
+                    func.sum(sub.c.success).label("successful_requests"),
+                    func.sum(sub.c.latency_ms).label("latency_ms_sum"),
+                    func.sum(sub.c.input_tokens).label("input_tokens"),
+                    func.sum(sub.c.cache_read_input_tokens).label(
+                        "cache_read_input_tokens"
+                    ),
+                    func.sum(sub.c.cache_write_input_tokens).label(
+                        "cache_write_input_tokens"
+                    ),
+                    func.sum(sub.c.output_tokens).label("output_tokens"),
+                    func.sum(sub.c.total_tokens).label("total_tokens"),
+                    func.sum(sub.c.input_cost_usd).label("input_cost_usd"),
+                    func.sum(sub.c.output_cost_usd).label("output_cost_usd"),
+                    func.sum(sub.c.total_cost_usd).label("total_cost_usd"),
+                ).group_by(sub.c.model, credential_id_col, sub.c.channel_id)
+                rows = (await session.execute(stmt)).all()
+                return list(rows)
+
+        rows = await self._cached_live_rows(
+            (
+                "model_channel_usage",
+                days,
+                gateway_key_id,
+                tuple(sorted(normalized_model_ids)),
+                str(time_zone),
+            ),
+            fetch_rows,
+        )
+        async with self._session_factory() as session:
             cost_multipliers = await self._credential_cost_multipliers_by_id(session)
 
         buckets: dict[tuple[str, str], dict[str, float | str]] = {}
         for row in rows:
-            (
-                model_id,
-                channel_id,
-                channel_name,
-                success,
-                latency_ms,
-                input_tokens,
-                cache_read_input_tokens,
-                cache_write_input_tokens,
-                output_tokens,
-                total_tokens,
-                input_cost_usd,
-                output_cost_usd,
-                total_cost_usd,
-                attempts_json,
-            ) = row
-            normalized_model_id = str(model_id or "").strip()
+            normalized_model_id = str(row.model or "").strip()
             if not normalized_model_id:
                 continue
-            attempts = self._safe_attempt_items(attempts_json)
-            (
-                channel_dimension_id,
-                channel_dimension_name,
-            ) = self._model_channel_usage_identity(channel_id, channel_name, attempts)
-            if not channel_dimension_id:
+            credential_id = str(row.credential_id or "").strip()
+            channel_id = str(row.channel_id or "").strip()
+            dimension_id = credential_id or channel_id
+            if not dimension_id:
                 continue
-            multiplier = self._cost_multiplier_from_attempts(attempts, cost_multipliers)
-            key = (normalized_model_id, channel_dimension_id)
+            channel_name = str(row.channel_name or channel_id)
+            if credential_id:
+                credential_name = str(row.credential_name or "")
+                dimension_name = f"{channel_name} - {credential_name or credential_id}"
+            else:
+                dimension_name = channel_name or dimension_id
+            multiplier = self._row_cost_multiplier(row.credential_id, cost_multipliers)
+            key = (normalized_model_id, dimension_id)
             current = buckets.setdefault(
                 key,
                 {
                     "model_id": normalized_model_id,
-                    "id": channel_dimension_id,
-                    "name": channel_dimension_name or channel_dimension_id,
+                    "id": dimension_id,
+                    "name": dimension_name,
                     "request_count": 0.0,
                     "successful_requests": 0.0,
                     "failed_requests": 0.0,
@@ -737,44 +786,47 @@ class OverviewMixin:
                     "cost_multiplier": multiplier,
                 },
             )
+            request_count = int(row.request_count)
+            successful_requests = int(row.successful_requests or 0)
             current["cost_multiplier"] = multiplier
-            success_value = bool(int(success or 0))
-            current["request_count"] = float(current["request_count"]) + 1.0
-            if success_value:
-                current["successful_requests"] = (
-                    float(current["successful_requests"]) + 1.0
-                )
-            else:
-                current["failed_requests"] = float(current["failed_requests"]) + 1.0
+            current["request_count"] = float(current["request_count"]) + float(
+                request_count
+            )
+            current["successful_requests"] = float(
+                current["successful_requests"]
+            ) + float(successful_requests)
+            current["failed_requests"] = float(current["failed_requests"]) + float(
+                request_count - successful_requests
+            )
             current["latency_ms_sum"] = float(current["latency_ms_sum"]) + float(
-                latency_ms or 0
+                row.latency_ms_sum or 0
             )
             current["input_tokens"] = float(current["input_tokens"]) + float(
-                input_tokens or 0
+                row.input_tokens or 0
             )
             current["cache_read_input_tokens"] = float(
                 current["cache_read_input_tokens"]
-            ) + float(cache_read_input_tokens or 0)
+            ) + float(row.cache_read_input_tokens or 0)
             current["cache_write_input_tokens"] = float(
                 current["cache_write_input_tokens"]
-            ) + float(cache_write_input_tokens or 0)
+            ) + float(row.cache_write_input_tokens or 0)
             current["output_tokens"] = float(current["output_tokens"]) + float(
-                output_tokens or 0
+                row.output_tokens or 0
             )
             current["total_tokens"] = float(current["total_tokens"]) + float(
-                total_tokens or 0
+                row.total_tokens or 0
             )
             current["input_cost_usd"] = (
                 float(current["input_cost_usd"])
-                + float(input_cost_usd or 0.0) * multiplier
+                + float(row.input_cost_usd or 0.0) * multiplier
             )
             current["output_cost_usd"] = (
                 float(current["output_cost_usd"])
-                + float(output_cost_usd or 0.0) * multiplier
+                + float(row.output_cost_usd or 0.0) * multiplier
             )
             current["total_cost_usd"] = (
                 float(current["total_cost_usd"])
-                + float(total_cost_usd or 0.0) * multiplier
+                + float(row.total_cost_usd or 0.0) * multiplier
             )
 
         def metric_value(item: dict[str, float | str]) -> float:
@@ -950,11 +1002,83 @@ class OverviewMixin:
             ]
         return result
 
-    async def _request_log_dimension_rows(
+    @classmethod
+    def _dimension_sql_row_to_dict(cls, row: Any) -> dict[str, float | str]:
+        request_count = int(row.request_count)
+        successful_requests = int(row.successful_requests or 0)
+        return {
+            "date": str(row.date),
+            "dimension_type": str(row.dimension_type),
+            "dimension_id": str(row.dimension_id),
+            "dimension_name": str(row.dimension_name or row.dimension_id),
+            "credential_id": getattr(row, "credential_id", None),
+            "request_count": float(request_count),
+            "successful_requests": float(successful_requests),
+            "failed_requests": float(request_count - successful_requests),
+            "latency_ms_sum": float(row.latency_ms_sum or 0),
+            "first_token_latency_ms_sum": float(row.first_token_latency_ms_sum or 0),
+            "input_tokens": float(row.input_tokens or 0),
+            "cache_read_input_tokens": float(row.cache_read_input_tokens or 0),
+            "cache_write_input_tokens": float(row.cache_write_input_tokens or 0),
+            "output_tokens": float(row.output_tokens or 0),
+            "total_tokens": float(row.total_tokens or 0),
+            "input_cost_usd": float(row.input_cost_usd or 0),
+            "output_cost_usd": float(row.output_cost_usd or 0),
+            "total_cost_usd": float(row.total_cost_usd or 0),
+        }
+
+    def _request_log_dimension_sums(self, sub: Any) -> tuple[Any, ...]:
+        return (
+            func.count().label("request_count"),
+            func.sum(sub.c.success).label("successful_requests"),
+            func.sum(sub.c.latency_ms).label("latency_ms_sum"),
+            func.sum(sub.c.first_token_latency_ms).label("first_token_latency_ms_sum"),
+            func.sum(sub.c.input_tokens).label("input_tokens"),
+            func.sum(sub.c.cache_read_input_tokens).label("cache_read_input_tokens"),
+            func.sum(sub.c.cache_write_input_tokens).label("cache_write_input_tokens"),
+            func.sum(sub.c.output_tokens).label("output_tokens"),
+            func.sum(sub.c.total_tokens).label("total_tokens"),
+            func.sum(sub.c.input_cost_usd).label("input_cost_usd"),
+            func.sum(sub.c.output_cost_usd).label("output_cost_usd"),
+            func.sum(sub.c.total_cost_usd).label("total_cost_usd"),
+        )
+
+    async def _cached_live_rows(
+        self, cache_key: tuple[Any, ...], miss_fn: Any
+    ) -> list[Any]:
+        cache = getattr(self, "_overview_live_cache", None)
+        if cache is None:
+            return await miss_fn()
+        hit = cache.get(cache_key)
+        now = time.monotonic()
+        if hit is not None:
+            stored_at, value = hit
+            if isinstance(value, asyncio.Future):
+                return [
+                    dict(row) if isinstance(row, dict) else row
+                    for row in (await asyncio.shield(value))
+                ]
+            if now - stored_at < 15.0:
+                return [dict(row) if isinstance(row, dict) else row for row in value]
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[list[Any]] = loop.create_future()
+        cache[cache_key] = (now, future)
+        if len(cache) > 64:
+            cache.clear()
+        try:
+            result = await miss_fn()
+        except Exception:
+            cache.pop(cache_key, None)
+            future.cancel()
+            raise
+        cache[cache_key] = (now, result)
+        future.set_result(result)
+        return result
+
+    async def _request_log_primary_dimension_rows(
         self,
         session: AsyncSession,
         *,
-        dimension_type: str,
         days: int,
         date_format: str,
         offset_days: int = 0,
@@ -962,11 +1086,24 @@ class OverviewMixin:
         include_archived: bool = False,
         time_zone: ZoneInfo,
     ) -> list[dict[str, float | str]]:
-        stmt = select(
-            RequestLogEntity.created_at,
+        bucket_expr = self._local_bucket_expr(date_format, time_zone)
+        inner = select(
+            bucket_expr.label("bucket"),
+            self._primary_attempt_field_expr("credential_id").label("credential_id"),
+            self._primary_attempt_field_expr("credential_name").label(
+                "credential_name"
+            ),
+            self._primary_attempt_field_expr("attempt_channel_id").label(
+                "attempt_channel_id"
+            ),
+            self._primary_attempt_field_expr("attempt_channel_name").label(
+                "attempt_channel_name"
+            ),
             RequestLogEntity.channel_id,
             RequestLogEntity.channel_name,
-            RequestLogEntity.upstream_model_name,
+            func.nullif(func.trim(RequestLogEntity.upstream_model_name), "").label(
+                "model"
+            ),
             RequestLogEntity.gateway_key_id,
             RequestLogEntity.success,
             RequestLogEntity.latency_ms,
@@ -979,7 +1116,6 @@ class OverviewMixin:
             RequestLogEntity.input_cost_usd,
             RequestLogEntity.output_cost_usd,
             RequestLogEntity.total_cost_usd,
-            RequestLogEntity.attempts_json,
         ).where(
             RequestLogEntity.lifecycle_status.in_(
                 [
@@ -989,31 +1125,363 @@ class OverviewMixin:
             )
         )
         if not include_archived:
-            stmt = stmt.where(RequestLogEntity.stats_archived == 0)
-        stmt = self._apply_request_log_window(
-            stmt, days=days, offset_days=offset_days, time_zone=time_zone
+            inner = inner.where(RequestLogEntity.stats_archived == 0)
+        inner = self._apply_request_log_window(
+            inner, days=days, offset_days=offset_days, time_zone=time_zone
         )
-        stmt = self._apply_gateway_key_filter(stmt, gateway_key_id=gateway_key_id)
-        rows = (await session.execute(stmt.order_by(RequestLogEntity.created_at))).all()
-        gateway_key_names = (
-            await self._gateway_key_display_names_by_id(
-                session, [row.gateway_key_id for row in rows]
+        inner = self._apply_gateway_key_filter(inner, gateway_key_id=gateway_key_id)
+        cache_key = (
+            "primary_dimension",
+            days,
+            offset_days,
+            gateway_key_id,
+            include_archived,
+            date_format,
+            str(time_zone),
+        )
+
+        async def run_query() -> list[dict[str, float | str]]:
+            # ponytail: materialize the per-row jsonb work once; three GROUP BY
+            # branches below share the scan instead of recomputing it 3x.
+            live = inner.cte("live").prefix_with("MATERIALIZED")
+
+            sums = self._request_log_dimension_sums(live)
+
+            credential_id_col = live.c.credential_id
+            credential_name_col = live.c.credential_name
+            attempt_channel_id_col = live.c.attempt_channel_id
+            attempt_channel_name_col = live.c.attempt_channel_name
+
+            channel_id_col = func.nullif(func.trim(live.c.channel_id), "")
+            channel_name_col = func.coalesce(
+                func.nullif(func.trim(live.c.channel_name), ""), live.c.channel_id
             )
-            if dimension_type == "gateway_key"
-            else {}
-        )
-        cost_multipliers = await self._credential_cost_multipliers_by_id(session)
-        return [
-            row
-            for row in self._dimension_rows_by_local_bucket(
-                rows,
+            resolved_attempt_channel_id = func.coalesce(
+                func.nullif(func.trim(attempt_channel_id_col), ""), channel_id_col
+            )
+            channel_dimension_id = case(
+                (
+                    and_(
+                        credential_id_col.is_not(None),
+                        resolved_attempt_channel_id.is_not(None),
+                    ),
+                    resolved_attempt_channel_id.concat(":").concat(credential_id_col),
+                ),
+                (credential_id_col.is_not(None), credential_id_col),
+                else_=channel_id_col,
+            )
+            channel_dimension_name = case(
+                (
+                    credential_id_col.is_not(None),
+                    func.coalesce(
+                        func.nullif(func.trim(attempt_channel_name_col), ""),
+                        channel_name_col,
+                        resolved_attempt_channel_id,
+                    )
+                    .concat(" - ")
+                    .concat(
+                        func.coalesce(
+                            func.nullif(func.trim(credential_name_col), ""),
+                            credential_id_col,
+                        )
+                    ),
+                ),
+                else_=channel_name_col,
+            )
+            gateway_key_id_col = func.nullif(
+                func.trim(func.coalesce(live.c.gateway_key_id, "")), ""
+            )
+
+            channel_branch = (
+                select(
+                    live.c.bucket.label("date"),
+                    literal("channel").label("dimension_type"),
+                    channel_dimension_id.label("dimension_id"),
+                    func.max(channel_dimension_name).label("dimension_name"),
+                    credential_id_col.label("credential_id"),
+                    *sums,
+                )
+                .where(channel_dimension_id.is_not(None))
+                .group_by(live.c.bucket, channel_dimension_id, credential_id_col)
+            )
+            model_branch = (
+                select(
+                    live.c.bucket.label("date"),
+                    literal("model").label("dimension_type"),
+                    live.c.model.label("dimension_id"),
+                    live.c.model.label("dimension_name"),
+                    credential_id_col.label("credential_id"),
+                    *sums,
+                )
+                .where(live.c.model.is_not(None))
+                .group_by(live.c.bucket, live.c.model, credential_id_col)
+            )
+            gateway_key_branch = (
+                select(
+                    live.c.bucket.label("date"),
+                    literal("gateway_key").label("dimension_type"),
+                    gateway_key_id_col.label("dimension_id"),
+                    literal("").label("dimension_name"),
+                    credential_id_col.label("credential_id"),
+                    *sums,
+                )
+                .where(gateway_key_id_col.is_not(None))
+                .group_by(live.c.bucket, gateway_key_id_col, credential_id_col)
+            )
+            stmt = union_all(channel_branch, model_branch, gateway_key_branch)
+            rows = (await session.execute(stmt)).all()
+            return [self._dimension_sql_row_to_dict(row) for row in rows]
+
+        return await self._cached_live_rows(cache_key, run_query)
+
+    async def _request_log_channel_attempt_rows(
+        self,
+        session: AsyncSession,
+        *,
+        days: int,
+        date_format: str,
+        offset_days: int = 0,
+        gateway_key_id: str | None = None,
+        include_archived: bool = False,
+        time_zone: ZoneInfo,
+    ) -> list[dict[str, float | str]]:
+        return await self._cached_live_rows(
+            (
+                "channel_attempt",
+                days,
+                offset_days,
+                gateway_key_id,
+                include_archived,
                 date_format,
-                time_zone,
-                gateway_key_names=gateway_key_names,
-                cost_multipliers=cost_multipliers,
+                str(time_zone),
+            ),
+            lambda: self._request_log_channel_attempt_query(
+                session,
+                days=days,
+                date_format=date_format,
+                offset_days=offset_days,
+                gateway_key_id=gateway_key_id,
+                include_archived=include_archived,
+                time_zone=time_zone,
+            ),
+        )
+
+    async def _request_log_channel_attempt_query(
+        self,
+        session: AsyncSession,
+        *,
+        days: int,
+        date_format: str,
+        offset_days: int = 0,
+        gateway_key_id: str | None = None,
+        include_archived: bool = False,
+        time_zone: ZoneInfo,
+    ) -> list[dict[str, float | str]]:
+        bucket_expr = self._local_bucket_expr(date_format, time_zone)
+        attempts_jsonb = cast(RequestLogEntity.attempts_json, JSONB)
+        elements = (
+            func.jsonb_array_elements(attempts_jsonb)
+            .table_valued("value", with_ordinality="ordinality")
+            .lateral()
+        )
+        attempt_inner = (
+            select(
+                bucket_expr.label("bucket"),
+                func.nullif(
+                    func.trim(elements.c.value.op("->>")(literal("channel_id"))),
+                    "",
+                ).label("dimension_id"),
+                func.coalesce(
+                    func.nullif(
+                        func.trim(elements.c.value.op("->>")(literal("channel_name"))),
+                        "",
+                    ),
+                    elements.c.value.op("->>")(literal("channel_id")),
+                ).label("dimension_name"),
+                case(
+                    (
+                        elements.c.value.op("->>")(literal("success"))
+                        == literal("true"),
+                        literal(1),
+                    ),
+                    else_=literal(0),
+                ).label("success"),
+                func.coalesce(
+                    cast(
+                        elements.c.value.op("->>")(literal("duration_ms")),
+                        Float,
+                    ),
+                    0.0,
+                ).label("latency_ms"),
             )
-            if row["dimension_type"] == dimension_type
-        ]
+            .select_from(RequestLogEntity)
+            .join(elements, literal(True))
+            .where(
+                RequestLogEntity.lifecycle_status.in_(
+                    [
+                        RequestLogLifecycleStatus.SUCCEEDED.value,
+                        RequestLogLifecycleStatus.FAILED.value,
+                    ]
+                )
+            )
+            .where(RequestLogEntity.attempts_json.op("~")(literal(r"^\s*\[")))
+        )
+        if not include_archived:
+            attempt_inner = attempt_inner.where(RequestLogEntity.stats_archived == 0)
+        attempt_inner = self._apply_request_log_window(
+            attempt_inner,
+            days=days,
+            offset_days=offset_days,
+            time_zone=time_zone,
+        )
+        attempt_inner = self._apply_gateway_key_filter(
+            attempt_inner, gateway_key_id=gateway_key_id
+        )
+        attempt_sub = attempt_inner.subquery()
+        attempt_branch = (
+            select(
+                attempt_sub.c.bucket.label("date"),
+                literal("channel_attempt").label("dimension_type"),
+                attempt_sub.c.dimension_id.label("dimension_id"),
+                func.max(attempt_sub.c.dimension_name).label("dimension_name"),
+                func.count().label("request_count"),
+                func.sum(attempt_sub.c.success).label("successful_requests"),
+                func.sum(attempt_sub.c.latency_ms).label("latency_ms_sum"),
+                literal(0).label("first_token_latency_ms_sum"),
+                literal(0).label("input_tokens"),
+                literal(0).label("cache_read_input_tokens"),
+                literal(0).label("cache_write_input_tokens"),
+                literal(0).label("output_tokens"),
+                literal(0).label("total_tokens"),
+                literal(0).label("input_cost_usd"),
+                literal(0).label("output_cost_usd"),
+                literal(0).label("total_cost_usd"),
+            )
+            .where(attempt_sub.c.dimension_id.is_not(None))
+            .group_by(attempt_sub.c.bucket, attempt_sub.c.dimension_id)
+        )
+
+        fallback_inner = (
+            select(
+                bucket_expr.label("bucket"),
+                func.nullif(func.trim(RequestLogEntity.channel_id), "").label(
+                    "dimension_id"
+                ),
+                func.coalesce(
+                    func.nullif(func.trim(RequestLogEntity.channel_name), ""),
+                    RequestLogEntity.channel_id,
+                ).label("dimension_name"),
+                RequestLogEntity.success.label("success"),
+                RequestLogEntity.latency_ms.label("latency_ms"),
+                RequestLogEntity.first_token_latency_ms.label("first_token_latency_ms"),
+            )
+            .where(
+                RequestLogEntity.lifecycle_status.in_(
+                    [
+                        RequestLogLifecycleStatus.SUCCEEDED.value,
+                        RequestLogLifecycleStatus.FAILED.value,
+                    ]
+                )
+            )
+            .where(
+                (RequestLogEntity.attempts_json.is_(None))
+                | (RequestLogEntity.attempts_json == "[]")
+            )
+        )
+        if not include_archived:
+            fallback_inner = fallback_inner.where(RequestLogEntity.stats_archived == 0)
+        fallback_inner = self._apply_request_log_window(
+            fallback_inner,
+            days=days,
+            offset_days=offset_days,
+            time_zone=time_zone,
+        )
+        fallback_inner = self._apply_gateway_key_filter(
+            fallback_inner, gateway_key_id=gateway_key_id
+        )
+        fallback_sub = fallback_inner.subquery()
+        fallback_branch = (
+            select(
+                fallback_sub.c.bucket.label("date"),
+                literal("channel_attempt").label("dimension_type"),
+                fallback_sub.c.dimension_id.label("dimension_id"),
+                func.max(fallback_sub.c.dimension_name).label("dimension_name"),
+                func.count().label("request_count"),
+                func.sum(fallback_sub.c.success).label("successful_requests"),
+                func.sum(fallback_sub.c.latency_ms).label("latency_ms_sum"),
+                func.sum(fallback_sub.c.first_token_latency_ms).label(
+                    "first_token_latency_ms_sum"
+                ),
+                literal(0).label("input_tokens"),
+                literal(0).label("cache_read_input_tokens"),
+                literal(0).label("cache_write_input_tokens"),
+                literal(0).label("output_tokens"),
+                literal(0).label("total_tokens"),
+                literal(0).label("input_cost_usd"),
+                literal(0).label("output_cost_usd"),
+                literal(0).label("total_cost_usd"),
+            )
+            .where(fallback_sub.c.dimension_id.is_not(None))
+            .group_by(fallback_sub.c.bucket, fallback_sub.c.dimension_id)
+        )
+        stmt = union_all(attempt_branch, fallback_branch)
+        rows = (await session.execute(stmt)).all()
+        return [self._dimension_sql_row_to_dict(row) for row in rows]
+
+    async def _request_log_dimension_rows(
+        self,
+        session: AsyncSession,
+        *,
+        dimension_type: str,
+        days: int,
+        date_format: str,
+        offset_days: int = 0,
+        gateway_key_id: str | None = None,
+        include_archived: bool = False,
+        time_zone: ZoneInfo,
+    ) -> list[dict[str, float | str]]:
+        if dimension_type == "channel_attempt":
+            live_rows = await self._request_log_channel_attempt_rows(
+                session,
+                days=days,
+                date_format=date_format,
+                offset_days=offset_days,
+                gateway_key_id=gateway_key_id,
+                include_archived=include_archived,
+                time_zone=time_zone,
+            )
+        else:
+            live_rows = await self._request_log_primary_dimension_rows(
+                session,
+                days=days,
+                date_format=date_format,
+                offset_days=offset_days,
+                gateway_key_id=gateway_key_id,
+                include_archived=include_archived,
+                time_zone=time_zone,
+            )
+            cost_multipliers = await self._credential_cost_multipliers_by_id(session)
+            gateway_key_names = (
+                await self._gateway_key_display_names_by_id(
+                    session, [row["dimension_id"] for row in live_rows]
+                )
+                if dimension_type == "gateway_key"
+                else {}
+            )
+            for row in live_rows:
+                multiplier = self._row_cost_multiplier(
+                    row.pop("credential_id", None), cost_multipliers
+                )
+                if multiplier != 1.0:
+                    row["input_cost_usd"] = float(row["input_cost_usd"]) * multiplier
+                    row["output_cost_usd"] = float(row["output_cost_usd"]) * multiplier
+                    row["total_cost_usd"] = float(row["total_cost_usd"]) * multiplier
+                if dimension_type == "gateway_key":
+                    row["dimension_name"] = self._gateway_key_display_name(
+                        row["dimension_id"],
+                        gateway_key_names.get(str(row["dimension_id"]), ""),
+                    )
+        return [row for row in live_rows if row["dimension_type"] == dimension_type]
 
     @staticmethod
     def _overview_dimension_numeric_fields() -> tuple[str, ...]:
@@ -1355,39 +1823,41 @@ class OverviewMixin:
         include_archived: bool = False,
         time_zone: ZoneInfo,
     ) -> list[OverviewDailyPoint]:
-        stmt = (
-            select(
-                RequestLogEntity.created_at,
-                RequestLogEntity.success,
-                RequestLogEntity.latency_ms,
-                RequestLogEntity.input_tokens,
-                RequestLogEntity.cache_read_input_tokens,
-                RequestLogEntity.cache_write_input_tokens,
-                RequestLogEntity.output_tokens,
-                RequestLogEntity.total_tokens,
-                RequestLogEntity.input_cost_usd,
-                RequestLogEntity.output_cost_usd,
-                RequestLogEntity.total_cost_usd,
-                RequestLogEntity.attempts_json,
-            )
-            .select_from(RequestLogEntity)
-            .order_by(RequestLogEntity.created_at.asc())
+        rows = await self._live_daily_sum_rows(
+            session,
+            days=days,
+            offset_days=offset_days,
+            gateway_key_id=gateway_key_id,
+            include_archived=include_archived,
+            time_zone=time_zone,
         )
-        if not include_archived:
-            stmt = stmt.where(RequestLogEntity.stats_archived == 0)
-        stmt = self._apply_request_log_window(
-            stmt, days=days, offset_days=offset_days, time_zone=time_zone
-        )
-        stmt = self._apply_gateway_key_filter(stmt, gateway_key_id=gateway_key_id)
-        rows = (await session.execute(stmt)).all()
         cost_multipliers = await self._credential_cost_multipliers_by_id(session)
-        points: list[OverviewDailyPoint] = []
-        daily_buckets = self._daily_stats_by_local_bucket(
-            rows, time_zone, cost_multipliers=cost_multipliers
-        )
-        for date_value, values in sorted(daily_buckets.items()):
-            if exclude_dates and date_value in exclude_dates:
+        buckets: dict[str, dict[str, float]] = {}
+        for row in rows:
+            if exclude_dates and row["date"] in exclude_dates:
                 continue
+            multiplier = self._row_cost_multiplier(
+                row["credential_id"], cost_multipliers
+            )
+            current = buckets.setdefault(row["date"], self._daily_bucket_zero())
+            current["request_count"] += float(row["request_count"])
+            current["successful_requests"] += float(row["successful_requests"])
+            current["failed_requests"] += float(
+                row["request_count"] - row["successful_requests"]
+            )
+            current["wait_time_ms"] += float(row["wait_time_ms"])
+            current["input_tokens"] += float(row["input_tokens"])
+            current["cache_read_input_tokens"] += float(row["cache_read_input_tokens"])
+            current["cache_write_input_tokens"] += float(
+                row["cache_write_input_tokens"]
+            )
+            current["output_tokens"] += float(row["output_tokens"])
+            current["total_tokens"] += float(row["total_tokens"])
+            current["input_cost_usd"] += float(row["input_cost_usd"]) * multiplier
+            current["output_cost_usd"] += float(row["output_cost_usd"]) * multiplier
+            current["total_cost_usd"] += float(row["total_cost_usd"]) * multiplier
+        points: list[OverviewDailyPoint] = []
+        for date_value, values in sorted(buckets.items()):
             total_value = int(values["request_count"])
             success_value = int(values["successful_requests"])
             points.append(
@@ -1536,6 +2006,65 @@ class OverviewMixin:
             for date_value, model, requests, total_tokens, total_cost in rows
         ]
 
+    async def _request_log_model_rows(
+        self,
+        session: AsyncSession,
+        *,
+        days: int,
+        offset_days: int = 0,
+        gateway_key_id: str | None = None,
+        include_archived: bool = False,
+        format_text: str,
+        time_zone: ZoneInfo,
+    ) -> list[tuple[str, str, int, int, float]]:
+        model_expr = func.nullif(func.trim(RequestLogEntity.upstream_model_name), "")
+        bucket_expr = self._local_bucket_expr(format_text, time_zone)
+        credential_id_expr = self._primary_attempt_credential_id_expr()
+        inner = (
+            select(
+                bucket_expr.label("bucket"),
+                model_expr.label("model"),
+                credential_id_expr.label("credential_id"),
+                RequestLogEntity.total_tokens,
+                RequestLogEntity.total_cost_usd,
+            )
+            .where(RequestLogEntity.success == 1)
+            .where(
+                RequestLogEntity.lifecycle_status
+                == RequestLogLifecycleStatus.SUCCEEDED.value
+            )
+            .where(model_expr.is_not(None))
+        )
+        if not include_archived:
+            inner = inner.where(RequestLogEntity.stats_archived == 0)
+        inner = self._apply_request_log_window(
+            inner, days=days, offset_days=offset_days, time_zone=time_zone
+        )
+        inner = self._apply_gateway_key_filter(inner, gateway_key_id=gateway_key_id)
+        sub = inner.subquery()
+        stmt = select(
+            sub.c.bucket,
+            sub.c.model,
+            sub.c.credential_id,
+            func.count().label("requests"),
+            func.sum(sub.c.total_tokens).label("total_tokens"),
+            func.sum(sub.c.total_cost_usd).label("total_cost_usd"),
+        ).group_by(sub.c.bucket, sub.c.model, sub.c.credential_id)
+        rows = (await session.execute(stmt)).all()
+        cost_multipliers = await self._credential_cost_multipliers_by_id(session)
+        buckets: dict[tuple[str, str], list[float]] = {}
+        for row in rows:
+            multiplier = self._row_cost_multiplier(row.credential_id, cost_multipliers)
+            key = (str(row.bucket), str(row.model))
+            current = buckets.setdefault(key, [0.0, 0.0, 0.0])
+            current[0] += float(row.requests)
+            current[1] += float(row.total_tokens or 0)
+            current[2] += float(row.total_cost_usd or 0) * multiplier
+        return [
+            (date_value, model, int(values[0]), int(values[1]), float(values[2]))
+            for (date_value, model), values in sorted(buckets.items())
+        ]
+
     async def _request_log_model_daily_rows(
         self,
         session: AsyncSession,
@@ -1546,33 +2075,14 @@ class OverviewMixin:
         include_archived: bool = False,
         time_zone: ZoneInfo,
     ) -> list[tuple[str, str, int, int, float]]:
-        model_expr = func.nullif(func.trim(RequestLogEntity.upstream_model_name), "")
-        stmt = (
-            select(
-                RequestLogEntity.created_at,
-                model_expr,
-                RequestLogEntity.total_tokens,
-                RequestLogEntity.total_cost_usd,
-                RequestLogEntity.attempts_json,
-            )
-            .where(RequestLogEntity.success == 1)
-            .where(
-                RequestLogEntity.lifecycle_status
-                == RequestLogLifecycleStatus.SUCCEEDED.value
-            )
-            .where(model_expr.is_not(None))
-            .order_by(RequestLogEntity.created_at.asc())
-        )
-        if not include_archived:
-            stmt = stmt.where(RequestLogEntity.stats_archived == 0)
-        stmt = self._apply_request_log_window(
-            stmt, days=days, offset_days=offset_days, time_zone=time_zone
-        )
-        stmt = self._apply_gateway_key_filter(stmt, gateway_key_id=gateway_key_id)
-        rows = (await session.execute(stmt)).all()
-        cost_multipliers = await self._credential_cost_multipliers_by_id(session)
-        return self._model_rows_by_local_bucket(
-            rows, "%Y%m%d", time_zone, cost_multipliers=cost_multipliers
+        return await self._request_log_model_rows(
+            session,
+            days=days,
+            offset_days=offset_days,
+            gateway_key_id=gateway_key_id,
+            include_archived=include_archived,
+            format_text="%Y%m%d",
+            time_zone=time_zone,
         )
 
     async def _request_log_model_hourly_rows(
@@ -1585,33 +2095,14 @@ class OverviewMixin:
         include_archived: bool = False,
         time_zone: ZoneInfo,
     ) -> list[tuple[str, str, int, int, float]]:
-        model_expr = func.nullif(func.trim(RequestLogEntity.upstream_model_name), "")
-        stmt = (
-            select(
-                RequestLogEntity.created_at,
-                model_expr,
-                RequestLogEntity.total_tokens,
-                RequestLogEntity.total_cost_usd,
-                RequestLogEntity.attempts_json,
-            )
-            .where(RequestLogEntity.success == 1)
-            .where(
-                RequestLogEntity.lifecycle_status
-                == RequestLogLifecycleStatus.SUCCEEDED.value
-            )
-            .where(model_expr.is_not(None))
-            .order_by(RequestLogEntity.created_at.asc())
-        )
-        if not include_archived:
-            stmt = stmt.where(RequestLogEntity.stats_archived == 0)
-        stmt = self._apply_request_log_window(
-            stmt, days=days, offset_days=offset_days, time_zone=time_zone
-        )
-        stmt = self._apply_gateway_key_filter(stmt, gateway_key_id=gateway_key_id)
-        rows = (await session.execute(stmt)).all()
-        cost_multipliers = await self._credential_cost_multipliers_by_id(session)
-        return self._model_rows_by_local_bucket(
-            rows, "%Y%m%d%H", time_zone, cost_multipliers=cost_multipliers
+        return await self._request_log_model_rows(
+            session,
+            days=days,
+            offset_days=offset_days,
+            gateway_key_id=gateway_key_id,
+            include_archived=include_archived,
+            format_text="%Y%m%d%H",
+            time_zone=time_zone,
         )
 
     async def _overview_channel_daily_rows(
@@ -1657,6 +2148,81 @@ class OverviewMixin:
             ) in rows
         ]
 
+    async def _request_log_channel_rows(
+        self,
+        session: AsyncSession,
+        *,
+        days: int,
+        offset_days: int = 0,
+        gateway_key_id: str | None = None,
+        include_archived: bool = False,
+        format_text: str,
+        time_zone: ZoneInfo,
+    ) -> list[tuple[str, str, str, int, int, float]]:
+        channel_id_expr = func.coalesce(RequestLogEntity.channel_id, literal("n/a"))
+        channel_name_expr = func.coalesce(
+            func.nullif(func.trim(RequestLogEntity.channel_name), ""),
+            RequestLogEntity.channel_id,
+            literal("n/a"),
+        )
+        bucket_expr = self._local_bucket_expr(format_text, time_zone)
+        credential_id_expr = self._primary_attempt_credential_id_expr()
+        inner = (
+            select(
+                bucket_expr.label("bucket"),
+                channel_id_expr.label("channel_id"),
+                channel_name_expr.label("channel_name"),
+                credential_id_expr.label("credential_id"),
+                RequestLogEntity.total_tokens,
+                RequestLogEntity.total_cost_usd,
+            )
+            .where(RequestLogEntity.success == 1)
+            .where(
+                RequestLogEntity.lifecycle_status
+                == RequestLogLifecycleStatus.SUCCEEDED.value
+            )
+            .where(RequestLogEntity.channel_id.is_not(None))
+        )
+        if not include_archived:
+            inner = inner.where(RequestLogEntity.stats_archived == 0)
+        inner = self._apply_request_log_window(
+            inner, days=days, offset_days=offset_days, time_zone=time_zone
+        )
+        inner = self._apply_gateway_key_filter(inner, gateway_key_id=gateway_key_id)
+        sub = inner.subquery()
+        stmt = select(
+            sub.c.bucket,
+            sub.c.channel_id,
+            sub.c.credential_id,
+            func.count().label("requests"),
+            func.sum(sub.c.total_tokens).label("total_tokens"),
+            func.sum(sub.c.total_cost_usd).label("total_cost_usd"),
+            func.max(sub.c.channel_name).label("channel_name"),
+        ).group_by(sub.c.bucket, sub.c.channel_id, sub.c.credential_id)
+        rows = (await session.execute(stmt)).all()
+        cost_multipliers = await self._credential_cost_multipliers_by_id(session)
+        buckets: dict[tuple[str, str], list[Any]] = {}
+        for row in rows:
+            multiplier = self._row_cost_multiplier(row.credential_id, cost_multipliers)
+            key = (str(row.bucket), str(row.channel_id))
+            current = buckets.setdefault(key, [0.0, 0.0, 0.0, ""])
+            current[0] += float(row.requests)
+            current[1] += float(row.total_tokens or 0)
+            current[2] += float(row.total_cost_usd or 0) * multiplier
+            if row.channel_name and not current[3]:
+                current[3] = str(row.channel_name)
+        return [
+            (
+                date_value,
+                channel_id,
+                str(values[3]),
+                int(values[0]),
+                int(values[1]),
+                float(values[2]),
+            )
+            for (date_value, channel_id), values in sorted(buckets.items())
+        ]
+
     async def _request_log_channel_daily_rows(
         self,
         session: AsyncSession,
@@ -1667,39 +2233,14 @@ class OverviewMixin:
         include_archived: bool = False,
         time_zone: ZoneInfo,
     ) -> list[tuple[str, str, str, int, int, float]]:
-        channel_id_expr = func.coalesce(RequestLogEntity.channel_id, literal("n/a"))
-        channel_name_expr = func.coalesce(
-            func.nullif(func.trim(RequestLogEntity.channel_name), ""),
-            RequestLogEntity.channel_id,
-            literal("n/a"),
-        )
-        stmt = (
-            select(
-                RequestLogEntity.created_at,
-                channel_id_expr,
-                channel_name_expr,
-                RequestLogEntity.total_tokens,
-                RequestLogEntity.total_cost_usd,
-                RequestLogEntity.attempts_json,
-            )
-            .where(RequestLogEntity.success == 1)
-            .where(
-                RequestLogEntity.lifecycle_status
-                == RequestLogLifecycleStatus.SUCCEEDED.value
-            )
-            .where(RequestLogEntity.channel_id.is_not(None))
-            .order_by(RequestLogEntity.created_at.asc())
-        )
-        if not include_archived:
-            stmt = stmt.where(RequestLogEntity.stats_archived == 0)
-        stmt = self._apply_request_log_window(
-            stmt, days=days, offset_days=offset_days, time_zone=time_zone
-        )
-        stmt = self._apply_gateway_key_filter(stmt, gateway_key_id=gateway_key_id)
-        rows = (await session.execute(stmt)).all()
-        cost_multipliers = await self._credential_cost_multipliers_by_id(session)
-        return self._channel_rows_by_local_bucket(
-            rows, "%Y%m%d", time_zone, cost_multipliers=cost_multipliers
+        return await self._request_log_channel_rows(
+            session,
+            days=days,
+            offset_days=offset_days,
+            gateway_key_id=gateway_key_id,
+            include_archived=include_archived,
+            format_text="%Y%m%d",
+            time_zone=time_zone,
         )
 
     async def _request_log_channel_hourly_rows(
@@ -1712,39 +2253,14 @@ class OverviewMixin:
         include_archived: bool = False,
         time_zone: ZoneInfo,
     ) -> list[tuple[str, str, str, int, int, float]]:
-        channel_id_expr = func.coalesce(RequestLogEntity.channel_id, literal("n/a"))
-        channel_name_expr = func.coalesce(
-            func.nullif(func.trim(RequestLogEntity.channel_name), ""),
-            RequestLogEntity.channel_id,
-            literal("n/a"),
-        )
-        stmt = (
-            select(
-                RequestLogEntity.created_at,
-                channel_id_expr,
-                channel_name_expr,
-                RequestLogEntity.total_tokens,
-                RequestLogEntity.total_cost_usd,
-                RequestLogEntity.attempts_json,
-            )
-            .where(RequestLogEntity.success == 1)
-            .where(
-                RequestLogEntity.lifecycle_status
-                == RequestLogLifecycleStatus.SUCCEEDED.value
-            )
-            .where(RequestLogEntity.channel_id.is_not(None))
-            .order_by(RequestLogEntity.created_at.asc())
-        )
-        if not include_archived:
-            stmt = stmt.where(RequestLogEntity.stats_archived == 0)
-        stmt = self._apply_request_log_window(
-            stmt, days=days, offset_days=offset_days, time_zone=time_zone
-        )
-        stmt = self._apply_gateway_key_filter(stmt, gateway_key_id=gateway_key_id)
-        rows = (await session.execute(stmt)).all()
-        cost_multipliers = await self._credential_cost_multipliers_by_id(session)
-        return self._channel_rows_by_local_bucket(
-            rows, "%Y%m%d%H", time_zone, cost_multipliers=cost_multipliers
+        return await self._request_log_channel_rows(
+            session,
+            days=days,
+            offset_days=offset_days,
+            gateway_key_id=gateway_key_id,
+            include_archived=include_archived,
+            format_text="%Y%m%d%H",
+            time_zone=time_zone,
         )
 
     async def _merged_period_totals(
@@ -1892,6 +2408,189 @@ class OverviewMixin:
             "covered_dates": covered_dates,
         }
 
+    @staticmethod
+    def _local_bucket_expr(format_text: str, time_zone: ZoneInfo) -> Any:
+        # ponytail: bucket by PostgreSQL tzdata instead of Python; exact for
+        # fixed-offset zones, DST handled by the database. to_char uses
+        # PostgreSQL templates, not strftime.
+        pg_format = (
+            format_text.replace("%Y", "YYYY")
+            .replace("%m", "MM")
+            .replace("%d", "DD")
+            .replace("%H", "HH24")
+        )
+        utc_ts = RequestLogEntity.created_at.op("AT TIME ZONE")(literal("UTC"))
+        local_ts = utc_ts.op("AT TIME ZONE")(literal(str(time_zone)))
+        return func.to_char(local_ts, pg_format)
+
+    @staticmethod
+    def _primary_attempt_expr() -> Any:
+        # ponytail: attempts_json is always json.dumps output, so the regex guard
+        # only shields legacy rows; full JSON validation would need a SQL function.
+        attempts_jsonb = cast(RequestLogEntity.attempts_json, JSONB)
+        elements = func.jsonb_array_elements(attempts_jsonb).table_valued(
+            "value", with_ordinality="ordinality"
+        )
+        last_success = (
+            select(elements.c.value)
+            .where(elements.c.value.op("->>")(literal("success")) == literal("true"))
+            .order_by(elements.c.ordinality.desc())
+            .limit(1)
+            .scalar_subquery()
+        )
+        last_element = attempts_jsonb.op("->")(literal(-1))
+        is_json_array = RequestLogEntity.attempts_json.op("~")(literal(r"^\s*\["))
+        has_elements = and_(is_json_array, RequestLogEntity.attempts_json != "[]")
+        return case(
+            (has_elements, func.coalesce(last_success, last_element)),
+            else_=None,
+        )
+
+    @classmethod
+    def _primary_attempt_field_expr(cls, field: str) -> Any:
+        # ponytail: precomputed column first; the jsonb fallback only evaluates
+        # for legacy rows where the column is NULL (COALESCE short-circuits).
+        column = getattr(RequestLogEntity, f"primary_{field}")
+        jsonb_field = {
+            "credential_id": "credential_id",
+            "credential_name": "credential_name",
+            "attempt_channel_id": "channel_id",
+            "attempt_channel_name": "channel_name",
+        }[field]
+        fallback = cls._primary_attempt_expr().op("->>")(literal(jsonb_field))
+        return func.coalesce(column, fallback)
+
+    @classmethod
+    def _primary_attempt_credential_id_expr(cls) -> Any:
+        return cls._primary_attempt_field_expr("credential_id")
+
+    @classmethod
+    def _primary_attempt_credential_name_expr(cls) -> Any:
+        return cls._primary_attempt_field_expr("credential_name")
+
+    @staticmethod
+    def _row_cost_multiplier(
+        credential_id: object, cost_multipliers: dict[str, float]
+    ) -> float:
+        if not cost_multipliers or credential_id is None:
+            return 1.0
+        return max(float(cost_multipliers.get(str(credential_id).strip(), 1.0)), 0.0)
+
+    async def _live_daily_sum_rows(
+        self,
+        session: AsyncSession,
+        *,
+        days: int,
+        offset_days: int = 0,
+        gateway_key_id: str | None = None,
+        include_archived: bool = False,
+        time_zone: ZoneInfo,
+    ) -> list[dict[str, Any]]:
+        return await self._cached_live_rows(
+            (
+                "daily",
+                days,
+                offset_days,
+                gateway_key_id,
+                include_archived,
+                str(time_zone),
+            ),
+            lambda: self._live_daily_sum_query(
+                session,
+                days=days,
+                offset_days=offset_days,
+                gateway_key_id=gateway_key_id,
+                include_archived=include_archived,
+                time_zone=time_zone,
+            ),
+        )
+
+    async def _live_daily_sum_query(
+        self,
+        session: AsyncSession,
+        *,
+        days: int,
+        offset_days: int = 0,
+        gateway_key_id: str | None = None,
+        include_archived: bool = False,
+        time_zone: ZoneInfo,
+    ) -> list[dict[str, Any]]:
+        """Aggregate live request-log rows per local day in SQL (never Python)."""
+        bucket_expr = self._local_bucket_expr("%Y%m%d", time_zone)
+        credential_expr = self._primary_attempt_credential_id_expr()
+        inner = select(
+            bucket_expr.label("date"),
+            credential_expr.label("credential_id"),
+            RequestLogEntity.success,
+            RequestLogEntity.latency_ms,
+            RequestLogEntity.input_tokens,
+            RequestLogEntity.cache_read_input_tokens,
+            RequestLogEntity.cache_write_input_tokens,
+            RequestLogEntity.output_tokens,
+            RequestLogEntity.total_tokens,
+            RequestLogEntity.input_cost_usd,
+            RequestLogEntity.output_cost_usd,
+            RequestLogEntity.total_cost_usd,
+        ).select_from(RequestLogEntity)
+        if not include_archived:
+            inner = inner.where(RequestLogEntity.stats_archived == 0)
+        inner = self._apply_request_log_window(
+            inner, days=days, offset_days=offset_days, time_zone=time_zone
+        )
+        inner = self._apply_gateway_key_filter(inner, gateway_key_id=gateway_key_id)
+        sub = inner.subquery()
+        stmt = select(
+            sub.c.date,
+            sub.c.credential_id,
+            func.count().label("request_count"),
+            func.sum(sub.c.success).label("successful_requests"),
+            func.sum(sub.c.latency_ms).label("wait_time_ms"),
+            func.sum(sub.c.input_tokens).label("input_tokens"),
+            func.sum(sub.c.cache_read_input_tokens).label("cache_read_input_tokens"),
+            func.sum(sub.c.cache_write_input_tokens).label("cache_write_input_tokens"),
+            func.sum(sub.c.output_tokens).label("output_tokens"),
+            func.sum(sub.c.total_tokens).label("total_tokens"),
+            func.sum(sub.c.input_cost_usd).label("input_cost_usd"),
+            func.sum(sub.c.output_cost_usd).label("output_cost_usd"),
+            func.sum(sub.c.total_cost_usd).label("total_cost_usd"),
+        ).group_by(sub.c.date, sub.c.credential_id)
+        rows = (await session.execute(stmt)).all()
+        return [
+            {
+                "date": str(row.date),
+                "credential_id": row.credential_id,
+                "request_count": int(row.request_count),
+                "successful_requests": int(row.successful_requests or 0),
+                "wait_time_ms": int(row.wait_time_ms or 0),
+                "input_tokens": int(row.input_tokens or 0),
+                "cache_read_input_tokens": int(row.cache_read_input_tokens or 0),
+                "cache_write_input_tokens": int(row.cache_write_input_tokens or 0),
+                "output_tokens": int(row.output_tokens or 0),
+                "total_tokens": int(row.total_tokens or 0),
+                "input_cost_usd": float(row.input_cost_usd or 0),
+                "output_cost_usd": float(row.output_cost_usd or 0),
+                "total_cost_usd": float(row.total_cost_usd or 0),
+            }
+            for row in rows
+        ]
+
+    @classmethod
+    def _daily_bucket_zero(cls) -> dict[str, float]:
+        return {
+            "request_count": 0.0,
+            "successful_requests": 0.0,
+            "failed_requests": 0.0,
+            "wait_time_ms": 0.0,
+            "input_tokens": 0.0,
+            "cache_read_input_tokens": 0.0,
+            "cache_write_input_tokens": 0.0,
+            "output_tokens": 0.0,
+            "total_tokens": 0.0,
+            "input_cost_usd": 0.0,
+            "output_cost_usd": 0.0,
+            "total_cost_usd": 0.0,
+        }
+
     async def _request_log_period_totals(
         self,
         session: AsyncSession,
@@ -1903,50 +2602,35 @@ class OverviewMixin:
         include_archived: bool = False,
         time_zone: ZoneInfo,
     ) -> dict[str, float]:
-        stmt = select(
-            RequestLogEntity.created_at,
-            RequestLogEntity.success,
-            RequestLogEntity.latency_ms,
-            RequestLogEntity.input_tokens,
-            RequestLogEntity.cache_read_input_tokens,
-            RequestLogEntity.cache_write_input_tokens,
-            RequestLogEntity.output_tokens,
-            RequestLogEntity.total_tokens,
-            RequestLogEntity.input_cost_usd,
-            RequestLogEntity.output_cost_usd,
-            RequestLogEntity.total_cost_usd,
-            RequestLogEntity.attempts_json,
-        ).select_from(RequestLogEntity)
-        if not include_archived:
-            stmt = stmt.where(RequestLogEntity.stats_archived == 0)
-        stmt = self._apply_request_log_window(
-            stmt, days=days, offset_days=offset_days, time_zone=time_zone
+        rows = await self._live_daily_sum_rows(
+            session,
+            days=days,
+            offset_days=offset_days,
+            gateway_key_id=gateway_key_id,
+            include_archived=include_archived,
+            time_zone=time_zone,
         )
-        stmt = self._apply_gateway_key_filter(stmt, gateway_key_id=gateway_key_id)
-        rows = (await session.execute(stmt)).all()
         cost_multipliers = await self._credential_cost_multipliers_by_id(session)
         totals = self._zero_totals()
-        daily_buckets = self._daily_stats_by_local_bucket(
-            rows, time_zone, cost_multipliers=cost_multipliers
-        )
-        for date_value, values in daily_buckets.items():
-            if exclude_dates and date_value in exclude_dates:
+        for row in rows:
+            if exclude_dates and row["date"] in exclude_dates:
                 continue
-            totals["request_count"] += float(values["request_count"])
-            totals["wait_time_ms"] += float(values["wait_time_ms"])
-            totals["input_tokens"] += float(values["input_tokens"])
-            totals["cache_read_input_tokens"] += float(
-                values["cache_read_input_tokens"]
+            multiplier = self._row_cost_multiplier(
+                row["credential_id"], cost_multipliers
             )
-            totals["cache_write_input_tokens"] += float(
-                values["cache_write_input_tokens"]
+            totals["request_count"] += float(row["request_count"])
+            totals["wait_time_ms"] += float(row["wait_time_ms"])
+            totals["input_tokens"] += float(row["input_tokens"])
+            totals["cache_read_input_tokens"] += float(row["cache_read_input_tokens"])
+            totals["cache_write_input_tokens"] += float(row["cache_write_input_tokens"])
+            totals["output_tokens"] += float(row["output_tokens"])
+            totals["input_cost_usd"] += float(row["input_cost_usd"]) * multiplier
+            totals["output_cost_usd"] += float(row["output_cost_usd"]) * multiplier
+            totals["total_cost_usd"] += float(row["total_cost_usd"]) * multiplier
+            totals["successful_requests"] += float(row["successful_requests"])
+            totals["failed_requests"] += float(
+                row["request_count"] - row["successful_requests"]
             )
-            totals["output_tokens"] += float(values["output_tokens"])
-            totals["input_cost_usd"] += float(values["input_cost_usd"])
-            totals["output_cost_usd"] += float(values["output_cost_usd"])
-            totals["total_cost_usd"] += float(values["total_cost_usd"])
-            totals["successful_requests"] += float(values["successful_requests"])
-            totals["failed_requests"] += float(values["failed_requests"])
         return totals
 
     @staticmethod
@@ -2448,31 +3132,6 @@ class OverviewMixin:
                     " - ".join(part for part in label_parts if part) or dimension_id,
                 )
         return normalized_channel_id, normalized_channel_name or normalized_channel_id
-
-    @classmethod
-    def _model_channel_usage_identity(
-        cls, channel_id: Any, channel_name: Any, attempts: list[dict[str, Any]]
-    ) -> tuple[str, str]:
-        primary_attempt = cls._primary_attempt(attempts)
-        if primary_attempt is None:
-            return cls._channel_usage_identity(channel_id, channel_name, attempts)
-        credential_id = str(primary_attempt.get("credential_id") or "").strip()
-        if not credential_id:
-            return cls._channel_usage_identity(channel_id, channel_name, attempts)
-        normalized_channel_id = str(channel_id or "").strip()
-        normalized_channel_name = str(channel_name or normalized_channel_id).strip()
-        attempt_channel_id = str(
-            primary_attempt.get("channel_id") or normalized_channel_id
-        ).strip()
-        attempt_channel_name = str(
-            primary_attempt.get("channel_name")
-            or normalized_channel_name
-            or attempt_channel_id
-        ).strip()
-        credential_name = str(primary_attempt.get("credential_name") or "").strip()
-        credential_label = credential_name or credential_id
-        label_parts = [attempt_channel_name or attempt_channel_id, credential_label]
-        return credential_id, " - ".join(part for part in label_parts if part)
 
     @staticmethod
     def _primary_attempt(attempts: list[dict[str, Any]]) -> dict[str, Any] | None:

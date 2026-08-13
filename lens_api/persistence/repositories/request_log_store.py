@@ -33,6 +33,12 @@ class RequestLogStore(
         self._session_factory = session_factory
         self._settings_repo = settings_repo
         self._gateway_key_repo = gateway_key_repo
+        # ponytail: per-filter TTL cache for log-page count/option queries;
+        # bounded by a full clear when it grows, no LRU needed.
+        self._log_page_aux_cache: dict[Any, tuple[float, Any]] = {}
+        # ponytail: 4 usage/performance endpoints share the same live-row scan;
+        # cache it briefly so one page open triggers one scan, not four.
+        self._overview_live_cache: dict[Any, tuple[float, Any]] = {}
 
     def _runtime_time_zone(self, runtime: dict[str, Any]):
         return resolve_time_zone(str(runtime["time_zone"]))

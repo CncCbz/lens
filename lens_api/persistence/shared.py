@@ -96,6 +96,17 @@ from .entities import (
 _LOGGER = logging.getLogger(__name__)
 
 
+def primary_attempt_from_list(
+    attempts: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    for attempt in reversed(attempts):
+        if bool(attempt.get("success")):
+            return attempt
+    if attempts:
+        return attempts[-1]
+    return None
+
+
 def _parse_supported_protocols_json(raw: str | None) -> list[ProtocolKind]:
     try:
         values = json.loads(raw or "[]")
