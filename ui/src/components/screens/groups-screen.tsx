@@ -19,6 +19,7 @@ import {
   SiteModelTestPayload,
   SiteModelTestResult,
   apiRequest,
+  generateGroupPiConfig,
   isItemValidForProtocols,
 } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
@@ -151,6 +152,7 @@ export function GroupsScreen() {
   } | null>(null);
   const [showEnabledOnly, setShowEnabledOnly] = useState(false);
   const [syncingPrices, setSyncingPrices] = useState(false);
+  const [generatingPiConfig, setGeneratingPiConfig] = useState(false);
   const {
     data: groups,
     error: groupsError,
@@ -663,6 +665,7 @@ export function GroupsScreen() {
       output_price_per_million: number;
       cache_read_price_per_million: number;
       cache_write_price_per_million: number;
+      context_window: number | null;
     },
   ) {
     await apiRequest("/admin/model-prices/" + encodeURIComponent(groupName), {
@@ -700,11 +703,26 @@ export function GroupsScreen() {
       );
     }
 
+    let contextWindow: number | null = null;
+    const rawContextWindow = payload.context_window.trim();
+    if (rawContextWindow !== "") {
+      const parsed = Number(rawContextWindow);
+      if (!Number.isInteger(parsed) || parsed < 1) {
+        throw new Error(
+          locale === "zh-CN"
+            ? "上下文窗口必须是大于等于 1 的整数"
+            : "Context window must be an integer greater than or equal to 1",
+        );
+      }
+      contextWindow = parsed;
+    }
+
     return {
       input_price_per_million: input,
       output_price_per_million: output,
       cache_read_price_per_million: cacheRead,
       cache_write_price_per_million: cacheWrite,
+      context_window: contextWindow,
     };
   }
 
@@ -751,6 +769,36 @@ export function GroupsScreen() {
           locale === "zh-CN" ? "保存模型组失败" : "Failed to save group",
         ),
       );
+    }
+  }
+
+  async function generatePiConfig() {
+    if (!editingId) {
+      toast.error(
+        locale === "zh-CN"
+          ? "请先保存模型组再生成配置"
+          : "Save the group before generating config",
+      );
+      return;
+    }
+    setGeneratingPiConfig(true);
+    try {
+      const result = await generateGroupPiConfig(editingId);
+      setForm((current) => ({ ...current, pi_config: result.config }));
+      toast.success(
+        locale === "zh-CN" ? "pi.dev 配置已生成" : "pi.dev config generated",
+      );
+    } catch (e) {
+      toast.error(
+        apiErrorMessage(
+          e,
+          locale === "zh-CN"
+            ? "生成 pi.dev 配置失败"
+            : "Failed to generate pi.dev config",
+        ),
+      );
+    } finally {
+      setGeneratingPiConfig(false);
     }
   }
 
@@ -1533,6 +1581,8 @@ export function GroupsScreen() {
             setDraggingIndex={setDraggingIndex}
             moveFoldedMember={moveFoldedMember}
             onOpenModelTest={openMemberModelTest}
+            onGeneratePiConfig={() => void generatePiConfig()}
+            generatingPiConfig={generatingPiConfig}
           />
         ) : null}
 

@@ -78,6 +78,8 @@ from ...models import (
     ModelPriceItem,
     ModelPriceListResponse,
     ModelPriceUpdate,
+    PiConfigExportResponse,
+    PiConfigGenerateResponse,
     MultimodalRelayConfig,
     MultimodalRelayGroupStatus,
     MultimodalRelayUpdate,
@@ -144,6 +146,7 @@ from ...persistence.repositories import (
     GatewayApiKeyRepository,
     GroupRepository,
     ModelPriceRepository,
+    PiCatalogRepository,
     RequestLogStore,
     SettingsRepository,
 )
@@ -175,6 +178,7 @@ from ..upstreams import (
 
 TASK_REQUEST_LOG_PRUNE = "request_log_prune"
 TASK_MODEL_PRICE_SYNC = "model_price_sync"
+TASK_PI_CATALOG_SYNC = "pi_catalog_sync"
 TASK_REQUEST_LOG_STATS_PERSIST = "request_log_stats_persist"
 
 GENERIC_USER_AGENT_TOKENS = (
@@ -216,6 +220,12 @@ CRONJOB_SPECS = (
         id=TASK_MODEL_PRICE_SYNC,
         name="模型价格同步",
         description="从 models.dev 同步模型价格",
+        default_interval_hours=24,
+    ),
+    CronjobSpec(
+        id=TASK_PI_CATALOG_SYNC,
+        name="pi.dev 模型目录同步",
+        description="从 pi.dev 同步模型配置目录",
         default_interval_hours=24,
     ),
     CronjobSpec(
@@ -265,6 +275,7 @@ class AppState:
         self.gateway_api_key_repo = GatewayApiKeyRepository(self.session_factory)
         self.group_repo = GroupRepository(self.session_factory)
         self.model_price_repo = ModelPriceRepository(self.session_factory)
+        self.pi_catalog_repo = PiCatalogRepository(self.session_factory)
         self.request_log_store = RequestLogStore(
             self.session_factory,
             settings_repo=self.settings_repo,
@@ -281,6 +292,7 @@ class AppState:
             handlers={
                 TASK_REQUEST_LOG_PRUNE: self.request_log_store.prune_request_logs,
                 TASK_MODEL_PRICE_SYNC: self._sync_model_prices,
+                TASK_PI_CATALOG_SYNC: self._sync_pi_catalog,
                 TASK_REQUEST_LOG_STATS_PERSIST: self.request_log_store.persist_request_log_stats,
             },
             time_zone_provider=self._runtime_time_zone,
@@ -307,6 +319,11 @@ class AppState:
         from .tasks import _sync_group_prices
 
         await _sync_group_prices(self, overwrite_existing=True)
+
+    async def _sync_pi_catalog(self) -> None:
+        from .tasks import _sync_pi_catalog
+
+        await _sync_pi_catalog(self)
 
 
 @dataclass(slots=True)

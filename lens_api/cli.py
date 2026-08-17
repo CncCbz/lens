@@ -97,7 +97,7 @@ def dev(_args: argparse.Namespace) -> None:
         raise RuntimeError(f"UI directory does not exist: {ui_dir}")
 
     backend_host = "127.0.0.1"
-    backend_port = "18080"
+    backend_port = "18081"
     backend_url = f"http://{backend_host}:{backend_port}"
 
     backend_env = os.environ.copy()

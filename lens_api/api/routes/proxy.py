@@ -27,6 +27,12 @@ def register(app: FastAPI, service_module: ModuleType) -> None:
     )
     app.add_api_route("/v1/models", service_module.list_gateway_models, methods=["GET"])
     app.add_api_route(
+        "/v1/models/config",
+        service_module.export_gateway_models_config,
+        methods=["GET"],
+        response_model=service_module.PiConfigExportResponse,
+    )
+    app.add_api_route(
         "/v1beta/models", service_module.list_gemini_models, methods=["GET"]
     )
     app.add_api_route(

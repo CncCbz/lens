@@ -286,6 +286,10 @@ class BackupLoadersMixin:
                             if price is not None
                             else 0.0
                         ),
+                        "context_window": (
+                            price.context_window if price is not None else None
+                        ),
+                        "pi_config": row.pi_config_json,
                         "items": items_by_group.get(row.id, []),
                     }
                 )
@@ -314,6 +318,7 @@ class BackupLoadersMixin:
                 output_price_per_million=row.output_price_per_million,
                 cache_read_price_per_million=row.cache_read_price_per_million,
                 cache_write_price_per_million=row.cache_write_price_per_million,
+                context_window=row.context_window,
             )
             for row in rows
         ]

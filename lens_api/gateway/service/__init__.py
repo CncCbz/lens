@@ -18,6 +18,8 @@ from ...models import (
     ModelGroupEnsureFromSiteResponse,
     ModelPriceItem,
     ModelPriceListResponse,
+    PiConfigExportResponse,
+    PiConfigGenerateResponse,
     MultimodalRelayConfig,
     MultimodalRelayUpdate,
     OverviewDailyPoint,
@@ -43,7 +45,9 @@ from .admin_config import (
     delete_gateway_api_key,
     delete_model_group,
     ensure_model_groups_from_site,
+    export_models_config,
     export_settings_bundle,
+    generate_group_pi_config,
     get_model_group,
     get_multimodal_relay_config,
     import_settings_bundle,
@@ -104,6 +108,7 @@ from .errors import (
 )
 from .lifecycle import lifespan
 from .proxy_routes import (
+    export_gateway_models_config,
     list_gateway_models,
     list_gemini_models,
     proxy_anthropic_messages,
@@ -133,6 +138,8 @@ __all__ = [
     "ModelGroupEnsureFromSiteResponse",
     "ModelPriceItem",
     "ModelPriceListResponse",
+    "PiConfigExportResponse",
+    "PiConfigGenerateResponse",
     "OverviewDailyPoint",
     "OverviewChannelAnalytics",
     "OverviewChannelHealthPoint",

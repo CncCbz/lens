@@ -633,12 +633,15 @@ class ModelGroup(StrictBaseModel):
     route_group_name: str = ""
     headers: dict[str, str] = Field(default_factory=dict)
     param_override: dict[str, Any] = Field(default_factory=dict)
+    pi_config: str = ""
+    pi_config_auto: bool = False
     sync_filter_mode: ModelGroupSyncFilterMode = ModelGroupSyncFilterMode.NONE
     sync_filter_query: str = ""
     input_price_per_million: float = 0.0
     output_price_per_million: float = 0.0
     cache_read_price_per_million: float = 0.0
     cache_write_price_per_million: float = 0.0
+    context_window: int | None = None
     items: list["ModelGroupItem"] = Field(default_factory=list)
     multimodal: ModelGroupMultimodalMode = ModelGroupMultimodalMode.AUTO
     multimodal_resolved: dict[str, bool] = Field(default_factory=dict)
@@ -696,6 +699,7 @@ class ModelGroupCreate(StrictBaseModel):
     route_group_id: str = ""
     headers: dict[str, str] = Field(default_factory=dict)
     param_override: dict[str, Any] = Field(default_factory=dict)
+    pi_config: str = ""
     sync_filter_mode: ModelGroupSyncFilterMode = ModelGroupSyncFilterMode.NONE
     sync_filter_query: str = ""
     items: list[ModelGroupItemInput] = Field(default_factory=list)
@@ -727,6 +731,7 @@ class ModelGroupUpdate(StrictBaseModel):
     route_group_id: str | None = None
     headers: dict[str, str] | None = None
     param_override: dict[str, Any] | None = None
+    pi_config: str | None = None
     sync_filter_mode: ModelGroupSyncFilterMode | None = None
     sync_filter_query: str | None = None
     items: list[ModelGroupItemInput] | None = None
@@ -975,6 +980,7 @@ class ModelPriceItem(StrictBaseModel):
     output_price_per_million: float = 0.0
     cache_read_price_per_million: float = 0.0
     cache_write_price_per_million: float = 0.0
+    context_window: int | None = None
 
 
 class ModelPriceUpdate(StrictBaseModel):
@@ -984,11 +990,39 @@ class ModelPriceUpdate(StrictBaseModel):
     output_price_per_million: float = Field(default=0.0, ge=0.0)
     cache_read_price_per_million: float = Field(default=0.0, ge=0.0)
     cache_write_price_per_million: float = Field(default=0.0, ge=0.0)
+    context_window: int | None = Field(default=None, ge=1)
 
 
 class ModelPriceListResponse(StrictBaseModel):
     items: list[ModelPriceItem] = Field(default_factory=list)
     last_synced_at: str | None = None
+
+
+class PiModelCatalogItem(StrictBaseModel):
+    provider: str
+    model_id: str
+    display_name: str = ""
+    api: str = ""
+    base_url: str = ""
+    reasoning: bool = False
+    input_modalities: list[str] = Field(default_factory=list)
+    context_window: int | None = None
+    max_tokens: int | None = None
+    input_price_per_million: float = 0.0
+    output_price_per_million: float = 0.0
+    cache_read_price_per_million: float = 0.0
+    cache_write_price_per_million: float = 0.0
+    config_json: str = ""
+
+
+class PiConfigGenerateResponse(StrictBaseModel):
+    config: str
+    matched_by_channel: int = Field(default=0, ge=0)
+
+
+class PiConfigExportResponse(StrictBaseModel):
+    type: str
+    models: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class CronjobItem(StrictBaseModel):

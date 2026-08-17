@@ -16,6 +16,17 @@ def _has_price_value(price_payload: dict[str, float]) -> bool:
     return any(price_payload[field] > 0 for field in PRICE_PAYLOAD_FIELDS)
 
 
+def _extract_context_window(model_payload: dict[str, Any]) -> int | None:
+    limit = model_payload.get("limit")
+    if not isinstance(limit, dict):
+        return None
+    value = limit.get("context")
+    try:
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
 def build_models_dev_price_index(
     payload: dict[str, Any],
 ) -> dict[str, dict[str, float]]:
@@ -52,6 +63,7 @@ def build_models_dev_price_index(
                 "cache_write_price_per_million": float(
                     cost_payload.get("cache_write") or 0.0
                 ),
+                "context_window": _extract_context_window(model_payload),
             }
             for alias in aliases:
                 if not alias:
@@ -65,9 +77,9 @@ def build_models_dev_price_index(
 
 
 def build_group_price_payloads(
-    group_names: list[str], price_index: dict[str, dict[str, float]]
-) -> list[dict[str, float | str]]:
-    payloads: list[dict[str, float | str]] = []
+    group_names: list[str], price_index: dict[str, dict[str, float | int | None]]
+) -> list[dict[str, float | int | str | None]]:
+    payloads: list[dict[str, float | int | str | None]] = []
     seen: set[str] = set()
 
     for raw_name in group_names:
@@ -95,6 +107,7 @@ def build_group_price_payloads(
                 "cache_write_price_per_million": price_payload[
                     "cache_write_price_per_million"
                 ],
+                "context_window": price_payload.get("context_window"),
             }
         )
 

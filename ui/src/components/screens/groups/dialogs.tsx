@@ -129,6 +129,8 @@ export function GroupEditorDialog({
   setDraggingIndex,
   moveFoldedMember,
   onOpenModelTest,
+  onGeneratePiConfig,
+  generatingPiConfig,
 }: {
   dialogOpen: boolean;
   setDialogOpen: Dispatch<SetStateAction<boolean>>;
@@ -172,6 +174,8 @@ export function GroupEditorDialog({
   setDraggingIndex: Dispatch<SetStateAction<number | null>>;
   moveFoldedMember: (fromIndex: number, toIndex: number) => void;
   onOpenModelTest: (member: FoldedMember) => void;
+  onGeneratePiConfig: () => void;
+  generatingPiConfig: boolean;
 }) {
   const [candidateDrawerOpen, setCandidateDrawerOpen] = useState(false);
 
@@ -309,7 +313,9 @@ export function GroupEditorDialog({
     (hasConfiguredJson(form.headers) ? 1 : 0) +
     (hasConfiguredJson(form.param_override) ? 1 : 0) +
     (form.multimodal !== "auto" ? 1 : 0) +
-    (hasConfiguredPricing(form) ? 1 : 0);
+    (hasConfiguredPricing(form) ? 1 : 0) +
+    (form.context_window.trim() !== "" ? 1 : 0) +
+    (form.pi_config.trim() !== "" ? 1 : 0);
 
   return (
     <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
@@ -1189,9 +1195,93 @@ export function GroupEditorDialog({
                             }
                           />
                         </div>
+                        <div className="flex items-center gap-3">
+                          <FieldLabel
+                            htmlFor="group-context-window"
+                            className="min-w-24"
+                          >
+                            {locale === "zh-CN"
+                              ? "上下文窗口"
+                              : "Context window"}
+                          </FieldLabel>
+                          <Input
+                            id="group-context-window"
+                            type="number"
+                            min={1}
+                            step={1}
+                            placeholder={locale === "zh-CN" ? "自动" : "Auto"}
+                            value={form.context_window}
+                            onChange={(event) =>
+                              setForm((current) => ({
+                                ...current,
+                                context_window: event.target.value,
+                              }))
+                            }
+                            className="max-w-56 font-mono text-xs"
+                          />
+                          <p className="text-sm text-muted-foreground">
+                            {locale === "zh-CN"
+                              ? "留空则用 models.dev 同步值"
+                              : "Leave empty to use the models.dev synced value"}
+                          </p>
+                        </div>
                       </div>
                     </>
                   ) : null}
+                  <Separator />
+                  <div className="flex flex-col gap-3">
+                    <div className="flex items-center gap-2 text-base font-semibold text-foreground">
+                      {locale === "zh-CN" ? "pi.dev 配置" : "pi.dev config"}
+                      <Badge
+                        variant={
+                          form.pi_config.trim() !== "" ? "default" : "secondary"
+                        }
+                      >
+                        {locale === "zh-CN"
+                          ? form.pi_config.trim() !== ""
+                            ? "已配置"
+                            : "未配置"
+                          : form.pi_config.trim() !== ""
+                            ? "Configured"
+                            : "Not set"}
+                      </Badge>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="ml-auto"
+                        disabled={generatingPiConfig}
+                        onClick={() => onGeneratePiConfig()}
+                      >
+                        <RefreshCcw className="mr-1 size-3.5" />
+                        {generatingPiConfig
+                          ? locale === "zh-CN"
+                            ? "生成中..."
+                            : "Generating..."
+                          : locale === "zh-CN"
+                            ? "从 pi.dev 生成"
+                            : "Generate from pi.dev"}
+                      </Button>
+                    </div>
+                    <Textarea
+                      id="group-pi-config"
+                      value={form.pi_config}
+                      onChange={(event) =>
+                        setForm((current) => ({
+                          ...current,
+                          pi_config: event.target.value,
+                          pi_config_edited: true,
+                        }))
+                      }
+                      className="min-h-48 font-mono text-xs"
+                      placeholder={'{"id": "model-name", "name": "...", ...}'}
+                    />
+                    <p className="text-sm text-muted-foreground">
+                      {locale === "zh-CN"
+                        ? "按组名匹配 pi.dev 目录，取官方渠道 models[0] 配置；定时同步自动更新，可手动修改；/v1/models/config?type=pi 聚合导出"
+                        : "Matched from the pi.dev catalog by group name (official channel models[0]); auto-updated by the sync task, editable. Aggregated by /v1/models/config?type=pi"}
+                    </p>
+                  </div>
                 </div>
               </TabsContent>
             </Tabs>

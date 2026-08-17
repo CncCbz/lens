@@ -134,6 +134,11 @@ class ModelPriceRepository:
                         if price_entity is not None
                         else 0.0
                     ),
+                    context_window=(
+                        price_entity.context_window
+                        if price_entity is not None
+                        else None
+                    ),
                 )
             )
 
@@ -187,6 +192,7 @@ class ModelPriceRepository:
                     cache_write_price_per_million=float(
                         payload.cache_write_price_per_million
                     ),
+                    context_window=payload.context_window,
                 )
                 session.add(entity)
             else:
@@ -201,6 +207,7 @@ class ModelPriceRepository:
                 entity.cache_write_price_per_million = float(
                     payload.cache_write_price_per_million
                 )
+                entity.context_window = payload.context_window
 
             await session.commit()
 
@@ -221,6 +228,7 @@ class ModelPriceRepository:
             output_price_per_million=float(payload.output_price_per_million),
             cache_read_price_per_million=float(payload.cache_read_price_per_million),
             cache_write_price_per_million=float(payload.cache_write_price_per_million),
+            context_window=payload.context_window,
         )
 
     async def replace_model_prices(
@@ -232,6 +240,7 @@ class ModelPriceRepository:
                 key = normalize_model_key(str(item.get("model_key") or ""))
                 if not key:
                     continue
+                context_window = item.get("context_window")
                 session.add(
                     ModelPriceEntity(
                         model_key=key,
@@ -247,6 +256,9 @@ class ModelPriceRepository:
                         ),
                         cache_write_price_per_million=float(
                             item.get("cache_write_price_per_million") or 0.0
+                        ),
+                        context_window=(
+                            int(context_window) if context_window is not None else None
                         ),
                     )
                 )
@@ -271,6 +283,7 @@ class ModelPriceRepository:
                     continue
                 entity = entities_by_key.get(key)
                 if entity is None:
+                    context_window = item.get("context_window")
                     session.add(
                         ModelPriceEntity(
                             model_key=key,
@@ -286,6 +299,11 @@ class ModelPriceRepository:
                             ),
                             cache_write_price_per_million=float(
                                 item.get("cache_write_price_per_million") or 0.0
+                            ),
+                            context_window=(
+                                int(context_window)
+                                if context_window is not None
+                                else None
                             ),
                         )
                     )
@@ -305,6 +323,10 @@ class ModelPriceRepository:
                     )
                     entity.cache_write_price_per_million = float(
                         item.get("cache_write_price_per_million") or 0.0
+                    )
+                    context_window = item.get("context_window")
+                    entity.context_window = (
+                        int(context_window) if context_window is not None else None
                     )
 
             if allowed_keys is not None:

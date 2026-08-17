@@ -207,6 +207,7 @@ def _channel_ids_by_protocol_config(
 
 
 SETTING_MODEL_PRICE_LAST_SYNC_AT = "model_price_last_sync_at"
+SETTING_PI_CATALOG_LAST_SYNC_AT = "pi_catalog_last_sync_at"
 SETTING_PROXY_URL = "proxy_url"
 SETTING_STATS_TIME_ZONE = "stats_time_zone"
 SETTING_TIME_ZONE = "time_zone"

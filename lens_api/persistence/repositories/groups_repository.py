@@ -789,6 +789,8 @@ class GroupRepository:
                 param_override_json=json.dumps(
                     payload.param_override, ensure_ascii=True
                 ),
+                pi_config_json=payload.pi_config,
+                pi_config_auto=0,
                 multimodal=payload.multimodal.value,
                 multimodal_overrides_json=json.dumps(
                     payload.multimodal_overrides, ensure_ascii=True
@@ -883,6 +885,9 @@ class GroupRepository:
                     entity.headers_json = json.dumps(value, ensure_ascii=True)
                 elif key == "param_override":
                     entity.param_override_json = json.dumps(value, ensure_ascii=True)
+                elif key == "pi_config":
+                    entity.pi_config_json = value or ""
+                    entity.pi_config_auto = 0
                 elif key == "route_group_id":
                     entity.route_group_id = (
                         route_group.id if route_group is not None else ""
@@ -916,6 +921,22 @@ class GroupRepository:
             await session.refresh(entity)
             hydrated = await self._hydrate_groups(session, [entity])
             return hydrated[0]
+
+    async def update_group_pi_configs(
+        self, configs_by_group_id: dict[str, str]
+    ) -> None:
+        if not configs_by_group_id:
+            return
+        async with self._session_factory() as session:
+            for group_id, pi_config in configs_by_group_id.items():
+                entity = await session.get(ModelGroupEntity, group_id)
+                if entity is None:
+                    continue
+                if entity.pi_config_json.strip() and not entity.pi_config_auto:
+                    continue
+                entity.pi_config_json = pi_config
+                entity.pi_config_auto = 1
+            await session.commit()
 
     async def update_multimodal_modes(self, modes_by_group_id: dict[str, str]) -> None:
         if not modes_by_group_id:
@@ -1154,12 +1175,31 @@ class GroupRepository:
     ) -> list[ModelGroup]:
         if not entities:
             return []
-        items_by_group = await self._load_group_items(
-            session, [item.id for item in entities]
-        )
+        # Include target execution groups so route groups can inherit
+        # their pi config (and resolve route group names).
         route_group_ids = [
             item.route_group_id for item in entities if item.route_group_id.strip()
         ]
+        existing_ids = {item.id for item in entities}
+        missing_target_ids = sorted(set(route_group_ids) - existing_ids)
+        all_entities = list(entities)
+        if missing_target_ids:
+            extra_rows = (
+                (
+                    await session.execute(
+                        select(ModelGroupEntity).where(
+                            ModelGroupEntity.id.in_(missing_target_ids)
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            all_entities.extend(extra_rows)
+
+        items_by_group = await self._load_group_items(
+            session, [item.id for item in all_entities]
+        )
         route_name_by_id: dict[str, str] = {}
         if route_group_ids:
             route_rows = (
@@ -1173,17 +1213,37 @@ class GroupRepository:
                 str(group_id): str(group_name) for group_id, group_name in route_rows
             }
         prices_by_key = await self._load_model_prices_by_keys(
-            session, [normalize_model_key(item.name) for item in entities]
+            session, [normalize_model_key(item.name) for item in all_entities]
         )
-        return [
+        hydrated = [
             self._to_group(
                 item,
                 items_by_group.get(item.id, []),
                 prices_by_key.get(normalize_model_key(item.name)),
                 route_name_by_id.get(item.route_group_id, ""),
             )
-            for item in entities
+            for item in all_entities
         ]
+        groups_by_id = {group.id: group for group in hydrated}
+        for group in hydrated:
+            if not group.route_group_id.strip() or group.pi_config.strip():
+                continue
+            target = groups_by_id.get(group.route_group_id)
+            if target is None or not target.pi_config.strip():
+                continue
+            # Inherit the target config but keep the route group's own
+            # model id/name (it is the model name clients call).
+            try:
+                payload = json.loads(target.pi_config)
+            except ValueError:
+                payload = None
+            if isinstance(payload, dict) and "id" in payload:
+                payload["id"] = group.name
+                payload["name"] = group.name
+                group.pi_config = json.dumps(payload, indent=2, ensure_ascii=False)
+            else:
+                group.pi_config = target.pi_config
+        return hydrated
 
     async def _load_model_prices_by_keys(
         self, session: AsyncSession, keys: list[str]
@@ -1430,6 +1490,8 @@ class GroupRepository:
             multimodal=entity.multimodal,
             multimodal_resolved=_parse_json_object(entity.multimodal_resolved_json),
             multimodal_overrides=_parse_json_object(entity.multimodal_overrides_json),
+            pi_config=entity.pi_config_json,
+            pi_config_auto=bool(entity.pi_config_auto),
             input_price_per_million=(
                 float(price.input_price_per_million) if price is not None else 0.0
             ),
@@ -1442,6 +1504,7 @@ class GroupRepository:
             cache_write_price_per_million=(
                 float(price.cache_write_price_per_million) if price is not None else 0.0
             ),
+            context_window=(price.context_window if price is not None else None),
             items=items,
         )
 

@@ -29,6 +29,8 @@ from .runtime_context import (
     ModelPriceItem,
     ModelPriceListResponse,
     ModelPriceUpdate,
+    PiConfigExportResponse,
+    PiConfigGenerateResponse,
     MultimodalRelayConfig,
     MultimodalRelayGroupStatus,
     MultimodalRelayUpdate,
@@ -142,6 +144,35 @@ async def update_model_group(
     group_id: str, payload: ModelGroupUpdate, _: Any = Depends(get_current_admin)
 ) -> ModelGroup:
     return await app_state.group_repo.update_group(group_id, payload)
+
+
+async def generate_group_pi_config(
+    group_id: str, _: Any = Depends(get_current_admin)
+) -> PiConfigGenerateResponse:
+    from ...core.pi_catalog import build_group_pi_config_json
+
+    group = await app_state.group_repo.get_group(group_id)
+    entries = await app_state.pi_catalog_repo.list_all()
+    config = build_group_pi_config_json([group.name], entries)
+    return PiConfigGenerateResponse(
+        config=config, matched_by_channel=1 if group.name.strip() else 0
+    )
+
+
+async def export_models_config(
+    type: str = "pi", _: Any = Depends(get_current_admin)
+) -> PiConfigExportResponse:
+    from ...core.pi_catalog import collect_group_models
+
+    if type != "pi":
+        raise ValueError(f"Unsupported config type: {type}")
+
+    groups = await app_state.group_repo.list_groups()
+    entries = await app_state.pi_catalog_repo.list_all()
+
+    return PiConfigExportResponse(
+        type=type, models=collect_group_models(groups, entries)
+    )
 
 
 async def delete_model_group(

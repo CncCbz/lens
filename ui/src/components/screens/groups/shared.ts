@@ -33,6 +33,8 @@ export type FormState = {
   route_group_id: string;
   headers: string;
   param_override: string;
+  pi_config: string;
+  pi_config_edited: boolean;
   sync_filter_mode: ModelGroupSyncFilterMode;
   sync_filter_query: string;
   multimodal: ModelGroupMultimodalMode;
@@ -42,6 +44,7 @@ export type FormState = {
   output_price_per_million: string;
   cache_read_price_per_million: string;
   cache_write_price_per_million: string;
+  context_window: string;
   items: FormItem[];
 };
 
@@ -105,6 +108,8 @@ export const emptyForm: FormState = {
   route_group_id: "",
   headers: "{}",
   param_override: "{}",
+  pi_config: "",
+  pi_config_edited: false,
   sync_filter_mode: "",
   sync_filter_query: "",
   multimodal: "auto",
@@ -114,6 +119,7 @@ export const emptyForm: FormState = {
   output_price_per_million: "0",
   cache_read_price_per_million: "0",
   cache_write_price_per_million: "0",
+  context_window: "",
   items: [],
 };
 
@@ -455,6 +461,10 @@ export function toForm(group: ModelGroup): FormState {
     output_price_per_million: String(group.output_price_per_million),
     cache_read_price_per_million: String(group.cache_read_price_per_million),
     cache_write_price_per_million: String(group.cache_write_price_per_million),
+    context_window:
+      group.context_window == null ? "" : String(group.context_window),
+    pi_config: group.pi_config ?? "",
+    pi_config_edited: false,
     items: group.items
       .slice()
       .sort((a, b) => a.priority - b.priority)
@@ -502,6 +512,10 @@ export function toPayload(form: FormState): ModelGroupPayload {
     route_group_id: form.route_group_id.trim(),
     headers: parseHeaders(form.headers),
     param_override: parseJsonObject(form.param_override, "param_override"),
+    pi_config:
+      form.route_group_id.trim() && !form.pi_config_edited
+        ? undefined
+        : form.pi_config.trim(),
     sync_filter_mode:
       form.route_group_id.trim() || !form.sync_filter_query.trim()
         ? ""

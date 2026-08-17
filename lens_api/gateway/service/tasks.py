@@ -37,6 +37,31 @@ async def _sync_group_prices(state: AppState, overwrite_existing: bool = False) 
     await _sync_group_capabilities(state, capability_index)
 
 
+async def _sync_pi_catalog(state: AppState) -> None:
+    from ...core.pi_catalog import build_group_pi_config_json, fetch_pi_catalog
+
+    entries = await fetch_pi_catalog()
+    rows = [entry.to_row() for entry in entries]
+    await state.pi_catalog_repo.replace_all(rows)
+    await state.pi_catalog_repo.set_last_synced_at(datetime.now(UTC).isoformat())
+
+    # Auto-fill pi config for groups that have not been configured manually.
+    groups = await state.group_repo.list_groups()
+    configs_by_group_id: dict[str, str] = {}
+    for group in groups:
+        if group.route_group_id.strip():
+            continue
+        if group.pi_config.strip() and not group.pi_config_auto:
+            continue
+        if not group.name.strip():
+            continue
+        configs_by_group_id[group.id] = build_group_pi_config_json(
+            [group.name], entries
+        )
+    if configs_by_group_id:
+        await state.group_repo.update_group_pi_configs(configs_by_group_id)
+
+
 async def _sync_group_capabilities(
     state: AppState, capability_index: dict[str, dict[str, bool]]
 ) -> None:

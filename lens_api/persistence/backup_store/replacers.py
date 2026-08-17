@@ -347,6 +347,7 @@ class BackupReplacersMixin:
                     param_override_json=json.dumps(
                         group.param_override, ensure_ascii=True
                     ),
+                    pi_config_json=group.pi_config,
                     sync_filter_mode=group.sync_filter_mode.value,
                     sync_filter_query=group.sync_filter_query,
                 )
@@ -390,6 +391,7 @@ class BackupReplacersMixin:
                     output_price_per_million=item.output_price_per_million,
                     cache_read_price_per_million=item.cache_read_price_per_million,
                     cache_write_price_per_million=item.cache_write_price_per_million,
+                    context_window=item.context_window,
                 )
             )
 

@@ -6,12 +6,14 @@ from .runtime_context import (
     GatewayApiKey,
     HTTPException,
     ModelGroup,
+    PiConfigExportResponse,
     ProtocolKind,
     Request,
     Response,
     UploadFile,
     app_state,
     can_reach_protocol,
+    json,
 )
 from .auth import _gateway_key_allows_model
 from .proxy_flow import _proxy_protocol
@@ -284,6 +286,28 @@ async def list_gateway_models(
     if request.headers.get("anthropic-version"):
         return _build_anthropic_models_payload(groups, gateway_key)
     return _build_openai_models_payload(groups, gateway_key)
+
+
+async def export_gateway_models_config(
+    type: str = "pi",
+    gateway_key: GatewayApiKey = Depends(get_current_gateway_key),
+) -> PiConfigExportResponse:
+    from ...core.pi_catalog import collect_group_models
+
+    if type != "pi":
+        raise ValueError(f"Unsupported config type: {type}")
+    groups = await app_state.group_repo.list_groups()
+    entries = await app_state.pi_catalog_repo.list_all()
+    return PiConfigExportResponse(
+        type=type,
+        models=collect_group_models(
+            groups,
+            entries,
+            allow_group=lambda group: _gateway_key_allows_model(
+                gateway_key, group.name
+            ),
+        ),
+    )
 
 
 async def list_gemini_models(

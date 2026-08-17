@@ -82,6 +82,8 @@ export type ModelGroup = {
   output_price_per_million: number;
   cache_read_price_per_million: number;
   cache_write_price_per_million: number;
+  context_window?: number | null;
+  pi_config: string;
   items: ModelGroupItem[];
   multimodal: ModelGroupMultimodalMode;
   multimodal_resolved: Record<string, boolean>;
@@ -141,12 +143,38 @@ export type ModelGroupPayload = {
   route_group_id?: string;
   headers: Record<string, string>;
   param_override: Record<string, unknown>;
+  pi_config?: string;
   sync_filter_mode: ModelGroupSyncFilterMode;
   sync_filter_query: string;
   multimodal?: ModelGroupMultimodalMode;
   multimodal_overrides?: Record<string, boolean>;
   items: ModelGroupItemPayload[];
 };
+
+export type PiConfigGenerateResponse = {
+  config: string;
+  matched_by_channel: number;
+  matched_by_model: number;
+};
+
+export type PiConfigExportResponse = {
+  type: string;
+  models: Array<Record<string, unknown>>;
+};
+
+export async function generateGroupPiConfig(groupId: string) {
+  return apiRequest<PiConfigGenerateResponse>(
+    `/admin/model-groups/${encodeURIComponent(groupId)}/pi-config`,
+    { method: "GET" },
+  );
+}
+
+export async function exportModelsConfig(type = "pi") {
+  return apiRequest<PiConfigExportResponse>(
+    `/admin/models/config?type=${encodeURIComponent(type)}`,
+    { method: "GET" },
+  );
+}
 
 export type RoutePreviewRole = "primary" | "fallback" | "skipped";
 

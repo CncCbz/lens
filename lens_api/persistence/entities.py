@@ -141,6 +141,12 @@ class ModelGroupEntity(Base):
     param_override_json: Mapped[str] = mapped_column(
         Text, nullable=False, default="{}", server_default="{}"
     )
+    pi_config_json: Mapped[str] = mapped_column(
+        Text, nullable=False, default="", server_default=""
+    )
+    pi_config_auto: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="1"
+    )
     multimodal: Mapped[str] = mapped_column(
         String(16), nullable=False, default="auto", server_default="auto"
     )
@@ -306,6 +312,38 @@ class ModelPriceEntity(Base):
     cache_write_price_per_million: Mapped[float] = mapped_column(
         Float, nullable=False, default=0.0
     )
+    context_window: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
+class PiModelCatalogEntity(Base):
+    __tablename__ = "pi_model_catalog"
+
+    model_key: Mapped[str] = mapped_column(String(300), primary_key=True)
+    provider: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
+    model_id: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
+    display_name: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    api: Mapped[str] = mapped_column(String(60), nullable=False, default="")
+    base_url: Mapped[str] = mapped_column(String(500), nullable=False, default="")
+    reasoning: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    input_modalities_json: Mapped[str] = mapped_column(
+        Text, nullable=False, default="[]", server_default="[]"
+    )
+    context_window: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    max_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    input_price_per_million: Mapped[float] = mapped_column(
+        Float, nullable=False, default=0.0
+    )
+    output_price_per_million: Mapped[float] = mapped_column(
+        Float, nullable=False, default=0.0
+    )
+    cache_read_price_per_million: Mapped[float] = mapped_column(
+        Float, nullable=False, default=0.0
+    )
+    cache_write_price_per_million: Mapped[float] = mapped_column(
+        Float, nullable=False, default=0.0
+    )
+    config_json: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    updated_at: Mapped[datetime] = auto_timestamp_column()
 
 
 class CronjobEntity(Base):

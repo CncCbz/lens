@@ -105,6 +105,7 @@ function taskTitle(locale: Locale, task: CronjobItem) {
       "Request log stats persist",
     ],
     model_price_sync: ["模型价格同步", "Model price sync"],
+    pi_catalog_sync: ["pi.dev 模型目录同步", "pi.dev catalog sync"],
   };
   const label = labels[task.id];
   if (!label) {
@@ -126,6 +127,10 @@ function taskDescription(locale: Locale, task: CronjobItem) {
     model_price_sync: [
       "从 models.dev 同步模型价格",
       "Sync model prices from models.dev",
+    ],
+    pi_catalog_sync: [
+      "从 pi.dev 同步模型配置目录",
+      "Sync model configs from pi.dev",
     ],
   };
   const label = labels[task.id];
