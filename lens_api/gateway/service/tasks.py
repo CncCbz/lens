@@ -47,6 +47,12 @@ async def _sync_pi_catalog(state: AppState) -> None:
 
     # Auto-fill pi config for groups that have not been configured manually.
     groups = await state.group_repo.list_groups()
+    runtime = await state.settings_repo.get_runtime_settings()
+    relay_image_group_id = (
+        str(runtime.get("multimodal_image_group_id") or "").strip()
+        if runtime.get("multimodal_relay_enabled")
+        else ""
+    )
     configs_by_group_id: dict[str, str] = {}
     for group in groups:
         if group.route_group_id.strip():
@@ -56,7 +62,10 @@ async def _sync_pi_catalog(state: AppState) -> None:
         if not group.name.strip():
             continue
         configs_by_group_id[group.id] = build_group_pi_config_json(
-            [group.name], entries
+            [group.name],
+            entries,
+            group=group,
+            relay_image_group_id=relay_image_group_id,
         )
     if configs_by_group_id:
         await state.group_repo.update_group_pi_configs(configs_by_group_id)

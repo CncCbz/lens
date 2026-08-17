@@ -418,9 +418,55 @@ def resolve_provider_for_model(
     return candidates[0].provider if candidates else ""
 
 
+def group_supports_media(group: object | None, kind: str) -> bool:
+    """Effective capability of a model group for one media kind."""
+    if group is None:
+        return False
+    mode = getattr(group, "multimodal", "auto")
+    if mode == "on":
+        return True
+    if mode == "off":
+        return False
+    if mode == "manual":
+        overrides = getattr(group, "multimodal_overrides", None)
+        if isinstance(overrides, dict):
+            return bool(overrides.get(kind))
+        return False
+    resolved = getattr(group, "multimodal_resolved", None)
+    if isinstance(resolved, dict):
+        return bool(resolved.get(kind))
+    return False
+
+
+def apply_media_inputs(
+    model: dict[str, object],
+    group: object | None,
+    relay_image_group_id: str = "",
+) -> dict[str, object]:
+    """Mark image input as supported when the group can handle images.
+
+    The group may support images natively (multimodal mode/overrides or
+    models.dev capabilities) or through multimodal relay fallback (an
+    image helper group is configured), in which case image requests are
+    relayed to the helper even when the model itself is text-only.
+    """
+    if not group:
+        return model
+    handles_image = group_supports_media(group, "image") or bool(relay_image_group_id)
+    if not handles_image:
+        return model
+    inputs = model.get("input")
+    if not isinstance(inputs, list) or "image" in inputs:
+        return model
+    return {**model, "input": inputs + ["image"]}
+
+
 def build_group_pi_config_json(
     model_names: list[str],
     catalog_entries: list[PiCatalogEntry],
+    *,
+    group: object | None = None,
+    relay_image_group_id: str = "",
 ) -> str:
     """Generate the pi config for a group: the official channel's matched
     model definition (its models[0]), as a bare model object.
@@ -441,8 +487,10 @@ def build_group_pi_config_json(
             if not _model_key_matches(entry.model_id, name):
                 continue
             model = _matched_model(entry, name)
-            if model is not None:
-                return json.dumps(model, indent=2, ensure_ascii=False)
+            if model is None:
+                continue
+            model = apply_media_inputs(model, group, relay_image_group_id)
+            return json.dumps(model, indent=2, ensure_ascii=False)
     return "{}"
 
 
@@ -473,6 +521,7 @@ def collect_group_models(
     groups: list[object],
     catalog_entries: list[PiCatalogEntry],
     allow_group: Callable[[object], bool] | None = None,
+    relay_image_group_id: str = "",
 ) -> list[dict[str, object]]:
     """Flatten per-group pi configs into a bare models list.
 
@@ -495,6 +544,7 @@ def collect_group_models(
         if model_id in seen_ids:
             return
         seen_ids.add(model_id)
+        model = apply_media_inputs(model, target, relay_image_group_id)
         models.append(_model_with_api(model, provider, catalog_entries))
 
     groups_by_id = {getattr(g, "id", ""): g for g in groups}

@@ -153,7 +153,15 @@ async def generate_group_pi_config(
 
     group = await app_state.group_repo.get_group(group_id)
     entries = await app_state.pi_catalog_repo.list_all()
-    config = build_group_pi_config_json([group.name], entries)
+    runtime = await app_state.settings_repo.get_runtime_settings()
+    relay_image_group_id = (
+        str(runtime.get("multimodal_image_group_id") or "").strip()
+        if runtime.get("multimodal_relay_enabled")
+        else ""
+    )
+    config = build_group_pi_config_json(
+        [group.name], entries, group=group, relay_image_group_id=relay_image_group_id
+    )
     return PiConfigGenerateResponse(
         config=config, matched_by_channel=1 if group.name.strip() else 0
     )
@@ -169,9 +177,17 @@ async def export_models_config(
 
     groups = await app_state.group_repo.list_groups()
     entries = await app_state.pi_catalog_repo.list_all()
-
+    runtime = await app_state.settings_repo.get_runtime_settings()
+    relay_image_group_id = (
+        str(runtime.get("multimodal_image_group_id") or "").strip()
+        if runtime.get("multimodal_relay_enabled")
+        else ""
+    )
     return PiConfigExportResponse(
-        type=type, models=collect_group_models(groups, entries)
+        type=type,
+        models=collect_group_models(
+            groups, entries, relay_image_group_id=relay_image_group_id
+        ),
     )
 
 

@@ -298,6 +298,12 @@ async def export_gateway_models_config(
         raise ValueError(f"Unsupported config type: {type}")
     groups = await app_state.group_repo.list_groups()
     entries = await app_state.pi_catalog_repo.list_all()
+    runtime = await app_state.settings_repo.get_runtime_settings()
+    relay_image_group_id = (
+        str(runtime.get("multimodal_image_group_id") or "").strip()
+        if runtime.get("multimodal_relay_enabled")
+        else ""
+    )
     return PiConfigExportResponse(
         type=type,
         models=collect_group_models(
@@ -306,6 +312,7 @@ async def export_gateway_models_config(
             allow_group=lambda group: _gateway_key_allows_model(
                 gateway_key, group.name
             ),
+            relay_image_group_id=relay_image_group_id,
         ),
     )
 
