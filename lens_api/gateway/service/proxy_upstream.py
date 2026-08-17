@@ -26,6 +26,7 @@ from .runtime_context import (
     build_upstream_request,
     convert_response,
     convert_stream_iterator,
+    effective_router_error_policy_config,
     httpx,
     logger,
     needs_conversion,
@@ -410,7 +411,9 @@ async def _record_target_failure(
     if policy_key is not None:
         policy = resolve_router_error_policy(
             policy_key,
-            config=runtime.get("router_error_policy_config"),
+            config=effective_router_error_policy_config(
+                runtime, channel.router_error_policy_config
+            ),
             circuit_breaker_threshold=int(runtime["circuit_breaker_threshold"]),
             circuit_breaker_cooldown=int(runtime["circuit_breaker_cooldown"]),
             circuit_breaker_max_cooldown=int(runtime["circuit_breaker_max_cooldown"]),
@@ -482,6 +485,7 @@ async def _record_target_failure(
             error_policy_key=policy_key,
             cooldown_scope=policy.cooldown_scope if policy is not None else None,
             cooldown_seconds_applied=cooldown_seconds_applied or None,
+            router_error_policy_config=channel.router_error_policy_config,
             reasoning_effort=_extract_request_reasoning_effort(
                 log_ctx.body, upstream_body
             ),

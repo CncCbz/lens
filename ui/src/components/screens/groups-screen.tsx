@@ -991,6 +991,8 @@ export function GroupsScreen() {
             concurrency_limit: protocolConfig.concurrency_limit,
             param_override: protocolConfig.param_override,
             match_regex: protocolConfig.match_regex,
+            router_error_policy_config:
+              protocolConfig.router_error_policy_config,
             manual_model_name: "",
             base_url_id: baseUrl.id,
             credential_id: credential.id,

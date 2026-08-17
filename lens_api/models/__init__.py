@@ -213,6 +213,7 @@ class ChannelConfig(StrictBaseModel):
     concurrency_limit: int = Field(default=0, ge=0, le=MAX_CHANNEL_CONCURRENCY)
     param_override: str = ""
     match_regex: str = ""
+    router_error_policy_config: str = ""
 
     _normalize_base_url = field_validator("base_url", mode="before")(normalize_base_url)
 
@@ -284,6 +285,7 @@ class SiteProtocolConfig(StrictBaseModel):
     concurrency_limit: int = Field(default=0, ge=0, le=MAX_CHANNEL_CONCURRENCY)
     param_override: str = ""
     match_regex: str = ""
+    router_error_policy_config: str = ""
     base_url_id: str = Field(min_length=1)
     credential_id: str = ""
     models: list[SiteModel] = Field(default_factory=list)
@@ -300,6 +302,7 @@ class SiteProtocolConfigInput(StrictBaseModel):
     concurrency_limit: int = Field(default=0, ge=0, le=MAX_CHANNEL_CONCURRENCY)
     param_override: str = ""
     match_regex: str = ""
+    router_error_policy_config: str = ""
     base_url_id: str = Field(min_length=1)
     credential_id: str = ""
     models: list[SiteModelInput] = Field(default_factory=list)
@@ -389,6 +392,7 @@ class SiteImportProtocolInput(StrictBaseModel):
     concurrency_limit: int = Field(default=0, ge=0, le=MAX_CHANNEL_CONCURRENCY)
     param_override: str = ""
     match_regex: str = ""
+    router_error_policy_config: str = ""
     base_url_ref: str = ""
     credential_ref: str = ""
     models: list[SiteImportModelInput] = Field(default_factory=list)

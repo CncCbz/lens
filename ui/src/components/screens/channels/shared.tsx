@@ -62,6 +62,7 @@ export type FormProtocolConfig = {
   concurrency_limit: number;
   param_override: string;
   match_regex: string;
+  router_error_policy_config: string;
   manual_model_name: string;
   base_url_id: string;
   credential_id: string;
@@ -196,6 +197,7 @@ export const emptyProtocolConfig = (
   concurrency_limit: 0,
   param_override: "",
   match_regex: "",
+  router_error_policy_config: "",
   manual_model_name: "",
   base_url_id: baseUrlId,
   credential_id: credentialId,
@@ -244,6 +246,7 @@ export const batchImportTemplate: SiteBatchImportPayload = {
           concurrency_limit: 0,
           param_override: "",
           match_regex: "",
+          router_error_policy_config: "",
           models: [
             {
               model_name: "gpt-4.1",
@@ -685,6 +688,9 @@ export function toForm(site: Site, locale: Locale = "zh-CN"): FormState {
           concurrency_limit: protocolConfig.concurrency_limit ?? 0,
           param_override: protocolConfig.param_override,
           match_regex: safeText(protocolConfig.match_regex),
+          router_error_policy_config: safeText(
+            protocolConfig.router_error_policy_config,
+          ),
           manual_model_name: "",
           base_url_id: resolveBaseUrlId(baseUrls, protocolConfig.base_url_id),
           credential_id: protocolConfig.credential_id,
@@ -792,6 +798,8 @@ export function toPayload(form: FormState): SitePayload {
           ),
           param_override: protocolConfig.param_override.trim(),
           match_regex: safeText(protocolConfig.match_regex).trim(),
+          router_error_policy_config:
+            protocolConfig.router_error_policy_config.trim(),
           base_url_id: protocolConfig.base_url_id,
           credential_id: credentialId,
           models,

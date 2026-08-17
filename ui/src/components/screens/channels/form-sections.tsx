@@ -24,6 +24,13 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
+import { ErrorPolicySettings } from "@/components/settings/error-policy-settings";
+import {
+  parseErrorPolicyConfig,
+  serializeErrorPolicyConfig,
+  validateErrorPolicyDraft,
+} from "@/lib/error-policy-config";
+import type { RouterErrorPolicyDraft } from "@/lib/settings-types";
 import type { ProtocolKind } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import {
@@ -675,7 +682,7 @@ export function ProtocolConfigItem({
   );
 }
 
-type AdvancedConfigTab = "limits" | "proxy" | "headers" | "body";
+type AdvancedConfigTab = "limits" | "proxy" | "headers" | "body" | "errors";
 
 function headersToJson(headers: HeaderItem[]): string {
   const object = Object.fromEntries(
@@ -716,6 +723,7 @@ export function AdvancedProtocolConfigDialog({
   protocolConfig,
   protocolConfigIndex,
   locale,
+  globals,
   onOpenChange,
   onUpdateProtocolConfig,
 }: {
@@ -723,6 +731,7 @@ export function AdvancedProtocolConfigDialog({
   protocolConfig: FormProtocolConfig | undefined;
   protocolConfigIndex: number | null;
   locale: Locale;
+  globals: { threshold: number; cooldown: number; maxCooldown: number };
   onOpenChange: (open: boolean) => void;
   onUpdateProtocolConfig: (
     index: number,
@@ -732,6 +741,13 @@ export function AdvancedProtocolConfigDialog({
   const [tab, setTab] = useState<AdvancedConfigTab>("limits");
   const [headersDraft, setHeadersDraft] = useState("{}");
   const [headersInvalid, setHeadersInvalid] = useState(false);
+  const [errorPolicyDraft, setErrorPolicyDraft] =
+    useState<RouterErrorPolicyDraft>(() =>
+      parseErrorPolicyConfig("", globals, false),
+    );
+  const [errorPolicyInvalid, setErrorPolicyInvalid] = useState<string | null>(
+    null,
+  );
   const combinationName =
     protocolConfig?.name?.trim() ||
     (protocolConfigIndex !== null
@@ -745,15 +761,38 @@ export function AdvancedProtocolConfigDialog({
     setTab("limits");
     setHeadersDraft(headersToJson(protocolConfig.headers));
     setHeadersInvalid(false);
+    setErrorPolicyDraft(
+      parseErrorPolicyConfig(
+        protocolConfig.router_error_policy_config,
+        globals,
+        false,
+      ),
+    );
+    setErrorPolicyInvalid(null);
     // Sync draft only when dialog opens for a combination.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, protocolConfigIndex]);
+
+  function handleErrorPolicyChange(next: RouterErrorPolicyDraft) {
+    setErrorPolicyDraft(next);
+    const error = validateErrorPolicyDraft(
+      next,
+      locale === "zh-CN" ? "zh-CN" : "en-US",
+    );
+    setErrorPolicyInvalid(error);
+    if (error) return;
+    const serialized = serializeErrorPolicyConfig(next, globals);
+    onUpdateProtocolConfig(protocolConfigIndex as number, {
+      router_error_policy_config:
+        serialized === '{"overrides":{}}' ? "" : serialized,
+    });
+  }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       {protocolConfigIndex !== null && protocolConfig ? (
         <AppDialogContent
-          className="max-w-3xl"
+          className="max-w-4xl"
           title={
             locale === "zh-CN"
               ? `${combinationName} · 上游转发`
@@ -786,6 +825,10 @@ export function AdvancedProtocolConfigDialog({
                   {
                     value: "body" as const,
                     label: "Body",
+                  },
+                  {
+                    value: "errors" as const,
+                    label: locale === "zh-CN" ? "错误策略" : "Errors",
                   },
                 ] as const
               ).map((option) => (
@@ -958,6 +1001,27 @@ export function AdvancedProtocolConfigDialog({
                     : "JSON object, deep-merged into upstream body; cannot override model"}
                 </FieldDescription>
               </Field>
+            ) : null}
+
+            {tab === "errors" ? (
+              <div className="grid gap-2">
+                <ErrorPolicySettings
+                  locale={locale}
+                  draft={errorPolicyDraft}
+                  globals={globals}
+                  hint={
+                    locale === "zh-CN"
+                      ? "默认为空时使用全局错误策略；添加状态码可覆盖该状态码的处理，未覆盖的状态码继续沿用全局策略"
+                      : "Empty inherits the global error policy; add a status code to override it, other statuses keep the global policy"
+                  }
+                  onChange={handleErrorPolicyChange}
+                />
+                {errorPolicyInvalid ? (
+                  <p className="text-xs text-destructive">
+                    {errorPolicyInvalid}
+                  </p>
+                ) : null}
+              </div>
             ) : null}
           </div>
         </AppDialogContent>

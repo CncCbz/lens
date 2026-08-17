@@ -33,6 +33,7 @@ type Props = {
   locale: Locale;
   draft: RouterErrorPolicyDraft;
   globals: { threshold: number; cooldown: number; maxCooldown: number };
+  hint?: string;
   onChange: (draft: RouterErrorPolicyDraft) => void;
 };
 
@@ -52,6 +53,7 @@ export function ErrorPolicySettings({
   locale,
   draft,
   globals,
+  hint,
   onChange,
 }: Props) {
   function addRow() {
@@ -62,7 +64,10 @@ export function ErrorPolicySettings({
     const key = String(Math.min(code, 599));
     if (draft.rows.some((row) => row.key === key)) return;
     onChange({
-      rows: [...draft.rows, { ...createErrorPolicyRow(key, globals), overridden: true }],
+      rows: [
+        ...draft.rows,
+        { ...createErrorPolicyRow(key, globals), overridden: true },
+      ],
     });
   }
 
@@ -87,11 +92,12 @@ export function ErrorPolicySettings({
             {titleForLocale(locale, "错误策略", "Error policies")}
           </div>
           <p className="text-xs text-muted-foreground">
-            {titleForLocale(
-              locale,
-              "仅列出类别与特殊状态码。未列出的状态沿用 4xx/5xx；5xx 数值默认同上方全局项。",
-              "Categories and special codes only. Other statuses inherit 4xx/5xx; 5xx numbers follow globals above.",
-            )}
+            {hint ??
+              titleForLocale(
+                locale,
+                "仅列出类别与特殊状态码。未列出的状态沿用 4xx/5xx；5xx 数值默认同上方全局项。",
+                "Categories and special codes only. Other statuses inherit 4xx/5xx; 5xx numbers follow globals above.",
+              )}
           </p>
         </div>
         <Button

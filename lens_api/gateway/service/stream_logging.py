@@ -13,6 +13,7 @@ from .runtime_context import (
     _RequestDeadline,
     app_state,
     asyncio,
+    effective_router_error_policy_config,
     httpx,
     json,
     logger,
@@ -510,7 +511,9 @@ async def _record_stream_route_health(
         policy_key = policy_key_for_status(status_code)
         policy = resolve_router_error_policy(
             policy_key,
-            config=runtime.get("router_error_policy_config"),
+            config=effective_router_error_policy_config(
+                runtime, channel.router_error_policy_config
+            ),
             circuit_breaker_threshold=int(runtime["circuit_breaker_threshold"]),
             circuit_breaker_cooldown=int(runtime["circuit_breaker_cooldown"]),
             circuit_breaker_max_cooldown=int(runtime["circuit_breaker_max_cooldown"]),

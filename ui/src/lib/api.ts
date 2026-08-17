@@ -284,6 +284,7 @@ export type SiteProtocolConfig = {
   concurrency_limit: number;
   param_override: string;
   match_regex: string;
+  router_error_policy_config: string;
   base_url_id: string;
   credential_id: string;
   models: SiteModel[];
@@ -300,6 +301,7 @@ export type SiteProtocolConfigInput = {
   concurrency_limit: number;
   param_override: string;
   match_regex: string;
+  router_error_policy_config: string;
   base_url_id: string;
   credential_id: string;
   models: SiteModelInput[];
@@ -375,6 +377,7 @@ export type SiteBatchImportProtocolInput = {
   concurrency_limit?: number;
   param_override?: string;
   match_regex?: string;
+  router_error_policy_config?: string;
   base_url_ref?: string;
   credential_ref?: string;
   models?: SiteBatchImportModelInput[];

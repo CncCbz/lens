@@ -92,6 +92,9 @@ class SiteProtocolConfigEntity(Base):
     concurrency_limit: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     param_override: Mapped[str] = mapped_column(Text, nullable=False, default="")
     match_regex: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    router_error_policy_config: Mapped[str] = mapped_column(
+        Text, nullable=False, default="", server_default=""
+    )
     base_url_id: Mapped[str] = mapped_column(String(80), nullable=False)
 
 

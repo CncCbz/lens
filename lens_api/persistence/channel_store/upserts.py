@@ -217,9 +217,9 @@ class ChannelUpsertsMixin:
         )
         existing_models_by_config: dict[str, dict[str, SiteDiscoveredModelEntity]] = {}
         for row in existing_model_rows:
-            existing_models_by_config.setdefault(row.protocol_config_id, {})[row.id] = (
-                row
-            )
+            existing_models_by_config.setdefault(row.protocol_config_id, {})[
+                row.id
+            ] = row
         for protocol_config in protocol_configs:
             protocol_config_id = protocol_config.id or str(uuid.uuid4())
             protocol_config_ids.add(protocol_config_id)
@@ -269,6 +269,9 @@ class ChannelUpsertsMixin:
             entity.concurrency_limit = protocol_config.concurrency_limit
             entity.param_override = protocol_config.param_override
             entity.match_regex = protocol_config.match_regex
+            entity.router_error_policy_config = (
+                protocol_config.router_error_policy_config
+            )
             entity.base_url_id = protocol_config.base_url_id
             entity.credential_id = protocol_config.credential_id
 

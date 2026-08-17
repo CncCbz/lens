@@ -49,6 +49,7 @@ from .proxy_upstream import (
     _record_target_failure,
 )
 from .request_logger import _RequestLogger, _update_request_log
+from .runtime_context import effective_router_error_policy_config
 from .routing_plan import (
     _apply_deepseek_thinking_compat,
     _apply_model_group_param_override,
@@ -554,7 +555,9 @@ def _policy_from_last_attempt(log_ctx: _RequestLogger, runtime: dict[str, Any]):
         return None
     return resolve_router_error_policy(
         key,
-        config=runtime.get("router_error_policy_config"),
+        config=effective_router_error_policy_config(
+            runtime, log_ctx.attempts[-1].router_error_policy_config
+        ),
         circuit_breaker_threshold=int(runtime["circuit_breaker_threshold"]),
         circuit_breaker_cooldown=int(runtime["circuit_breaker_cooldown"]),
         circuit_breaker_max_cooldown=int(runtime["circuit_breaker_max_cooldown"]),

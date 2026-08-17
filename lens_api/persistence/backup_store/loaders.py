@@ -145,6 +145,7 @@ class BackupLoadersMixin:
                     "concurrency_limit": row.concurrency_limit,
                     "param_override": row.param_override,
                     "match_regex": row.match_regex,
+                    "router_error_policy_config": row.router_error_policy_config,
                     "base_url_id": row.base_url_id,
                     "credential_id": row.credential_id,
                     "models": models_by_protocol_config.get(row.id, []),

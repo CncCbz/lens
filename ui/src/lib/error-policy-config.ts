@@ -196,7 +196,12 @@ function sortKey(key: string): [number, string] {
 }
 
 function isValidKey(key: string): boolean {
-  if (key === "4xx" || key === "5xx" || key === "timeout" || key === "transport_error") {
+  if (
+    key === "4xx" ||
+    key === "5xx" ||
+    key === "timeout" ||
+    key === "transport_error"
+  ) {
     return true;
   }
   if (!/^\d{3}$/.test(key)) return false;
@@ -215,7 +220,11 @@ function builtinFor(
           ...CATEGORY_DEFAULTS["5xx"],
           failure_threshold: Math.max(globals.threshold, 1),
           cooldown_seconds: Math.max(globals.cooldown, 0),
-          max_cooldown_seconds: Math.max(globals.maxCooldown, globals.cooldown, 0),
+          max_cooldown_seconds: Math.max(
+            globals.maxCooldown,
+            globals.cooldown,
+            0,
+          ),
         }
       : category === "4xx"
         ? { ...CATEGORY_DEFAULTS["4xx"] }
@@ -245,12 +254,14 @@ function diffFields(
   defaults: RouterErrorPolicyFields,
 ): Partial<RouterErrorPolicyFields> {
   const out: Partial<RouterErrorPolicyFields> = {};
-  (Object.keys(effective) as (keyof RouterErrorPolicyFields)[]).forEach((field) => {
-    if (effective[field] !== defaults[field]) {
-      // @ts-expect-error indexed assign
-      out[field] = effective[field];
-    }
-  });
+  (Object.keys(effective) as (keyof RouterErrorPolicyFields)[]).forEach(
+    (field) => {
+      if (effective[field] !== defaults[field]) {
+        // @ts-expect-error indexed assign
+        out[field] = effective[field];
+      }
+    },
+  );
   return out;
 }
 
@@ -273,6 +284,7 @@ export function emptyErrorPolicyDraft(
 export function parseErrorPolicyConfig(
   raw: string | undefined,
   globals = { threshold: 3, cooldown: 60, maxCooldown: 600 },
+  includePresets = true,
 ): RouterErrorPolicyDraft {
   let overrides: Record<string, Partial<RouterErrorPolicyFields>> = {};
   const text = (raw ?? "").trim();
@@ -288,7 +300,7 @@ export function parseErrorPolicyConfig(
   }
 
   const keys = new Set<string>([
-    ...VISIBLE_PRESET_KEYS,
+    ...(includePresets ? VISIBLE_PRESET_KEYS : []),
     ...Object.keys(overrides),
   ]);
   const rows: RouterErrorPolicyRow[] = [...keys]

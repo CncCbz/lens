@@ -183,6 +183,7 @@ class BackupReplacersMixin:
                         concurrency_limit=protocol_config.concurrency_limit,
                         param_override=protocol_config.param_override,
                         match_regex=protocol_config.match_regex,
+                        router_error_policy_config=protocol_config.router_error_policy_config,
                         base_url_id=protocol_config.base_url_id,
                         credential_id=protocol_config.credential_id,
                     )

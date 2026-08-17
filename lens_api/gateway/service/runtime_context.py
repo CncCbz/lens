@@ -98,9 +98,11 @@ from ...models import (
     RequestLogPage,
     RequestLogSortMode,
     RequestLogStatusFilter,
+    RequestLogStatusFilter,
     RoutePreviewRequest,
     RoutePreviewResponse,
     RoutePreviewTarget,
+    RouterErrorPolicyConfig,
     RoutingStrategy,
     CronjobItem,
     CronjobRunResult,
@@ -338,6 +340,19 @@ class RoutingPlan:
     cursor_key: str | None = None
 
 
+def effective_router_error_policy_config(
+    runtime: Mapping[str, Any], router_error_policy_config: str
+) -> Any:
+    """Channel-level error policy config takes precedence over the global one."""
+    raw = router_error_policy_config.strip()
+    if not raw:
+        return runtime.get("router_error_policy_config")
+    try:
+        return RouterErrorPolicyConfig.model_validate(json.loads(raw))
+    except (ValueError, TypeError):
+        return runtime.get("router_error_policy_config")
+
+
 @dataclass(slots=True)
 class UpstreamResult:
     response: Response
@@ -386,6 +401,7 @@ class AttemptLog:
     error_policy_key: str | None = None
     cooldown_scope: str | None = None
     cooldown_seconds_applied: float | None = None
+    router_error_policy_config: str = ""
     reasoning_effort: str | None = None
     relay_kind: str | None = None
     request_headers: str | None = None

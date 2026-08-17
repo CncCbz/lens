@@ -334,6 +334,17 @@ export function ChannelsScreen() {
     );
     return parseModelTestPrompts(mapping.get(MODEL_TEST_PROMPTS_SETTING_KEY));
   }, [settings]);
+  const errorPolicyGlobals = useMemo(() => {
+    const mapping = new Map(
+      (settings ?? []).map((item) => [item.key, item.value]),
+    );
+    return {
+      threshold: Number(mapping.get("circuit_breaker_threshold") || "3") || 3,
+      cooldown: Number(mapping.get("circuit_breaker_cooldown") || "60") || 60,
+      maxCooldown:
+        Number(mapping.get("circuit_breaker_max_cooldown") || "600") || 600,
+    };
+  }, [settings]);
   const hasModels = useMemo(
     () => form.protocolConfigs.some((item) => item.models.length > 0),
     [form.protocolConfigs],
@@ -1991,6 +2002,7 @@ export function ChannelsScreen() {
             protocolConfig={form.protocolConfigs[advancedProtocolConfigIndex]}
             protocolConfigIndex={advancedProtocolConfigIndex}
             locale={locale}
+            globals={errorPolicyGlobals}
             onOpenChange={(open) => {
               if (!open) setAdvancedProtocolConfigIndex(null);
             }}

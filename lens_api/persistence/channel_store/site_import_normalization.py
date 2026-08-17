@@ -243,6 +243,7 @@ class ChannelSiteImportNormalizationMixin:
                     concurrency_limit=protocol.concurrency_limit,
                     param_override=protocol.param_override.strip(),
                     match_regex=protocol.match_regex.strip(),
+                    router_error_policy_config=protocol.router_error_policy_config.strip(),
                     base_url_id=base_url_id,
                     credential_id=credential_id,
                     models=self._import_protocol_models(
