@@ -82,10 +82,6 @@ This project continues development from [dyedd/lens](https://github.com/dyedd/le
 │  Failover: try model group items in order, then switch credential or │
 │  channel                                                             │
 │                                                                      │
-│  Cooldown scope                                                      │
-│  401 / 403 / 429: cool down one credential, prefer same-site targets │
-│  5xx / timeout / network error: cool down the channel, switch target │
-│                                                                      │
 │  Request logs                                                        │
 │  Record lifecycle, tokens, cost, User-Agent, attempt chain, errors   │
 └───────────────────────────────┬──────────────────────────────────────┘

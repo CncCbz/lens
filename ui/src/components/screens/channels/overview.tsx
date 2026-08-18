@@ -5,12 +5,7 @@ import { Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import type {
-  ProtocolKind,
-  RouteSnapshot,
-  Site,
-  SiteRuntimeSummary,
-} from "@/lib/api";
+import type { ProtocolKind, Site, SiteRuntimeSummary } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { Switch } from "@/components/ui/switch";
 import { ChannelFiltersPanel } from "./filters";
@@ -37,7 +32,6 @@ export function ChannelsOverview({
   isLoading,
   sitesIsError,
   siteRuntimeById,
-  channelHealthById,
   timeZone,
   search,
   statusFilter,
@@ -52,7 +46,6 @@ export function ChannelsOverview({
   onReset,
   onOpenEdit,
   onToggleSiteEnabled,
-  onClearChannelCooldown,
   setDeleteTarget,
 }: {
   locale: Locale;
@@ -60,7 +53,6 @@ export function ChannelsOverview({
   isLoading: boolean;
   sitesIsError: boolean;
   siteRuntimeById: Map<string, SiteRuntimeSummary>;
-  channelHealthById: Map<string, RouteSnapshot["health"][number]>;
   timeZone?: string;
   search: string;
   statusFilter: ChannelStatusFilter;
@@ -75,7 +67,6 @@ export function ChannelsOverview({
   onReset: () => void;
   onOpenEdit: (site: Site) => void;
   onToggleSiteEnabled: (site: Site, enabled: boolean) => void;
-  onClearChannelCooldown: (channelId: string) => void;
   setDeleteTarget: Dispatch<SetStateAction<Site | null>>;
 }) {
   return (
@@ -174,11 +165,8 @@ export function ChannelsOverview({
                       <SiteHealthPreview
                         site={site}
                         summary={runtimeSummary}
-                        healthByChannelId={channelHealthById}
                         locale={locale}
                         timeZone={timeZone}
-                        busyId={busyId}
-                        onClearChannelCooldown={onClearChannelCooldown}
                       />
                     </div>
 

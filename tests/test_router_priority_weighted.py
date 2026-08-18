@@ -48,7 +48,7 @@ def test_priority_weighted_only_uses_top_level() -> None:
     assert counts["a"] < 4 * counts["b"]
 
 
-def test_priority_weighted_falls_back_when_top_level_cooled() -> None:
+def test_priority_weighted_keeps_top_level_after_recorded_failure() -> None:
     router = GatewayRouter()
     channels = [_channel("a"), _channel("b"), _channel("c"), _channel("d")]
     policy = RouterErrorPolicy(
@@ -68,12 +68,9 @@ def test_priority_weighted_falls_back_when_top_level_cooled() -> None:
     for _ in range(300):
         selection = _select(router, channels)
         counts[selection.primary.channel.id] += 1
-    assert counts["a"] == 0
-    assert counts["b"] == 0
-    assert counts["c"] > 0
-    assert counts["d"] > 0
-    assert counts["c"] > 1.5 * counts["d"]
-    assert counts["c"] < 3.5 * counts["d"]
+    assert counts["c"] == 0
+    assert counts["d"] == 0
+    assert counts["a"] + counts["b"] == 300
 
 
 def test_priority_weighted_fallbacks_same_level_first() -> None:

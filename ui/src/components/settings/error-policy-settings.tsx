@@ -4,13 +4,6 @@ import { Plus, RotateCcw, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import {
   Tooltip,
@@ -19,13 +12,11 @@ import {
 } from "@/components/ui/tooltip";
 import {
   createErrorPolicyRow,
-  ERROR_POLICY_SCOPE_OPTIONS,
   policyKeyLabel,
   SUGGESTED_ERROR_POLICY_KEYS,
 } from "@/lib/error-policy-config";
 import { titleForLocale, type Locale } from "@/lib/i18n";
 import type {
-  RouterErrorCooldownScope,
   RouterErrorPolicyDraft,
   RouterErrorPolicyRow,
 } from "@/lib/settings-types";
@@ -125,8 +116,8 @@ export function ErrorPolicySettings({
             {hint ??
               titleForLocale(
                 locale,
-                "仅列出类别与特殊状态码。未列出的状态沿用 4xx/5xx；5xx 数值默认同上方全局项。",
-                "Categories and special codes only. Other statuses inherit 4xx/5xx; 5xx numbers follow globals above.",
+                "仅列出类别与特殊状态码。未列出的状态沿用 4xx/5xx。",
+                "Categories and special codes only. Other statuses inherit 4xx/5xx.",
               )}
           </p>
         </div>
@@ -162,45 +153,10 @@ export function ErrorPolicySettings({
               />
               <HeaderCell
                 locale={locale}
-                zh="遵守 Retry-After"
-                en="Honor Retry-After"
-                tipZh="上游返回 Retry-After 时按其时间冷却"
-                tipEn="Use upstream Retry-After as cooldown"
-              />
-              <HeaderCell
-                locale={locale}
-                zh="冷却对象"
-                en="Cool down"
-                tipZh="不冷却 / 只停该密钥 / 只停该模型 / 停整个渠道"
-                tipEn="None / this key / this model / whole channel"
-              />
-              <HeaderCell
-                locale={locale}
                 zh="当前渠道重试"
                 en="Retry here"
                 tipZh="换渠道前，在当前目标再试几次"
                 tipEn="Retries on the same target before switching"
-              />
-              <HeaderCell
-                locale={locale}
-                zh="连续失败阈值"
-                en="Fails to cool"
-                tipZh="连续失败几次后进入冷却"
-                tipEn="Consecutive failures before cooldown"
-              />
-              <HeaderCell
-                locale={locale}
-                zh="冷却秒数"
-                en="Cool seconds"
-                tipZh="第一次进入冷却的秒数"
-                tipEn="First cooldown duration in seconds"
-              />
-              <HeaderCell
-                locale={locale}
-                zh="冷却上限"
-                en="Cool max"
-                tipZh="连续冷却允许的最大秒数"
-                tipEn="Maximum cooldown in seconds"
               />
               <th className="px-2 py-2 font-medium" />
             </tr>
@@ -247,41 +203,6 @@ export function ErrorPolicySettings({
                   />
                 </td>
                 <td className="px-2 py-2 align-middle">
-                  <Switch
-                    checked={row.respect_retry_after}
-                    onCheckedChange={(checked) =>
-                      onChange(
-                        updateRow(draft, row.key, {
-                          respect_retry_after: checked,
-                        }),
-                      )
-                    }
-                  />
-                </td>
-                <td className="px-2 py-2 align-middle">
-                  <Select
-                    value={row.cooldown_scope}
-                    onValueChange={(value) =>
-                      onChange(
-                        updateRow(draft, row.key, {
-                          cooldown_scope: value as RouterErrorCooldownScope,
-                        }),
-                      )
-                    }
-                  >
-                    <SelectTrigger className="h-8 w-[7.5rem]">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {ERROR_POLICY_SCOPE_OPTIONS.map((option) => (
-                        <SelectItem key={option.value} value={option.value}>
-                          {locale === "zh-CN" ? option.zh : option.en}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </td>
-                <td className="px-2 py-2 align-middle">
                   <Input
                     type="number"
                     min={0}
@@ -295,52 +216,6 @@ export function ErrorPolicySettings({
                       )
                     }
                     className="h-8 w-16"
-                  />
-                </td>
-                <td className="px-2 py-2 align-middle">
-                  <Input
-                    type="number"
-                    min={1}
-                    max={100}
-                    value={row.failure_threshold}
-                    onChange={(event) =>
-                      onChange(
-                        updateRow(draft, row.key, {
-                          failure_threshold: Number(event.target.value || 1),
-                        }),
-                      )
-                    }
-                    className="h-8 w-16"
-                  />
-                </td>
-                <td className="px-2 py-2 align-middle">
-                  <Input
-                    type="number"
-                    min={0}
-                    value={row.cooldown_seconds}
-                    onChange={(event) =>
-                      onChange(
-                        updateRow(draft, row.key, {
-                          cooldown_seconds: Number(event.target.value || 0),
-                        }),
-                      )
-                    }
-                    className="h-8 w-20"
-                  />
-                </td>
-                <td className="px-2 py-2 align-middle">
-                  <Input
-                    type="number"
-                    min={0}
-                    value={row.max_cooldown_seconds}
-                    onChange={(event) =>
-                      onChange(
-                        updateRow(draft, row.key, {
-                          max_cooldown_seconds: Number(event.target.value || 0),
-                        }),
-                      )
-                    }
-                    className="h-8 w-20"
                   />
                 </td>
                 <td className="px-2 py-2 align-middle">

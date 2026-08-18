@@ -1,5 +1,4 @@
 import type {
-  RouterErrorCooldownScope,
   RouterErrorPolicyDraft,
   RouterErrorPolicyFields,
   RouterErrorPolicyRow,
@@ -432,17 +431,6 @@ export function policyKeyLabel(key: string, locale: "zh-CN" | "en-US"): string {
   if (locale === "zh-CN") return zh[key] ?? key;
   return en[key] ?? key;
 }
-
-export const ERROR_POLICY_SCOPE_OPTIONS: {
-  value: RouterErrorCooldownScope;
-  zh: string;
-  en: string;
-}[] = [
-  { value: "none", zh: "不冷却", en: "No cooldown" },
-  { value: "credential", zh: "该密钥", en: "This key" },
-  { value: "target", zh: "该模型", en: "This model" },
-  { value: "channel", zh: "整个渠道", en: "Whole channel" },
-];
 
 export const SUGGESTED_ERROR_POLICY_KEYS = [
   "502",

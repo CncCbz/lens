@@ -1516,66 +1516,17 @@ class GatewayRouter:
         credential_id: str | None,
         model_name: str | None,
     ) -> float:
-        window = self._get_scope_window(
+        del (
+            state,
+            policy,
+            retry_after_seconds,
             scope,
             channel_id,
-            model_name=model_name,
-            credential_id=credential_id,
-            create=False,
+            credential_id,
+            model_name,
         )
-        if window is not None:
-            window = self._expire_scope_window(
-                scope,
-                channel_id,
-                model_name=model_name,
-                credential_id=credential_id,
-                window=window,
-            )
-        failure_rate_open = (
-            policy.count_toward_failure_rate
-            and window is not None
-            and window.total >= self._circuit_minimum_requests
-            and window.failure_rate >= self._circuit_failure_rate_threshold
-        )
-        if (
-            state.consecutive_failures < policy.failure_threshold
-            and not failure_rate_open
-        ):
-            return 0.0
-
-        max_cooldown = max(policy.max_cooldown_seconds, 0)
-        if (
-            policy.respect_retry_after
-            and retry_after_seconds is not None
-            and retry_after_seconds > 0
-        ):
-            # Clamp to policy max only (plan: 1..max_cooldown_seconds).
-            upper = (
-                max_cooldown if max_cooldown > 0 else max(policy.cooldown_seconds, 1)
-            )
-            cooldown = min(max(float(retry_after_seconds), 1.0), float(upper))
-            # Explicit Retry-After replaces exponential history for this open.
-            state.last_cooldown = cooldown
-        else:
-            initial = max(policy.cooldown_seconds, 0)
-            ceiling = max(max_cooldown, initial, 0)
-            if initial <= 0 and ceiling <= 0:
-                return 0.0
-            cooldown = self._calculate_exponential_cooldown(
-                state.last_cooldown, max(initial, 1), max(ceiling, 1)
-            )
-            state.last_cooldown = cooldown
-
-        state.opened_until = max(state.opened_until, monotonic() + cooldown)
-        return float(cooldown)
-
-    @staticmethod
-    def _calculate_exponential_cooldown(
-        last_cooldown: float, initial: int, max_cooldown: int
-    ) -> float:
-        if last_cooldown > 0:
-            return min(last_cooldown * 2, max_cooldown)
-        return float(initial)
+        # ponytail: cooldown removed; restore circuit open here if exclusion is needed again
+        return 0.0
 
     def _target_state(self, target: RouteTarget, *, now: float) -> str:
         worst = "available"

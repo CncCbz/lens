@@ -20,7 +20,6 @@ import {
   ModelGroupEnsureModelInput,
   ModelGroupEnsureResultItem,
   ProtocolKind,
-  RouteSnapshot,
   Site,
   SiteBatchImportPayload,
   SiteBatchImportResult,
@@ -291,21 +290,11 @@ export function ChannelsScreen() {
   });
   const [siteRuntimeSummaries, setSiteRuntimeSummaries] =
     useState<SiteRuntimeSummary[]>();
-  const [routerSnapshot, setRouterSnapshot] =
-    useState<Pick<RouteSnapshot, "health">>();
   useEffect(
     () =>
       subscribeSseJsonLoop<SiteRuntimeSummary[]>(
         "/admin/sites/runtime",
         setSiteRuntimeSummaries,
-      ),
-    [],
-  );
-  useEffect(
-    () =>
-      subscribeSseJsonLoop<Pick<RouteSnapshot, "health">>(
-        "/admin/routes/cooldowns",
-        setRouterSnapshot,
       ),
     [],
   );
@@ -324,15 +313,6 @@ export function ChannelsScreen() {
         ),
       ),
     [siteRuntimeSummaries],
-  );
-  const channelHealthById = useMemo(
-    () =>
-      new Map(
-        (routerSnapshot?.health ?? []).map(
-          (item) => [item.channel_id, item] as const,
-        ),
-      ),
-    [routerSnapshot],
   );
   const modelTestPrompts = useMemo(() => {
     const mapping = new Map(
@@ -540,27 +520,6 @@ export function ChannelsScreen() {
       queryKey: ["group-candidates"],
     });
     void queryClient.invalidateQueries({ queryKey: ["route-preview"] });
-  }
-
-  async function clearChannelCooldown(channelId: string) {
-    setBusyId(channelId);
-    try {
-      await apiRequest<void>(`/admin/routes/${channelId}/cooldown`, {
-        method: "DELETE",
-      });
-      void queryClient.invalidateQueries({ queryKey: ["route-preview"] });
-      toast.success(locale === "zh-CN" ? "已取消冷却" : "Cooldown cleared");
-    } catch (error) {
-      const message =
-        error instanceof ApiError || error instanceof Error
-          ? error.message
-          : locale === "zh-CN"
-            ? "取消冷却失败"
-            : "Failed to clear cooldown";
-      toast.error(message);
-    } finally {
-      setBusyId(null);
-    }
   }
 
   function applyPreparedForm(nextForm: FormState) {
@@ -1871,7 +1830,6 @@ export function ChannelsScreen() {
           isLoading={isLoading}
           sitesIsError={sitesIsError}
           siteRuntimeById={siteRuntimeById}
-          channelHealthById={channelHealthById}
           timeZone={timeZone}
           search={search}
           statusFilter={statusFilter}
@@ -1886,9 +1844,6 @@ export function ChannelsScreen() {
           onReset={resetFilters}
           onOpenEdit={openEdit}
           onToggleSiteEnabled={toggleSiteEnabled}
-          onClearChannelCooldown={(channelId) =>
-            void clearChannelCooldown(channelId)
-          }
           setDeleteTarget={setDeleteTarget}
         />
         {dialogOpen ? (

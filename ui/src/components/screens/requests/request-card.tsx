@@ -121,11 +121,6 @@ export function AttemptChain({
 											: titleForLocale(locale, "不重试", "No retry")}
 									</Badge>
 								) : null}
-								{attempt.cooldown_candidate ? (
-									<Badge variant="outline" className="max-w-[120px] truncate">
-										{titleForLocale(locale, "计入冷却", "Cooldown")}
-									</Badge>
-								) : null}
 								{attempt.provider_error_code ? (
 									<Badge variant="outline" className="max-w-[160px] truncate">
 										{attempt.provider_error_code}
@@ -135,12 +130,6 @@ export function AttemptChain({
 							<div className="flex items-center gap-3 text-xs text-muted-foreground">
 								{attempt.error_policy_key ? (
 									<span>{`policy ${attempt.error_policy_key}`}</span>
-								) : null}
-								{attempt.cooldown_scope ? (
-									<span>{`scope ${attempt.cooldown_scope}`}</span>
-								) : null}
-								{attempt.cooldown_seconds_applied ? (
-									<span>{`TTL ${attempt.cooldown_seconds_applied}s`}</span>
 								) : null}
 								{attempt.retry_after_seconds ? (
 									<span>{`Retry-After ${attempt.retry_after_seconds}s`}</span>

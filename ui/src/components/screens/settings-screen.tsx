@@ -378,10 +378,13 @@ export function SettingsScreen() {
           }),
         },
       ];
-      const updatedSettings = await apiRequest<SettingItem[]>("/admin/settings", {
-        method: "PUT",
-        body: JSON.stringify({ items }),
-      });
+      const updatedSettings = await apiRequest<SettingItem[]>(
+        "/admin/settings",
+        {
+          method: "PUT",
+          body: JSON.stringify({ items }),
+        },
+      );
       queryClient.setQueryData<SettingItem[]>(["settings"], updatedSettings);
       toast.success(titleForLocale(locale, "设置已保存", "Settings saved"));
       await invalidateSettingsDerived();
@@ -518,7 +521,7 @@ export function SettingsScreen() {
     },
     {
       value: "circuit-breaker",
-      label: titleForLocale(locale, "熔断器", "Circuit breaker"),
+      label: titleForLocale(locale, "路由", "Routing"),
       icon: ShieldAlert,
     },
   ] as const;
@@ -707,9 +710,7 @@ export function SettingsScreen() {
             </TabsContent>
 
             <TabsContent value="circuit-breaker" className="mt-0">
-              <SettingCard
-                title={titleForLocale(locale, "熔断器", "Circuit breaker")}
-              >
+              <SettingCard title={titleForLocale(locale, "路由", "Routing")}>
                 <div className="space-y-6">
                   <div>
                     <div className="mb-2 text-sm font-medium">
@@ -730,139 +731,6 @@ export function SettingsScreen() {
                           value={draft.maxAttempts}
                           onChange={(event) =>
                             setDraftValue("maxAttempts", event.target.value)
-                          }
-                        />
-                      </Field>
-                    </FieldGroup>
-                  </div>
-
-                  <div>
-                    <div className="mb-1 text-sm font-medium">
-                      {titleForLocale(
-                        locale,
-                        "5xx 默认冷却",
-                        "5xx default cooldown",
-                      )}
-                    </div>
-                    <p className="mb-2 text-xs text-muted-foreground">
-                      {titleForLocale(
-                        locale,
-                        "未单独配置的 5xx 使用这些值；错误策略表里的 5xx 行可整体覆盖。",
-                        "Used by unconfigured 5xx codes; the 5xx row can override them.",
-                      )}
-                    </p>
-                    <FieldGroup className="grid gap-4 sm:grid-cols-3">
-                      <Field>
-                        <FieldLabel>
-                          {titleForLocale(
-                            locale,
-                            "连续失败阈值",
-                            "Consecutive failure threshold",
-                          )}
-                        </FieldLabel>
-                        <Input
-                          type="number"
-                          min="0"
-                          value={draft.circuitBreakerThreshold}
-                          onChange={(event) =>
-                            setDraftValue(
-                              "circuitBreakerThreshold",
-                              event.target.value,
-                            )
-                          }
-                        />
-                      </Field>
-                      <Field>
-                        <FieldLabel>
-                          {titleForLocale(
-                            locale,
-                            "基础冷却秒",
-                            "Base cooldown (s)",
-                          )}
-                        </FieldLabel>
-                        <Input
-                          type="number"
-                          min="0"
-                          value={draft.circuitBreakerCooldown}
-                          onChange={(event) =>
-                            setDraftValue(
-                              "circuitBreakerCooldown",
-                              event.target.value,
-                            )
-                          }
-                        />
-                      </Field>
-                      <Field>
-                        <FieldLabel>
-                          {titleForLocale(
-                            locale,
-                            "最大冷却秒",
-                            "Max cooldown (s)",
-                          )}
-                        </FieldLabel>
-                        <Input
-                          type="number"
-                          min="0"
-                          value={draft.circuitBreakerMaxCooldown}
-                          onChange={(event) =>
-                            setDraftValue(
-                              "circuitBreakerMaxCooldown",
-                              event.target.value,
-                            )
-                          }
-                        />
-                      </Field>
-                    </FieldGroup>
-                  </div>
-
-                  <div>
-                    <div className="mb-2 text-sm font-medium">
-                      {titleForLocale(
-                        locale,
-                        "失败率熔断",
-                        "Failure-rate circuit",
-                      )}
-                    </div>
-                    <FieldGroup className="grid gap-4 sm:grid-cols-2">
-                      <Field>
-                        <FieldLabel>
-                          {titleForLocale(
-                            locale,
-                            "最小样本数",
-                            "Minimum samples",
-                          )}
-                        </FieldLabel>
-                        <Input
-                          type="number"
-                          min="1"
-                          value={draft.routerCircuitMinimumRequests}
-                          onChange={(event) =>
-                            setDraftValue(
-                              "routerCircuitMinimumRequests",
-                              event.target.value,
-                            )
-                          }
-                        />
-                      </Field>
-                      <Field>
-                        <FieldLabel>
-                          {titleForLocale(
-                            locale,
-                            "失败率阈值",
-                            "Failure rate threshold",
-                          )}
-                        </FieldLabel>
-                        <Input
-                          type="number"
-                          min="0"
-                          max="1"
-                          step="0.05"
-                          value={draft.routerCircuitFailureRateThreshold}
-                          onChange={(event) =>
-                            setDraftValue(
-                              "routerCircuitFailureRateThreshold",
-                              event.target.value,
-                            )
                           }
                         />
                       </Field>

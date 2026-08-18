@@ -17,7 +17,6 @@ from lens_api.gateway.converters.chat_to_gemini import gemini_stream_to_chat_str
 from lens_api.gateway.converters.chat_to_responses import (
     responses_stream_to_chat_stream,
 )
-import lens_api.gateway.router.gateway_router as gateway_router_module
 from lens_api.gateway.router import (
     GatewayRouter,
     RouteTarget,
@@ -185,7 +184,7 @@ def test_router_select_can_preview_without_advancing_round_robin_cursor() -> Non
     assert second.primary.channel.id == "channel-b"
 
 
-def test_router_failure_rate_opens_after_minimum_requests_and_probes() -> None:
+def test_router_failure_rate_updates_window_without_opening() -> None:
     router = GatewayRouter(
         circuit_minimum_requests=3,
         circuit_failure_rate_threshold=0.6,
@@ -213,48 +212,11 @@ def test_router_failure_rate_opens_after_minimum_requests_and_probes() -> None:
     )
     snapshot = router.snapshot([channel])
     health = snapshot.health[0]
-    assert health.state == "open"
+    assert health.state == "available"
     assert health.window_request_count == 3
     assert health.failure_rate >= 0.6
-    assert health.cooldown_remaining_seconds > 0
-
-    router.record_success(channel.id)
-    snapshot = router.snapshot([channel])
-    assert snapshot.health[0].state == "available"
-
-
-def test_router_cooldown_expiry_enters_probe_and_failure_backs_off(
-    monkeypatch,
-) -> None:
-    now = 1000.0
-    monkeypatch.setattr(gateway_router_module, "monotonic", lambda: now)
-    router = GatewayRouter()
-    channel = _router_channel("channel-a", "A")
-
-    router.record_failure(
-        channel.id,
-        "server error",
-        status_code=500,
-        threshold=1,
-        cooldown_seconds=10,
-        max_cooldown_seconds=30,
-    )
-    assert router.snapshot([channel]).health[0].state == "open"
-
-    now = 1011.0
-    assert router.snapshot([channel]).health[0].state == "probe"
-
-    router.record_failure(
-        channel.id,
-        "server error",
-        status_code=500,
-        threshold=1,
-        cooldown_seconds=10,
-        max_cooldown_seconds=30,
-    )
-    health = router.snapshot([channel]).health[0]
-    assert health.state == "open"
-    assert health.last_cooldown_seconds == 20
+    assert health.cooldown_remaining_seconds == 0
+    assert router.is_target_available(RouteTarget(channel)) is True
 
 
 def test_gemini_model_list_allows_enabled_convertible_route_item() -> None:
@@ -690,10 +652,10 @@ def test_router_scoped_credential_and_model_isolation() -> None:
         policy=policy,
         retry_after_seconds=2,
     )
-    assert applied == 2
+    assert applied == 0
     assert (
         router.is_target_available(RouteTarget(channel=channel, credential_id="k1"))
-        is False
+        is True
     )
     assert (
         router.is_target_available(RouteTarget(channel=channel, credential_id="k2"))
@@ -712,38 +674,12 @@ def test_router_scoped_credential_and_model_isolation() -> None:
     )
     assert (
         router2.is_target_available(RouteTarget(channel=channel2, model_name="model-a"))
-        is False
+        is True
     )
     assert (
         router2.is_target_available(RouteTarget(channel=channel2, model_name="model-b"))
         is True
     )
-
-
-def test_router_probe_lease_is_single_flight(monkeypatch) -> None:
-    now = 1000.0
-    monkeypatch.setattr(gateway_router_module, "monotonic", lambda: now)
-    router = GatewayRouter()
-    channel = _router_channel("channel-a", "A")
-    router.record_failure(
-        channel.id,
-        "server error",
-        status_code=500,
-        threshold=1,
-        cooldown_seconds=10,
-        max_cooldown_seconds=30,
-    )
-    now = 1011.0
-    target = RouteTarget(channel=channel)
-    release, _ = router.acquire_target(target)
-    assert release is not None
-    blocked, _ = router.acquire_target(RouteTarget(channel=channel))
-    assert blocked is None
-    router.release_probe(target)
-    release()
-    next_release, _ = router.acquire_target(RouteTarget(channel=channel))
-    assert next_release is not None
-    next_release()
 
 
 def test_protocol_channels_share_concurrency_limit() -> None:
@@ -771,78 +707,6 @@ def test_protocol_channels_share_concurrency_limit() -> None:
     assert next_release is not None
     assert at_capacity is False
     next_release()
-
-
-def test_stream_concurrency_release_does_not_release_probe(monkeypatch) -> None:
-    now = 1000.0
-    monkeypatch.setattr(gateway_router_module, "monotonic", lambda: now)
-    router = GatewayRouter()
-    channel = _router_channel("channel-a", "A")
-    router.record_failure(
-        channel.id,
-        "server error",
-        status_code=500,
-        threshold=1,
-        cooldown_seconds=10,
-        max_cooldown_seconds=30,
-    )
-    now = 1011.0
-    target = RouteTarget(channel=channel)
-
-    release, _ = router.acquire_target(target)
-    assert release is not None
-    release()
-    blocked, _ = router.acquire_target(target)
-    assert blocked is None
-
-    router.record_success(channel.id, probe_owner=target.probe_owner)
-    next_release, _ = router.acquire_target(target)
-    assert next_release is not None
-    next_release()
-
-
-def test_stale_probe_release_does_not_clear_new_owner(monkeypatch) -> None:
-    now = 1000.0
-    monkeypatch.setattr(gateway_router_module, "monotonic", lambda: now)
-    router = GatewayRouter()
-    channel = _router_channel("channel-a", "A")
-    router.record_failure(
-        channel.id,
-        "server error",
-        status_code=500,
-        threshold=1,
-        cooldown_seconds=10,
-        max_cooldown_seconds=30,
-    )
-
-    now = 1011.0
-    stale_target = RouteTarget(channel=channel)
-    stale_release, _ = router.acquire_target(stale_target)
-    assert stale_release is not None
-    router.record_failure(
-        channel.id,
-        "probe failed",
-        status_code=500,
-        threshold=1,
-        cooldown_seconds=10,
-        max_cooldown_seconds=30,
-        probe_owner=stale_target.probe_owner,
-    )
-    stale_release()
-
-    now = 1032.0
-    current_target = RouteTarget(channel=channel)
-    current_release, _ = router.acquire_target(current_target)
-    assert current_release is not None
-    router.release_probe(stale_target)
-    blocked, _ = router.acquire_target(RouteTarget(channel=channel))
-    assert blocked is None
-
-    router.record_success(
-        channel.id,
-        probe_owner=current_target.probe_owner,
-    )
-    current_release()
 
 
 def test_stream_client_iterator_releases_concurrency() -> None:
@@ -943,92 +807,3 @@ def test_router_auth_does_not_count_toward_failure_rate() -> None:
     health = router.snapshot([channel]).health[0]
     # Auth is credential-scoped; channel failure-rate window should only have the 500.
     assert health.window_request_count <= 1
-
-
-def test_retry_after_respects_max_and_skips_exponential() -> None:
-    from lens_api.gateway.router import resolve_router_error_policy
-
-    router = GatewayRouter()
-    channel = _router_channel("channel-a", "A")
-    policy = resolve_router_error_policy("429")
-    assert policy is not None
-    capped = policy.model_copy(
-        update={"cooldown_seconds": 5, "max_cooldown_seconds": 10}
-    )
-    # Clamp upstream Retry-After to max.
-    applied = router.record_failure(
-        channel.id,
-        "rl",
-        status_code=429,
-        credential_id="k1",
-        policy=capped,
-        retry_after_seconds=120,
-    )
-    assert applied == 10
-
-    router2 = GatewayRouter()
-    applied2 = router2.record_failure(
-        channel.id,
-        "rl",
-        status_code=429,
-        credential_id="k1",
-        policy=policy,
-        retry_after_seconds=2,
-    )
-    assert applied2 == 2
-    # Second failure with Retry-After should still use hint, not double previous.
-    applied3 = router2.record_failure(
-        channel.id,
-        "rl",
-        status_code=429,
-        credential_id="k1",
-        policy=policy,
-        retry_after_seconds=3,
-    )
-    assert applied3 == 3
-
-
-def test_clear_cooldown_removes_all_scopes() -> None:
-    from lens_api.gateway.router import resolve_router_error_policy
-    from lens_api.models import ChannelKeyItem
-
-    router = GatewayRouter()
-    channel = ChannelConfig(
-        id="channel-a",
-        name="A",
-        protocol=ProtocolKind.OPENAI_CHAT,
-        base_url="https://example.com",
-        api_key="sk",
-        keys=[ChannelKeyItem(id="k1", key="a", remark="1", enabled=True)],
-    )
-    router.record_failure(
-        channel.id,
-        "auth",
-        status_code=401,
-        credential_id="k1",
-        policy=resolve_router_error_policy("401"),
-    )
-    router.record_failure(
-        channel.id,
-        "server",
-        status_code=500,
-        model_name="m1",
-        policy=resolve_router_error_policy("500", circuit_breaker_threshold=1),
-    )
-    assert (
-        router.is_target_available(RouteTarget(channel=channel, credential_id="k1"))
-        is False
-    )
-    assert (
-        router.is_target_available(RouteTarget(channel=channel, model_name="m1"))
-        is False
-    )
-    router.clear_cooldown(channel.id)
-    assert (
-        router.is_target_available(RouteTarget(channel=channel, credential_id="k1"))
-        is True
-    )
-    assert (
-        router.is_target_available(RouteTarget(channel=channel, model_name="m1"))
-        is True
-    )

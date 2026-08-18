@@ -4,7 +4,7 @@ from lens_api.gateway.router.gateway_router import GatewayRouter
 from lens_api.models import RouterErrorPolicy
 
 
-def test_cooldown_snapshot_without_channel_configs() -> None:
+def test_recorded_failure_does_not_open_cooldown() -> None:
     router = GatewayRouter()
     policy = RouterErrorPolicy(
         same_target_retries=0,
@@ -22,14 +22,7 @@ def test_cooldown_snapshot_without_channel_configs() -> None:
         status_code=503,
         policy=policy,
     )
-    assert applied >= 30
+    assert applied == 0
 
     snapshot = router.cooldown_snapshot()
-    assert len(snapshot) == 1
-    item = snapshot[0]
-    assert item.channel_id == "cfg_openai_chat"
-    assert item.cooldown_remaining_seconds > 0
-    assert item.state == "open"
-
-    router.clear_cooldown("cfg_openai_chat")
-    assert router.cooldown_snapshot() == []
+    assert snapshot == [] or snapshot[0].cooldown_remaining_seconds == 0

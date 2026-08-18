@@ -81,7 +81,7 @@ def test_failover_keeps_primary_despite_health_penalty() -> None:
     assert [target.channel.id for target in selection.fallbacks] == ["b"]
 
 
-def test_failover_switches_when_primary_in_cooldown() -> None:
+def test_failover_keeps_primary_after_recorded_failure() -> None:
     router = GatewayRouter()
     channels = [_channel("a"), _channel("b"), _channel("c")]
     targets = _targets(channels, [0, 1, 2])
@@ -104,4 +104,4 @@ def test_failover_switches_when_primary_in_cooldown() -> None:
         route_targets=targets,
         use_model_matching=False,
     )
-    assert selection.primary.channel.id == "b"
+    assert selection.primary.channel.id == "a"

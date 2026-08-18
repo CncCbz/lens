@@ -1,7 +1,5 @@
 "use client";
 
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import {
   Popover,
   PopoverContent,
@@ -12,30 +10,17 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import type {
-  ProtocolKind,
-  RouteSnapshot,
-  SiteRuntimeSummary,
-} from "@/lib/api";
+import type { ProtocolKind, SiteRuntimeSummary } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import {
   compactProtocolLabel,
-  credentialDisplayName,
-  formatCooldownDuration,
   protocolConfigDisplayName,
   type Locale,
   type SiteRow,
 } from "./shared";
 
-type ChannelHealthRow = RouteSnapshot["health"][number];
 type ChannelRuntimeSummary = SiteRuntimeSummary["channel_summaries"][number];
 type ChannelHealthBucket = ChannelRuntimeSummary["health_buckets"][number];
-type CoolingBadgeSpec = {
-  label: string;
-  title: string;
-  className: string;
-  channelId: string;
-};
 type HealthPreviewChannel = {
   channelId: string;
   protocolConfig: SiteRow["protocols"][number];
@@ -50,92 +35,6 @@ type AggregatedBucket = {
 };
 
 const CHANNEL_HEALTH_BUCKET_COUNT = 12;
-
-function maxKeyCooldownSeconds(health: ChannelHealthRow | undefined) {
-  if (!health?.key_health?.length) {
-    return 0;
-  }
-  return Math.max(
-    0,
-    ...health.key_health.map((item) => item.cooldown_remaining_seconds),
-  );
-}
-
-function keyCooldownDetails(
-  site: SiteRow,
-  health: ChannelHealthRow,
-  locale: Locale,
-) {
-  const credentialById = new Map(
-    site.credentials.map((item) => [item.id, item] as const),
-  );
-  const credentialIndexById = new Map(
-    site.credentials.map((item, index) => [item.id, index] as const),
-  );
-
-  return health.key_health
-    .filter((item) => !item.available && item.cooldown_remaining_seconds > 0)
-    .sort(
-      (left, right) =>
-        right.cooldown_remaining_seconds - left.cooldown_remaining_seconds,
-    )
-    .map((item) => {
-      const credentialIndex = credentialIndexById.get(item.credential_id) ?? 0;
-      const credentialName = credentialDisplayName(
-        credentialById.get(item.credential_id),
-        credentialIndex,
-        locale,
-      );
-      const duration = formatCooldownDuration(item.cooldown_remaining_seconds);
-      return `${credentialName} ${locale === "zh-CN" ? "冷却剩余" : "cooldown remaining"} ${duration}`;
-    });
-}
-
-function resolveCoolingBadge(
-  site: SiteRow,
-  channelId: string,
-  health: ChannelHealthRow | undefined,
-  locale: Locale,
-): CoolingBadgeSpec | null {
-  if (!health) {
-    return null;
-  }
-  if (health.cooldown_remaining_seconds > 0) {
-    const duration = formatCooldownDuration(health.cooldown_remaining_seconds);
-    return locale === "zh-CN"
-      ? {
-          label: `冷却 ${duration}`,
-          title: `渠道冷却剩余 ${duration}`,
-          className: "border-transparent bg-destructive/12 text-destructive",
-          channelId,
-        }
-      : {
-          label: `Cooling ${duration}`,
-          title: `Channel cooldown remaining ${duration}`,
-          className: "border-transparent bg-destructive/12 text-destructive",
-          channelId,
-        };
-  }
-  const keyCooldownSeconds = maxKeyCooldownSeconds(health);
-  if (keyCooldownSeconds > 0) {
-    const duration = formatCooldownDuration(keyCooldownSeconds);
-    const details = keyCooldownDetails(site, health, locale).join("\n");
-    return locale === "zh-CN"
-      ? {
-          label: `Key 冷却 ${duration}`,
-          title: details || `Key 冷却剩余 ${duration}`,
-          className: "border-transparent bg-amber-500/12 text-amber-700",
-          channelId,
-        }
-      : {
-          label: `Key cooling ${duration}`,
-          title: details || `Key cooldown remaining ${duration}`,
-          className: "border-transparent bg-amber-500/12 text-amber-700",
-          channelId,
-        };
-  }
-  return null;
-}
 
 function runtimeChannelId(protocolConfigId: string, protocol: ProtocolKind) {
   return `${protocolConfigId}_${protocol}`;
@@ -257,35 +156,6 @@ function aggregateHealthBuckets(
   return [...placeholders, ...recent].slice(-CHANNEL_HEALTH_BUCKET_COUNT);
 }
 
-function pickCoolingBadge(
-  site: SiteRow,
-  channels: HealthPreviewChannel[],
-  healthByChannelId: Map<string, ChannelHealthRow>,
-  locale: Locale,
-): CoolingBadgeSpec | null {
-  let best: CoolingBadgeSpec | null = null;
-  let bestSeconds = -1;
-  for (const channel of channels) {
-    const health = healthByChannelId.get(channel.channelId);
-    const badge = resolveCoolingBadge(site, channel.channelId, health, locale);
-    if (!badge || !health) continue;
-    const seconds = Math.max(
-      health.cooldown_remaining_seconds,
-      maxKeyCooldownSeconds(health),
-    );
-    if (seconds > bestSeconds) {
-      best = {
-        ...badge,
-        title: [healthPreviewChannelLabel(channel, locale), badge.title].join(
-          "\n",
-        ),
-      };
-      bestSeconds = seconds;
-    }
-  }
-  return best;
-}
-
 function HealthBarSegments({
   segments,
   locale,
@@ -370,32 +240,18 @@ function HealthBarSegments({
 }
 
 function ChannelHealthBars({
-  site,
   channel,
   channelSummary,
-  health,
   locale,
   timeZone,
-  busyId,
-  onClearChannelCooldown,
 }: {
-  site: SiteRow;
   channel: HealthPreviewChannel;
   channelSummary?: ChannelRuntimeSummary;
-  health?: ChannelHealthRow;
   locale: Locale;
   timeZone?: string;
-  busyId?: string | null;
-  onClearChannelCooldown?: (channelId: string) => void;
 }) {
   const buckets = (channelSummary?.health_buckets ?? []).slice(
     -CHANNEL_HEALTH_BUCKET_COUNT,
-  );
-  const coolingBadge = resolveCoolingBadge(
-    site,
-    channel.channelId,
-    health,
-    locale,
   );
   const segments = [
     ...Array.from(
@@ -415,40 +271,9 @@ function ChannelHealthBars({
 
   return (
     <div className="flex min-w-0 flex-col gap-1.5 rounded-lg border border-border/70 px-2.5 py-2">
-      <div className="flex min-w-0 items-center justify-between gap-2">
-        <span className="min-w-0 truncate text-[11px] font-medium text-foreground">
-          {healthPreviewChannelLabel(channel, locale)}
-        </span>
-        {coolingBadge ? (
-          <div className="flex shrink-0 items-center gap-1">
-            <Badge
-              variant="outline"
-              title={coolingBadge.title}
-              className={cn(
-                "max-w-28 truncate px-1.5 py-0 text-[10px]",
-                coolingBadge.className,
-              )}
-            >
-              {coolingBadge.label}
-            </Badge>
-            {onClearChannelCooldown ? (
-              <Button
-                type="button"
-                variant="ghost"
-                size="xs"
-                className="h-5 px-1.5 text-[10px]"
-                disabled={busyId === channel.channelId}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onClearChannelCooldown(channel.channelId);
-                }}
-              >
-                {locale === "zh-CN" ? "取消" : "Clear"}
-              </Button>
-            ) : null}
-          </div>
-        ) : null}
-      </div>
+      <span className="min-w-0 truncate text-[11px] font-medium text-foreground">
+        {healthPreviewChannelLabel(channel, locale)}
+      </span>
       <HealthBarSegments
         segments={segments}
         locale={locale}
@@ -461,19 +286,13 @@ function ChannelHealthBars({
 export function SiteHealthPreview({
   site,
   summary,
-  healthByChannelId,
   locale,
   timeZone,
-  busyId,
-  onClearChannelCooldown,
 }: {
   site: SiteRow;
   summary?: SiteRuntimeSummary;
-  healthByChannelId: Map<string, ChannelHealthRow>;
   locale: Locale;
   timeZone?: string;
-  busyId?: string | null;
-  onClearChannelCooldown?: (channelId: string) => void;
 }) {
   const channels = siteHealthPreviewChannels(site);
   const summaryByChannelId = new Map(
@@ -482,12 +301,6 @@ export function SiteHealthPreview({
     ),
   );
   const aggregated = aggregateHealthBuckets(channels, summaryByChannelId);
-  const coolingBadge = pickCoolingBadge(
-    site,
-    channels,
-    healthByChannelId,
-    locale,
-  );
   const summarySegments = aggregated.map((bucket, index) => ({
     key: `summary-${index}`,
     bucket,
@@ -538,49 +351,15 @@ export function SiteHealthPreview({
             {channels.map((channel) => (
               <ChannelHealthBars
                 key={channel.channelId}
-                site={site}
                 channel={channel}
                 channelSummary={summaryByChannelId.get(channel.channelId)}
-                health={healthByChannelId.get(channel.channelId)}
                 locale={locale}
                 timeZone={timeZone}
-                busyId={busyId}
-                onClearChannelCooldown={onClearChannelCooldown}
               />
             ))}
           </div>
         </PopoverContent>
       </Popover>
-
-      {coolingBadge ? (
-        <div className="flex shrink-0 items-center gap-1">
-          <Badge
-            variant="outline"
-            title={coolingBadge.title}
-            className={cn(
-              "max-w-24 truncate px-1.5 py-0 text-[10px]",
-              coolingBadge.className,
-            )}
-          >
-            {coolingBadge.label}
-          </Badge>
-          {onClearChannelCooldown ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="xs"
-              className="h-5 px-1.5 text-[10px]"
-              disabled={busyId === coolingBadge.channelId}
-              onClick={(event) => {
-                event.stopPropagation();
-                onClearChannelCooldown(coolingBadge.channelId);
-              }}
-            >
-              {locale === "zh-CN" ? "取消" : "Clear"}
-            </Button>
-          ) : null}
-        </div>
-      ) : null}
     </div>
   );
 }

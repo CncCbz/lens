@@ -532,23 +532,6 @@ export function safeText(value: string | null | undefined) {
   return typeof value === "string" ? value : "";
 }
 
-export function formatCooldownDuration(seconds: number) {
-  const value = Math.max(Math.floor(seconds), 0);
-  if (value < 60) return `${value}s`;
-
-  const minutes = Math.floor(value / 60);
-  const remainingSeconds = value % 60;
-  if (minutes < 60) {
-    return remainingSeconds
-      ? `${minutes}m ${remainingSeconds}s`
-      : `${minutes}m`;
-  }
-
-  const hours = Math.floor(minutes / 60);
-  const remainingMinutes = minutes % 60;
-  return remainingMinutes ? `${hours}h ${remainingMinutes}m` : `${hours}h`;
-}
-
 export function modelBadgeClassName(enabled: boolean) {
   return enabled
     ? "inline-flex h-8 items-center gap-2 rounded-full border bg-background px-3 text-sm font-medium text-foreground transition hover:bg-muted"
