@@ -792,7 +792,7 @@ export function AdvancedProtocolConfigDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       {protocolConfigIndex !== null && protocolConfig ? (
         <AppDialogContent
-          className="max-w-4xl"
+          className="max-w-5xl"
           title={
             locale === "zh-CN"
               ? `${combinationName} · 上游转发`
@@ -1004,7 +1004,7 @@ export function AdvancedProtocolConfigDialog({
             ) : null}
 
             {tab === "errors" ? (
-              <div className="grid gap-2">
+              <div className="grid min-w-0 gap-2">
                 <ErrorPolicySettings
                   locale={locale}
                   draft={errorPolicyDraft}
