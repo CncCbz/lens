@@ -1141,6 +1141,71 @@ export async function apiRequest<T>(
   return response.json() as Promise<T>;
 }
 
+export function subscribeSseJsonLoop<T>(
+  path: string,
+  onEvent: (data: T) => void,
+): () => void {
+  const ac = new AbortController();
+  const run = async () => {
+    while (!ac.signal.aborted) {
+      try {
+        await subscribeSseJson(path, onEvent, ac.signal);
+      } catch {
+        if (ac.signal.aborted) return;
+      }
+      if (ac.signal.aborted) return;
+      await new Promise((resolve) => window.setTimeout(resolve, 1000));
+    }
+  };
+  void run();
+  return () => ac.abort();
+}
+
+export async function subscribeSseJson<T>(
+  path: string,
+  onEvent: (data: T) => void,
+  signal: AbortSignal,
+): Promise<void> {
+  const response = await apiFetch(path, {
+    signal,
+    cache: "no-store",
+    headers: { accept: "text/event-stream" },
+  });
+  const reader = response.body?.getReader();
+  if (!reader) {
+    throw new Error("SSE response has no body");
+  }
+  const decoder = new TextDecoder();
+  let buf = "";
+  try {
+    while (!signal.aborted) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
+      let sep = buf.indexOf("\n\n");
+      while (sep >= 0) {
+        const raw = buf.slice(0, sep);
+        buf = buf.slice(sep + 2);
+        const data = raw
+          .split("\n")
+          .filter((line) => line.startsWith("data:"))
+          .map((line) => line.slice(5).replace(/^ /, ""))
+          .join("\n");
+        if (data) {
+          onEvent(JSON.parse(data) as T);
+        }
+        sep = buf.indexOf("\n\n");
+      }
+    }
+  } finally {
+    try {
+      await reader.cancel();
+    } catch {
+      // stream already closed
+    }
+  }
+}
+
 export async function downloadConfigBackup(options?: {
   includeGatewayApiKeys?: boolean;
 }) {

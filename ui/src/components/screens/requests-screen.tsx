@@ -305,7 +305,6 @@ export function RequestsScreen() {
 				queryClient.invalidateQueries({ queryKey: ["overview-usage"] }),
 				queryClient.invalidateQueries({ queryKey: ["overview-performance"] }),
 				queryClient.invalidateQueries({ queryKey: ["gateway-api-keys"] }),
-				queryClient.invalidateQueries({ queryKey: ["site-runtime-summaries"] }),
 			]);
 			toast.success(
 				titleForLocale(locale, "请求日志已清空", "Request logs cleared"),

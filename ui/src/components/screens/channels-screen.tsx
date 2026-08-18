@@ -31,6 +31,7 @@ import {
   SiteRuntimeSummary,
   SettingItem,
   apiRequest,
+  subscribeSseJsonLoop,
 } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
 import {
@@ -288,21 +289,26 @@ export function ChannelsScreen() {
     staleTime: 2 * 60_000,
     refetchOnMount: "always",
   });
-  const { data: siteRuntimeSummaries } = useQuery({
-    queryKey: ["site-runtime-summaries"],
-    queryFn: () => apiRequest<SiteRuntimeSummary[]>("/admin/sites/runtime"),
-    staleTime: 5_000,
-    refetchInterval: 5000,
-    refetchOnMount: "always",
-  });
-  const { data: routerSnapshot } = useQuery({
-    queryKey: ["router-cooldowns"],
-    queryFn: () =>
-      apiRequest<Pick<RouteSnapshot, "health">>("/admin/routes/cooldowns"),
-    staleTime: 1_000,
-    refetchInterval: 1000,
-    refetchOnMount: "always",
-  });
+  const [siteRuntimeSummaries, setSiteRuntimeSummaries] =
+    useState<SiteRuntimeSummary[]>();
+  const [routerSnapshot, setRouterSnapshot] =
+    useState<Pick<RouteSnapshot, "health">>();
+  useEffect(
+    () =>
+      subscribeSseJsonLoop<SiteRuntimeSummary[]>(
+        "/admin/sites/runtime",
+        setSiteRuntimeSummaries,
+      ),
+    [],
+  );
+  useEffect(
+    () =>
+      subscribeSseJsonLoop<Pick<RouteSnapshot, "health">>(
+        "/admin/routes/cooldowns",
+        setRouterSnapshot,
+      ),
+    [],
+  );
   const { data: settings } = useQuery({
     queryKey: ["settings"],
     queryFn: () => apiRequest<SettingItem[]>("/admin/settings"),
@@ -536,21 +542,12 @@ export function ChannelsScreen() {
     void queryClient.invalidateQueries({ queryKey: ["route-preview"] });
   }
 
-  function refreshChannelSideData() {
-    void queryClient.invalidateQueries({
-      queryKey: ["site-runtime-summaries"],
-    });
-    void queryClient.invalidateQueries({ queryKey: ["router-cooldowns"] });
-    markChannelRelatedStale();
-  }
-
   async function clearChannelCooldown(channelId: string) {
     setBusyId(channelId);
     try {
       await apiRequest<void>(`/admin/routes/${channelId}/cooldown`, {
         method: "DELETE",
       });
-      await queryClient.invalidateQueries({ queryKey: ["router-cooldowns"] });
       void queryClient.invalidateQueries({ queryKey: ["route-preview"] });
       toast.success(locale === "zh-CN" ? "已取消冷却" : "Cooldown cleared");
     } catch (error) {
@@ -734,7 +731,7 @@ export function ChannelsScreen() {
             ...rows,
           ];
         });
-        refreshChannelSideData();
+        markChannelRelatedStale();
         toast.success(
           locale === "zh-CN"
             ? `已导入 ${result.created_count} 个渠道`
@@ -821,7 +818,7 @@ export function ChannelsScreen() {
     if (keepEditing) {
       setEditingSiteId(savedSite.id);
     }
-    refreshChannelSideData();
+    markChannelRelatedStale();
     return { savedSite, wasEditing };
   }
 
@@ -1088,7 +1085,7 @@ export function ChannelsScreen() {
           ? `已处理 ${result.created_count + result.updated_count} 项`
           : `Processed ${result.created_count + result.updated_count} items`,
       );
-      refreshChannelSideData();
+      markChannelRelatedStale();
     } catch (e) {
       const message =
         e instanceof ApiError
@@ -1115,7 +1112,7 @@ export function ChannelsScreen() {
         setEditingSiteId(null);
       }
       toast.success(locale === "zh-CN" ? "渠道已删除" : "Channel deleted");
-      refreshChannelSideData();
+      markChannelRelatedStale();
     } catch (e) {
       const message =
         e instanceof ApiError
@@ -1187,7 +1184,7 @@ export function ChannelsScreen() {
             ? "渠道已停用"
             : "Channel disabled",
       );
-      refreshChannelSideData();
+      markChannelRelatedStale();
     } catch (e) {
       const message =
         e instanceof ApiError

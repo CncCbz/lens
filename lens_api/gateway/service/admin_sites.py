@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+import asyncio
+import json
+from collections.abc import AsyncIterator, Awaitable, Callable
+
+from fastapi.responses import StreamingResponse
+
 from .runtime_context import (
     Any,
     ChannelConfig,
@@ -33,7 +39,6 @@ from .runtime_context import (
     SiteModelFetchRequest,
     SiteModelTestRequest,
     SiteModelTestResult,
-    SiteRuntimeSummary,
     SiteUpdate,
     app_state,
 )
@@ -51,6 +56,40 @@ from .auth import get_current_admin
 from .errors import _apply_router_runtime_settings
 from .routing_plan import _resolve_routing_plan
 
+_SSE_HEADERS = {
+    "cache-control": "no-cache, no-transform",
+    "connection": "keep-alive",
+    "x-accel-buffering": "no",
+}
+
+
+async def _sse_json_events(
+    snapshot: Callable[[], Awaitable[Any]],
+    *,
+    interval: float,
+    heartbeat: float = 15.0,
+) -> AsyncIterator[str]:
+    last = ""
+    idle_for = 0.0
+    while True:
+        payload = json.dumps(await snapshot(), separators=(",", ":"))
+        if payload != last:
+            last = payload
+            idle_for = 0.0
+            yield f"data: {payload}\n\n"
+        else:
+            idle_for += interval
+            if idle_for >= heartbeat:
+                idle_for = 0.0
+                yield ": ping\n\n"
+        await asyncio.sleep(interval)
+
+
+def _sse_response(events: AsyncIterator[str]) -> StreamingResponse:
+    return StreamingResponse(
+        events, media_type="text/event-stream", headers=_SSE_HEADERS
+    )
+
 
 async def list_sites(_: Any = Depends(get_current_admin)) -> list[SiteConfig]:
     return await app_state.channel_store.list_sites()
@@ -58,8 +97,13 @@ async def list_sites(_: Any = Depends(get_current_admin)) -> list[SiteConfig]:
 
 async def site_runtime_summaries(
     _: Any = Depends(get_current_admin),
-) -> list[SiteRuntimeSummary]:
-    return await app_state.request_log_store.list_site_runtime_summaries()
+) -> StreamingResponse:
+    async def snapshot() -> list[Any]:
+        # ponytail: 5s DB sample, notify on log write if this stays hot
+        summaries = await app_state.request_log_store.list_site_runtime_summaries()
+        return [item.model_dump(mode="json") for item in summaries]
+
+    return _sse_response(_sse_json_events(snapshot, interval=5))
 
 
 async def create_site(
@@ -174,11 +218,13 @@ async def router_snapshot(_: Any = Depends(get_current_admin)) -> dict[str, Any]
     return app_state.router.snapshot(channels).model_dump(mode="json")
 
 
-async def router_cooldowns(_: Any = Depends(get_current_admin)) -> dict[str, Any]:
-    health = app_state.router.cooldown_snapshot()
-    return {
-        "health": [item.model_dump(mode="json") for item in health],
-    }
+async def router_cooldowns(_: Any = Depends(get_current_admin)) -> StreamingResponse:
+    async def snapshot() -> dict[str, Any]:
+        # ponytail: 1s in-memory sample, Event notify if many subscribers
+        health = app_state.router.cooldown_snapshot()
+        return {"health": [item.model_dump(mode="json") for item in health]}
+
+    return _sse_response(_sse_json_events(snapshot, interval=1))
 
 
 async def route_preview(
