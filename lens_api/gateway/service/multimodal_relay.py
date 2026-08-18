@@ -192,6 +192,27 @@ def _message_text_context(
     return text.strip()[:_RELAY_CONTEXT_LIMIT]
 
 
+def _message_container_key(protocol: ProtocolKind) -> str:
+    return "input" if protocol == ProtocolKind.OPENAI_RESPONSES else "messages"
+
+
+def _last_user_message_index(
+    body: dict[str, Any], protocol: ProtocolKind
+) -> int | None:
+    messages = body.get(_message_container_key(protocol))
+    if not isinstance(messages, list):
+        return None
+    last_dict: int | None = None
+    last_user: int | None = None
+    for index, message in enumerate(messages):
+        if not isinstance(message, dict):
+            continue
+        last_dict = index
+        if message.get("role") == "user":
+            last_user = index
+    return last_user if last_user is not None else last_dict
+
+
 def _replace_block(
     body: dict[str, Any],
     protocol: ProtocolKind,
@@ -199,8 +220,7 @@ def _replace_block(
     content_index: int,
     replacement: dict[str, Any],
 ) -> None:
-    container_key = "input" if protocol == ProtocolKind.OPENAI_RESPONSES else "messages"
-    messages = body.get(container_key)
+    messages = body.get(_message_container_key(protocol))
     if not isinstance(messages, list) or message_index >= len(messages):
         return
     message = messages[message_index]
@@ -210,6 +230,26 @@ def _replace_block(
     if not isinstance(content, list) or content_index >= len(content):
         return
     content[content_index] = replacement
+
+
+def _drop_block(
+    body: dict[str, Any],
+    protocol: ProtocolKind,
+    message_index: int,
+    content_index: int,
+) -> None:
+    messages = body.get(_message_container_key(protocol))
+    if not isinstance(messages, list) or message_index >= len(messages):
+        return
+    message = messages[message_index]
+    if not isinstance(message, dict):
+        return
+    content = message.get("content")
+    if not isinstance(content, list) or content_index >= len(content):
+        return
+    del content[content_index]
+    if not content:
+        message["content"] = ""
 
 
 def _media_request_body(
@@ -499,21 +539,31 @@ async def _maybe_relay_multimodal(
         return body
 
     resolved_group = plan.resolved_group
-    relayed = deepcopy(body)
+    current_index = _last_user_message_index(body, protocol)
     tasks: list[tuple[str, tuple[int, int, dict[str, Any]], str]] = []
+    drops: list[tuple[int, int]] = []
     for kind in _CHAT_MEDIA_KINDS:
         if not grouped[kind]:
             continue
         if _group_supports_kind(resolved_group, kind):
             continue
         helper_group_id = str(runtime.get(f"multimodal_{kind}_group_id") or "").strip()
-        if not helper_group_id:
-            continue
         for item in grouped[kind]:
-            tasks.append((kind, item, helper_group_id))
+            message_index, content_index, _block = item
+            if current_index is not None and message_index == current_index:
+                if helper_group_id:
+                    tasks.append((kind, item, helper_group_id))
+            else:
+                drops.append((message_index, content_index))
 
-    if not tasks:
+    if not tasks and not drops:
         return body
+
+    relayed = deepcopy(body)
+    for message_index, content_index in sorted(drops, reverse=True):
+        _drop_block(relayed, protocol, message_index, content_index)
+    if not tasks:
+        return relayed
 
     results = await asyncio.gather(
         *[
