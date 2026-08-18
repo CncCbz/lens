@@ -56,7 +56,7 @@ const CATEGORY_DEFAULTS: BuiltinMap = {
     count_toward_failure_rate: false,
   },
   "5xx": {
-    same_target_retries: 0,
+    same_target_retries: 3,
     fallback: true,
     cooldown_scope: "target",
     failure_threshold: 3,
@@ -70,7 +70,7 @@ const CATEGORY_DEFAULTS: BuiltinMap = {
 const EXACT_DEFAULTS: BuiltinMap = {
   "400": { ...CATEGORY_DEFAULTS["4xx"] },
   "401": {
-    same_target_retries: 0,
+    same_target_retries: 3,
     fallback: true,
     cooldown_scope: "credential",
     failure_threshold: 1,
@@ -80,7 +80,7 @@ const EXACT_DEFAULTS: BuiltinMap = {
     count_toward_failure_rate: false,
   },
   "403": {
-    same_target_retries: 0,
+    same_target_retries: 3,
     fallback: true,
     cooldown_scope: "credential",
     failure_threshold: 1,
@@ -90,7 +90,7 @@ const EXACT_DEFAULTS: BuiltinMap = {
     count_toward_failure_rate: false,
   },
   "404": {
-    same_target_retries: 0,
+    same_target_retries: 3,
     fallback: true,
     cooldown_scope: "target",
     failure_threshold: 1,
@@ -100,7 +100,7 @@ const EXACT_DEFAULTS: BuiltinMap = {
     count_toward_failure_rate: false,
   },
   "408": {
-    same_target_retries: 0,
+    same_target_retries: 3,
     fallback: true,
     cooldown_scope: "target",
     failure_threshold: 2,
@@ -111,7 +111,7 @@ const EXACT_DEFAULTS: BuiltinMap = {
   },
   "422": { ...CATEGORY_DEFAULTS["4xx"] },
   "425": {
-    same_target_retries: 1,
+    same_target_retries: 3,
     fallback: true,
     cooldown_scope: "target",
     failure_threshold: 1,
@@ -121,7 +121,7 @@ const EXACT_DEFAULTS: BuiltinMap = {
     count_toward_failure_rate: true,
   },
   "429": {
-    same_target_retries: 0,
+    same_target_retries: 3,
     fallback: true,
     cooldown_scope: "credential",
     failure_threshold: 1,
@@ -134,7 +134,7 @@ const EXACT_DEFAULTS: BuiltinMap = {
   "502": { ...CATEGORY_DEFAULTS["5xx"] },
   "503": { ...CATEGORY_DEFAULTS["5xx"], respect_retry_after: true },
   "504": {
-    same_target_retries: 0,
+    same_target_retries: 3,
     fallback: true,
     cooldown_scope: "target",
     failure_threshold: 2,
@@ -144,7 +144,7 @@ const EXACT_DEFAULTS: BuiltinMap = {
     count_toward_failure_rate: true,
   },
   "529": {
-    same_target_retries: 0,
+    same_target_retries: 3,
     fallback: true,
     cooldown_scope: "target",
     failure_threshold: 1,
@@ -154,7 +154,7 @@ const EXACT_DEFAULTS: BuiltinMap = {
     count_toward_failure_rate: true,
   },
   timeout: {
-    same_target_retries: 0,
+    same_target_retries: 3,
     fallback: true,
     cooldown_scope: "target",
     failure_threshold: 2,
@@ -164,7 +164,7 @@ const EXACT_DEFAULTS: BuiltinMap = {
     count_toward_failure_rate: true,
   },
   transport_error: {
-    same_target_retries: 0,
+    same_target_retries: 3,
     fallback: true,
     cooldown_scope: "target",
     failure_threshold: 2,

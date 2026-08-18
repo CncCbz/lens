@@ -242,9 +242,7 @@ async def _proxy_protocol(
 
         errors: list[str] = []
         failure_status_codes: list[int | None] = []
-        max_attempts = max(int(runtime["max_attempts"]), 1)
         candidates = [selection.primary, *selection.fallbacks]
-        attempts_used = 0
         cooled_only = True
         capacity_rejected = False
         unavailable_rejected = False
@@ -275,7 +273,7 @@ async def _proxy_protocol(
                 )
             target_attempts = 0
             same_target_budget = 1
-            while attempts_used < max_attempts and target_attempts < same_target_budget:
+            while target_attempts < same_target_budget:
                 release_target, at_capacity = app_state.router.acquire_target(target)
                 if release_target is None:
                     capacity_rejected = capacity_rejected or at_capacity
@@ -307,7 +305,6 @@ async def _proxy_protocol(
                     release_target()
                     app_state.router.release_probe(target)
                     raise
-                attempts_used += 1
                 target_attempts += 1
                 if response is not None:
                     if not isinstance(response, StreamingResponse):

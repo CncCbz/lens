@@ -60,7 +60,6 @@ const CORS_ALLOW_ORIGINS = "cors_allow_origins";
 const CIRCUIT_BREAKER_THRESHOLD = "circuit_breaker_threshold";
 const CIRCUIT_BREAKER_COOLDOWN = "circuit_breaker_cooldown";
 const CIRCUIT_BREAKER_MAX_COOLDOWN = "circuit_breaker_max_cooldown";
-const MAX_ATTEMPTS = "max_attempts";
 const ROUTER_CIRCUIT_MINIMUM_REQUESTS = "router_circuit_minimum_requests";
 const ROUTER_CIRCUIT_FAILURE_RATE_THRESHOLD =
   "router_circuit_failure_rate_threshold";
@@ -88,7 +87,6 @@ type DraftState = {
   circuitBreakerThreshold: string;
   circuitBreakerCooldown: string;
   circuitBreakerMaxCooldown: string;
-  maxAttempts: string;
   routerCircuitMinimumRequests: string;
   routerCircuitFailureRateThreshold: string;
   healthWindowSeconds: string;
@@ -109,7 +107,6 @@ const EMPTY_DRAFT: DraftState = {
   circuitBreakerThreshold: "3",
   circuitBreakerCooldown: "60",
   circuitBreakerMaxCooldown: "600",
-  maxAttempts: "3",
   routerCircuitMinimumRequests: "5",
   routerCircuitFailureRateThreshold: "0.6",
   healthWindowSeconds: "300",
@@ -133,7 +130,6 @@ function parseSettings(items: SettingItem[] | undefined) {
     circuitBreakerCooldown: mapping.get(CIRCUIT_BREAKER_COOLDOWN) ?? "60",
     circuitBreakerMaxCooldown:
       mapping.get(CIRCUIT_BREAKER_MAX_COOLDOWN) ?? "600",
-    maxAttempts: mapping.get(MAX_ATTEMPTS) ?? "3",
     routerCircuitMinimumRequests:
       mapping.get(ROUTER_CIRCUIT_MINIMUM_REQUESTS) ?? "5",
     routerCircuitFailureRateThreshold:
@@ -328,10 +324,6 @@ export function SettingsScreen() {
         {
           key: CIRCUIT_BREAKER_MAX_COOLDOWN,
           value: draft.circuitBreakerMaxCooldown.trim() || "600",
-        },
-        {
-          key: MAX_ATTEMPTS,
-          value: draft.maxAttempts.trim() || "3",
         },
         {
           key: ROUTER_CIRCUIT_MINIMUM_REQUESTS,
@@ -712,31 +704,6 @@ export function SettingsScreen() {
             <TabsContent value="circuit-breaker" className="mt-0">
               <SettingCard title={titleForLocale(locale, "路由", "Routing")}>
                 <div className="space-y-6">
-                  <div>
-                    <div className="mb-2 text-sm font-medium">
-                      {titleForLocale(locale, "请求与路由", "Request routing")}
-                    </div>
-                    <FieldGroup className="grid gap-4 sm:grid-cols-2">
-                      <Field>
-                        <FieldLabel>
-                          {titleForLocale(
-                            locale,
-                            "单次请求最大尝试数",
-                            "Max attempts per request",
-                          )}
-                        </FieldLabel>
-                        <Input
-                          type="number"
-                          min="1"
-                          value={draft.maxAttempts}
-                          onChange={(event) =>
-                            setDraftValue("maxAttempts", event.target.value)
-                          }
-                        />
-                      </Field>
-                    </FieldGroup>
-                  </div>
-
                   <div>
                     <div className="mb-2 text-sm font-medium">
                       {titleForLocale(locale, "健康评分", "Health scoring")}

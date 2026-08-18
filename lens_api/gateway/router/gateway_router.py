@@ -58,7 +58,7 @@ _DEFAULT_CATEGORY_POLICIES: dict[str, RouterErrorPolicy] = {
         count_toward_failure_rate=False,
     ),
     "5xx": RouterErrorPolicy(
-        same_target_retries=0,
+        same_target_retries=3,
         fallback=True,
         cooldown_scope="target",
         failure_threshold=3,
@@ -81,7 +81,7 @@ _DEFAULT_EXACT_POLICIES: dict[str, RouterErrorPolicy] = {
         count_toward_failure_rate=False,
     ),
     "401": RouterErrorPolicy(
-        same_target_retries=0,
+        same_target_retries=3,
         fallback=True,
         cooldown_scope="credential",
         failure_threshold=1,
@@ -91,7 +91,7 @@ _DEFAULT_EXACT_POLICIES: dict[str, RouterErrorPolicy] = {
         count_toward_failure_rate=False,
     ),
     "403": RouterErrorPolicy(
-        same_target_retries=0,
+        same_target_retries=3,
         fallback=True,
         cooldown_scope="credential",
         failure_threshold=1,
@@ -101,7 +101,7 @@ _DEFAULT_EXACT_POLICIES: dict[str, RouterErrorPolicy] = {
         count_toward_failure_rate=False,
     ),
     "404": RouterErrorPolicy(
-        same_target_retries=0,
+        same_target_retries=3,
         fallback=True,
         cooldown_scope="target",
         failure_threshold=1,
@@ -111,7 +111,7 @@ _DEFAULT_EXACT_POLICIES: dict[str, RouterErrorPolicy] = {
         count_toward_failure_rate=False,
     ),
     "408": RouterErrorPolicy(
-        same_target_retries=0,
+        same_target_retries=3,
         fallback=True,
         cooldown_scope="target",
         failure_threshold=2,
@@ -131,7 +131,7 @@ _DEFAULT_EXACT_POLICIES: dict[str, RouterErrorPolicy] = {
         count_toward_failure_rate=False,
     ),
     "425": RouterErrorPolicy(
-        same_target_retries=1,
+        same_target_retries=3,
         fallback=True,
         cooldown_scope="target",
         failure_threshold=1,
@@ -141,7 +141,7 @@ _DEFAULT_EXACT_POLICIES: dict[str, RouterErrorPolicy] = {
         count_toward_failure_rate=True,
     ),
     "429": RouterErrorPolicy(
-        same_target_retries=0,
+        same_target_retries=3,
         fallback=True,
         cooldown_scope="credential",
         failure_threshold=1,
@@ -151,7 +151,7 @@ _DEFAULT_EXACT_POLICIES: dict[str, RouterErrorPolicy] = {
         count_toward_failure_rate=False,
     ),
     "503": RouterErrorPolicy(
-        same_target_retries=0,
+        same_target_retries=3,
         fallback=True,
         cooldown_scope="target",
         failure_threshold=3,
@@ -161,7 +161,7 @@ _DEFAULT_EXACT_POLICIES: dict[str, RouterErrorPolicy] = {
         count_toward_failure_rate=True,
     ),
     "504": RouterErrorPolicy(
-        same_target_retries=0,
+        same_target_retries=3,
         fallback=True,
         cooldown_scope="target",
         failure_threshold=2,
@@ -171,7 +171,7 @@ _DEFAULT_EXACT_POLICIES: dict[str, RouterErrorPolicy] = {
         count_toward_failure_rate=True,
     ),
     "529": RouterErrorPolicy(
-        same_target_retries=0,
+        same_target_retries=3,
         fallback=True,
         cooldown_scope="target",
         failure_threshold=1,
@@ -181,7 +181,7 @@ _DEFAULT_EXACT_POLICIES: dict[str, RouterErrorPolicy] = {
         count_toward_failure_rate=True,
     ),
     "timeout": RouterErrorPolicy(
-        same_target_retries=0,
+        same_target_retries=3,
         fallback=True,
         cooldown_scope="target",
         failure_threshold=2,
@@ -191,7 +191,7 @@ _DEFAULT_EXACT_POLICIES: dict[str, RouterErrorPolicy] = {
         count_toward_failure_rate=True,
     ),
     "transport_error": RouterErrorPolicy(
-        same_target_retries=0,
+        same_target_retries=3,
         fallback=True,
         cooldown_scope="target",
         failure_threshold=2,
@@ -253,7 +253,7 @@ def _server_defaults_from_globals(
     cooldown = max(circuit_breaker_cooldown, 0)
     max_cooldown = max(circuit_breaker_max_cooldown, cooldown)
     return RouterErrorPolicy(
-        same_target_retries=0,
+        same_target_retries=3,
         fallback=True,
         cooldown_scope="target",
         failure_threshold=threshold,

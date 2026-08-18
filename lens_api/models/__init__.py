@@ -825,7 +825,7 @@ def _sort_router_error_policy_key(key: str) -> tuple[int, str]:
 
 class RouterErrorPolicy(StrictBaseModel):
     same_target_retries: int = Field(
-        default=0, ge=0, le=ROUTER_ERROR_POLICY_MAX_SAME_TARGET_RETRIES
+        default=3, ge=0, le=ROUTER_ERROR_POLICY_MAX_SAME_TARGET_RETRIES
     )
     fallback: bool = True
     cooldown_scope: RouterErrorCooldownScope = "none"
