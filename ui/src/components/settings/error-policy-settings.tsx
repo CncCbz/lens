@@ -21,6 +21,7 @@ import {
   createErrorPolicyRow,
   ERROR_POLICY_SCOPE_OPTIONS,
   policyKeyLabel,
+  SUGGESTED_ERROR_POLICY_KEYS,
 } from "@/lib/error-policy-config";
 import { titleForLocale, type Locale } from "@/lib/i18n";
 import type {
@@ -36,6 +37,33 @@ type Props = {
   hint?: string;
   onChange: (draft: RouterErrorPolicyDraft) => void;
 };
+
+function HeaderCell({
+  locale,
+  zh,
+  en,
+  tipZh,
+  tipEn,
+}: {
+  locale: Locale;
+  zh: string;
+  en: string;
+  tipZh: string;
+  tipEn: string;
+}) {
+  return (
+    <th className="px-2 py-2 font-medium">
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className="cursor-help border-b border-dotted border-muted-foreground/60">
+            {titleForLocale(locale, zh, en)}
+          </span>
+        </TooltipTrigger>
+        <TooltipContent>{titleForLocale(locale, tipZh, tipEn)}</TooltipContent>
+      </Tooltip>
+    </th>
+  );
+}
 
 function updateRow(
   draft: RouterErrorPolicyDraft,
@@ -57,12 +85,14 @@ export function ErrorPolicySettings({
   onChange,
 }: Props) {
   function addRow() {
-    let code = 418;
-    while (draft.rows.some((row) => row.key === String(code)) && code <= 599) {
-      code += 1;
+    const used = new Set(draft.rows.map((row) => row.key));
+    let key = SUGGESTED_ERROR_POLICY_KEYS.find((item) => !used.has(item)) ?? "";
+    if (!key) {
+      let code = 418;
+      while (used.has(String(code)) && code <= 599) code += 1;
+      key = String(Math.min(code, 599));
     }
-    const key = String(Math.min(code, 599));
-    if (draft.rows.some((row) => row.key === key)) return;
+    if (used.has(key)) return;
     onChange({
       rows: [
         ...draft.rows,
@@ -113,33 +143,65 @@ export function ErrorPolicySettings({
       </div>
 
       <div className="overflow-x-auto rounded-lg border">
-        <table className="w-full min-w-[720px] border-collapse text-sm">
+        <table className="w-full min-w-[880px] border-collapse text-sm">
           <thead>
             <tr className="border-b bg-muted/40 text-left text-[11px] text-muted-foreground">
-              <th className="px-3 py-2 font-medium">
-                {titleForLocale(locale, "状态", "Status")}
-              </th>
-              <th className="px-2 py-2 font-medium">
-                {titleForLocale(locale, "故障转移", "Fallback")}
-              </th>
-              <th className="px-2 py-2 font-medium">
-                {titleForLocale(locale, "遵循等待", "Retry-After")}
-              </th>
-              <th className="px-2 py-2 font-medium">
-                {titleForLocale(locale, "冷却范围", "Scope")}
-              </th>
-              <th className="px-2 py-2 font-medium">
-                {titleForLocale(locale, "同目标重试", "Retries")}
-              </th>
-              <th className="px-2 py-2 font-medium">
-                {titleForLocale(locale, "失败阈值", "Threshold")}
-              </th>
-              <th className="px-2 py-2 font-medium">
-                {titleForLocale(locale, "基础秒", "Base")}
-              </th>
-              <th className="px-2 py-2 font-medium">
-                {titleForLocale(locale, "最大秒", "Max")}
-              </th>
+              <HeaderCell
+                locale={locale}
+                zh="状态码"
+                en="Status code"
+                tipZh="HTTP 状态码，或 timeout / transport_error"
+                tipEn="HTTP status, or timeout / transport_error"
+              />
+              <HeaderCell
+                locale={locale}
+                zh="失败后换渠道"
+                en="Switch channel"
+                tipZh="打开后这个错误会继续试其他渠道"
+                tipEn="On: try other channels after this error"
+              />
+              <HeaderCell
+                locale={locale}
+                zh="遵守 Retry-After"
+                en="Honor Retry-After"
+                tipZh="上游返回 Retry-After 时按其时间冷却"
+                tipEn="Use upstream Retry-After as cooldown"
+              />
+              <HeaderCell
+                locale={locale}
+                zh="冷却对象"
+                en="Cool down"
+                tipZh="不冷却 / 只停该密钥 / 只停该模型 / 停整个渠道"
+                tipEn="None / this key / this model / whole channel"
+              />
+              <HeaderCell
+                locale={locale}
+                zh="当前渠道重试"
+                en="Retry here"
+                tipZh="换渠道前，在当前目标再试几次"
+                tipEn="Retries on the same target before switching"
+              />
+              <HeaderCell
+                locale={locale}
+                zh="连续失败阈值"
+                en="Fails to cool"
+                tipZh="连续失败几次后进入冷却"
+                tipEn="Consecutive failures before cooldown"
+              />
+              <HeaderCell
+                locale={locale}
+                zh="冷却秒数"
+                en="Cool seconds"
+                tipZh="第一次进入冷却的秒数"
+                tipEn="First cooldown duration in seconds"
+              />
+              <HeaderCell
+                locale={locale}
+                zh="冷却上限"
+                en="Cool max"
+                tipZh="连续冷却允许的最大秒数"
+                tipEn="Maximum cooldown in seconds"
+              />
               <th className="px-2 py-2 font-medium" />
             </tr>
           </thead>
@@ -165,7 +227,8 @@ export function ErrorPolicySettings({
                             }),
                           )
                         }
-                        className="h-8 w-20 font-mono text-xs"
+                        placeholder="502"
+                        className="h-8 w-28 font-mono text-xs"
                       />
                     )}
                     {row.overridden ? (
@@ -206,7 +269,7 @@ export function ErrorPolicySettings({
                       )
                     }
                   >
-                    <SelectTrigger className="h-8 w-[6.5rem]">
+                    <SelectTrigger className="h-8 w-[7.5rem]">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>

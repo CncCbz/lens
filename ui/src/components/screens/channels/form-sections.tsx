@@ -1011,8 +1011,8 @@ export function AdvancedProtocolConfigDialog({
                   globals={globals}
                   hint={
                     locale === "zh-CN"
-                      ? "默认为空时使用全局错误策略；添加状态码可覆盖该状态码的处理，未覆盖的状态码继续沿用全局策略"
-                      : "Empty inherits the global error policy; add a status code to override it, other statuses keep the global policy"
+                      ? "空配置使用全局策略。添加 502 / 429 / timeout 等即可覆盖；未添加的状态码仍走全局"
+                      : "Empty inherits globals. Add 502 / 429 / timeout to override; other statuses stay global"
                   }
                   onChange={handleErrorPolicyChange}
                 />

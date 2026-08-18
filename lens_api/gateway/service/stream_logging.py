@@ -13,7 +13,7 @@ from .runtime_context import (
     _RequestDeadline,
     app_state,
     asyncio,
-    effective_router_error_policy_config,
+    resolve_channel_error_policy,
     httpx,
     json,
     logger,
@@ -501,22 +501,12 @@ async def _record_stream_route_health(
         return True
 
     try:
-        from ..router import (
-            policy_key_for_status,
-            resolve_router_error_policy,
-        )
-
         runtime = await app_state.settings_repo.get_runtime_settings()
         status_code = capture.error_status_code if capture is not None else None
-        policy_key = policy_key_for_status(status_code)
-        policy = resolve_router_error_policy(
-            policy_key,
-            config=effective_router_error_policy_config(
-                runtime, channel.router_error_policy_config
-            ),
-            circuit_breaker_threshold=int(runtime["circuit_breaker_threshold"]),
-            circuit_breaker_cooldown=int(runtime["circuit_breaker_cooldown"]),
-            circuit_breaker_max_cooldown=int(runtime["circuit_breaker_max_cooldown"]),
+        _policy_key, policy = resolve_channel_error_policy(
+            runtime,
+            channel.router_error_policy_config,
+            status_code=status_code,
         )
         app_state.router.record_failure(
             channel.id,

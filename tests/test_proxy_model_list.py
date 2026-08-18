@@ -628,6 +628,43 @@ def test_router_error_policy_resolver_merge_and_globals() -> None:
     assert p500.failure_threshold == 9
 
 
+def test_channel_error_policy_uses_status_when_policy_key_missing() -> None:
+    from lens_api.gateway.router import decision_from_policy, classify_error
+    from lens_api.gateway.service.runtime_context import resolve_channel_error_policy
+
+    runtime = {
+        "router_error_policy_config": {
+            "overrides": {
+                "5xx": {
+                    "cooldown_scope": "target",
+                    "failure_threshold": 1,
+                    "cooldown_seconds": 60,
+                    "max_cooldown_seconds": 60,
+                }
+            }
+        },
+        "circuit_breaker_threshold": 1,
+        "circuit_breaker_cooldown": 60,
+        "circuit_breaker_max_cooldown": 60,
+    }
+    raw = '{"overrides":{"502":{"cooldown_scope":"none"},"429":{"cooldown_scope":"none"},"504":{"cooldown_scope":"none"}}}'
+    for status, policy_key in (
+        (502, None),
+        (429, None),
+        (502, "transport_error"),
+        (504, "timeout"),
+    ):
+        key, policy = resolve_channel_error_policy(
+            runtime, raw, policy_key=policy_key, status_code=status
+        )
+        assert key == str(status)
+        assert policy is not None
+        assert policy.cooldown_scope == "none"
+        decision = decision_from_policy(policy, category=classify_error(status))
+        assert decision is not None
+        assert decision.cooldown_candidate is False
+
+
 def test_router_scoped_credential_and_model_isolation() -> None:
     from lens_api.models import ChannelKeyItem
     from lens_api.gateway.router import resolve_router_error_policy

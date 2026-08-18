@@ -29,7 +29,6 @@ from ..router import (
     AllTargetsCooledError,
     RouteSelection,
     RouteTarget,
-    resolve_router_error_policy,
 )
 from .auth import _gateway_key_allows_model
 from .errors import (
@@ -49,7 +48,7 @@ from .proxy_upstream import (
     _record_target_failure,
 )
 from .request_logger import _RequestLogger, _update_request_log
-from .runtime_context import effective_router_error_policy_config
+from .runtime_context import resolve_channel_error_policy
 from .routing_plan import (
     _apply_deepseek_thinking_compat,
     _apply_model_group_param_override,
@@ -550,18 +549,14 @@ def _attempts_retryable(log_ctx: _RequestLogger) -> bool:
 def _policy_from_last_attempt(log_ctx: _RequestLogger, runtime: dict[str, Any]):
     if not log_ctx.attempts:
         return None
-    key = log_ctx.attempts[-1].error_policy_key
-    if not key:
-        return None
-    return resolve_router_error_policy(
-        key,
-        config=effective_router_error_policy_config(
-            runtime, log_ctx.attempts[-1].router_error_policy_config
-        ),
-        circuit_breaker_threshold=int(runtime["circuit_breaker_threshold"]),
-        circuit_breaker_cooldown=int(runtime["circuit_breaker_cooldown"]),
-        circuit_breaker_max_cooldown=int(runtime["circuit_breaker_max_cooldown"]),
+    attempt = log_ctx.attempts[-1]
+    _key, policy = resolve_channel_error_policy(
+        runtime,
+        attempt.router_error_policy_config,
+        policy_key=attempt.error_policy_key,
+        status_code=attempt.status_code,
     )
+    return policy
 
 
 async def _sleep_before_same_target_retry(

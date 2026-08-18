@@ -167,6 +167,8 @@ from ..router import (
     RouteSelection,
     RouteTarget,
     decide_route_error,
+    policy_key_for_status,
+    resolve_router_error_policy,
 )
 from ..cronjob_runner import CronjobAlreadyRunningError, CronjobRunner
 from ..upstreams import (
@@ -351,6 +353,49 @@ def effective_router_error_policy_config(
         return RouterErrorPolicyConfig.model_validate(json.loads(raw))
     except (ValueError, TypeError):
         return runtime.get("router_error_policy_config")
+
+
+def _combo_override_keys(router_error_policy_config: str) -> set[str]:
+    raw = router_error_policy_config.strip()
+    if not raw:
+        return set()
+    try:
+        config = RouterErrorPolicyConfig.model_validate(json.loads(raw))
+    except (ValueError, TypeError):
+        return set()
+    return set(config.overrides)
+
+
+def resolve_channel_error_policy(
+    runtime: Mapping[str, Any],
+    router_error_policy_config: str,
+    *,
+    policy_key: str | None = None,
+    status_code: int | None = None,
+) -> tuple[str | None, Any]:
+    key = policy_key or policy_key_for_status(status_code)
+    status_key = (
+        str(status_code)
+        if status_code is not None and 400 <= status_code <= 599
+        else None
+    )
+    combo_keys = _combo_override_keys(router_error_policy_config)
+    if combo_keys:
+        if key not in combo_keys and status_key in combo_keys:
+            key = status_key
+        elif key is None:
+            key = status_key
+    if key is None:
+        return None, None
+    return key, resolve_router_error_policy(
+        key,
+        config=effective_router_error_policy_config(
+            runtime, router_error_policy_config
+        ),
+        circuit_breaker_threshold=int(runtime["circuit_breaker_threshold"]),
+        circuit_breaker_cooldown=int(runtime["circuit_breaker_cooldown"]),
+        circuit_breaker_max_cooldown=int(runtime["circuit_breaker_max_cooldown"]),
+    )
 
 
 @dataclass(slots=True)

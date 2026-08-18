@@ -26,7 +26,7 @@ from .runtime_context import (
     build_upstream_request,
     convert_response,
     convert_stream_iterator,
-    effective_router_error_policy_config,
+    resolve_channel_error_policy,
     httpx,
     logger,
     needs_conversion,
@@ -40,7 +40,6 @@ from ..router import (
     decision_from_policy,
     parse_retry_after_seconds,
     policy_key_for_status,
-    resolve_router_error_policy,
 )
 from .errors import _protocol_error_response
 from .upstream_http import (
@@ -406,18 +405,16 @@ async def _record_target_failure(
 ) -> Response | None:
     message = _format_channel_error(exc.detail)
     log_body_enabled = bool(runtime["relay_log_body_enabled"])
-    policy_key = exc.policy_key
-    policy = None
-    if policy_key is not None:
-        policy = resolve_router_error_policy(
-            policy_key,
-            config=effective_router_error_policy_config(
-                runtime, channel.router_error_policy_config
-            ),
-            circuit_breaker_threshold=int(runtime["circuit_breaker_threshold"]),
-            circuit_breaker_cooldown=int(runtime["circuit_breaker_cooldown"]),
-            circuit_breaker_max_cooldown=int(runtime["circuit_breaker_max_cooldown"]),
-        )
+    policy_key, policy = resolve_channel_error_policy(
+        runtime,
+        channel.router_error_policy_config,
+        policy_key=exc.policy_key,
+        status_code=(
+            exc.router_status_code
+            if exc.router_status_code is not None
+            else exc.status_code
+        ),
+    )
     decision = exc.decision
     if policy is not None:
         category = classify_error(exc.router_status_code)

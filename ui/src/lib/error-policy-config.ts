@@ -438,8 +438,20 @@ export const ERROR_POLICY_SCOPE_OPTIONS: {
   zh: string;
   en: string;
 }[] = [
-  { value: "none", zh: "无", en: "None" },
-  { value: "credential", zh: "凭证", en: "Credential" },
-  { value: "target", zh: "目标", en: "Target" },
-  { value: "channel", zh: "渠道", en: "Channel" },
+  { value: "none", zh: "不冷却", en: "No cooldown" },
+  { value: "credential", zh: "该密钥", en: "This key" },
+  { value: "target", zh: "该模型", en: "This model" },
+  { value: "channel", zh: "整个渠道", en: "Whole channel" },
 ];
+
+export const SUGGESTED_ERROR_POLICY_KEYS = [
+  "502",
+  "503",
+  "429",
+  "401",
+  "403",
+  "504",
+  "500",
+  "timeout",
+  "transport_error",
+] as const;
