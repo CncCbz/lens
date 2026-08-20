@@ -47,6 +47,7 @@ import {
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
+import { ToolbarSearchInput } from "@/components/ui/toolbar-search-input";
 import { cn } from "@/lib/utils";
 import type {
   ModelGroup,
@@ -1293,10 +1294,19 @@ export function ModelPickerDialog({
   onConfirmAll: () => void;
   onCancel: () => void;
 }) {
+  const [search, setSearch] = useState("");
   const modelGroups = useMemo(
     () => groupPickerModels(availableModels),
     [availableModels],
   );
+
+  const filteredModels = useMemo(() => {
+    const keyword = search.trim().toLowerCase();
+    if (!keyword) return modelGroups;
+    return modelGroups.filter((model) =>
+      model.model_name.toLowerCase().includes(keyword),
+    );
+  }, [modelGroups, search]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -1327,39 +1337,54 @@ export function ModelPickerDialog({
             </>
           }
         >
-          <div className="max-h-[58dvh] overflow-y-auto p-1 sm:max-h-[420px]">
-            <div className="flex flex-wrap gap-2.5">
-              {modelGroups.length ? (
-                modelGroups.map((model) => {
-                  const key = genericModelKey(model);
-                  const checked = pickerSelectedModelKeys.includes(key);
-                  return (
-                    <Button
-                      key={key}
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className={cn(
-                        "max-w-full rounded-full",
-                        modelBadgeClassName(checked),
-                        checked ? "border-primary text-primary" : "",
-                      )}
-                      onClick={() => onToggleModel(key)}
-                    >
-                      <span className="max-w-[180px] truncate sm:max-w-[220px]">
-                        {model.model_name}
-                      </span>
-                      <span className="text-xs">{checked ? "✓" : "+"}</span>
-                    </Button>
-                  );
-                })
-              ) : (
-                <div className="px-3 py-6 text-sm text-muted-foreground">
-                  {locale === "zh-CN"
-                    ? "未获取到可选模型"
-                    : "No models fetched."}
-                </div>
-              )}
+          <div className="grid gap-3">
+            <ToolbarSearchInput
+              value={search}
+              onChange={setSearch}
+              onClear={() => setSearch("")}
+              placeholder={
+                locale === "zh-CN" ? "搜索模型..." : "Search models..."
+              }
+              className="max-w-none"
+            />
+            <div className="max-h-[58dvh] overflow-y-auto p-1 sm:max-h-[420px]">
+              <div className="flex flex-wrap gap-2.5">
+                {filteredModels.length ? (
+                  filteredModels.map((model) => {
+                    const key = genericModelKey(model);
+                    const checked = pickerSelectedModelKeys.includes(key);
+                    return (
+                      <Button
+                        key={key}
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className={cn(
+                          "max-w-full rounded-full",
+                          modelBadgeClassName(checked),
+                          checked ? "border-primary text-primary" : "",
+                        )}
+                        onClick={() => onToggleModel(key)}
+                      >
+                        <span className="max-w-[180px] truncate sm:max-w-[220px]">
+                          {model.model_name}
+                        </span>
+                        <span className="text-xs">{checked ? "✓" : "+"}</span>
+                      </Button>
+                    );
+                  })
+                ) : (
+                  <div className="px-3 py-6 text-sm text-muted-foreground">
+                    {modelGroups.length
+                      ? locale === "zh-CN"
+                        ? "未找到匹配的模型"
+                        : "No matching models found."
+                      : locale === "zh-CN"
+                        ? "未获取到可选模型"
+                        : "No models fetched."}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </AppDialogContent>
