@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import uuid
 
+from ..repositories.request_log_channel_resolution_mixin import (
+    RequestLogChannelResolutionMixin,
+)
 from .shared import (
     AsyncSession,
     ConfigBackupCronjob,
@@ -729,6 +732,13 @@ class BackupReplacersMixin:
                     attempts_json=json.dumps(
                         [attempt.model_dump(mode="json") for attempt in item.attempts],
                         ensure_ascii=True,
+                    ),
+                    attempt_count=len(item.attempts),
+                    reasoning_effort=(
+                        RequestLogChannelResolutionMixin._extract_reasoning_effort(
+                            item.request_content
+                        )
+                        or _restored_attempt_field(item.attempts, "reasoning_effort")
                     ),
                     primary_credential_id=_restored_attempt_field(
                         item.attempts, "credential_id"

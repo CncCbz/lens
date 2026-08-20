@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-from sqlalchemy.orm import defer
+from sqlalchemy.orm import load_only
 
 from ..shared import (
     CHANNEL_HEALTH_BUCKET_COUNT,
@@ -55,18 +55,38 @@ class RequestLogReadMixin:
         )
         async with self._session_factory() as session:
             items_stmt = select(RequestLogEntity).options(
-                # ponytail: list rows never touch these Text payload columns;
-                # loading them per 100 rows blew memory on busy instances.
-                defer(RequestLogEntity.request_headers),
-                defer(RequestLogEntity.upstream_headers),
-                defer(RequestLogEntity.upstream_response_headers),
-                defer(RequestLogEntity.response_content),
-                defer(RequestLogEntity.upstream_response_content),
-                defer(RequestLogEntity.upstream_response_distilled),
-                defer(RequestLogEntity.client_response_raw_content),
-                defer(RequestLogEntity.client_response_headers),
-                defer(RequestLogEntity.client_request_content),
-                defer(RequestLogEntity.upstream_request_content),
+                load_only(
+                    RequestLogEntity.id,
+                    RequestLogEntity.request_id,
+                    RequestLogEntity.protocol,
+                    RequestLogEntity.user_agent,
+                    RequestLogEntity.requested_group_name,
+                    RequestLogEntity.resolved_group_name,
+                    RequestLogEntity.upstream_model_name,
+                    RequestLogEntity.channel_id,
+                    RequestLogEntity.channel_name,
+                    RequestLogEntity.gateway_key_id,
+                    RequestLogEntity.status_code,
+                    RequestLogEntity.success,
+                    RequestLogEntity.lifecycle_status,
+                    RequestLogEntity.is_stream,
+                    RequestLogEntity.first_token_latency_ms,
+                    RequestLogEntity.latency_ms,
+                    RequestLogEntity.input_tokens,
+                    RequestLogEntity.cache_read_input_tokens,
+                    RequestLogEntity.cache_write_input_tokens,
+                    RequestLogEntity.output_tokens,
+                    RequestLogEntity.total_tokens,
+                    RequestLogEntity.input_cost_usd,
+                    RequestLogEntity.output_cost_usd,
+                    RequestLogEntity.total_cost_usd,
+                    RequestLogEntity.attempt_count,
+                    RequestLogEntity.reasoning_effort,
+                    RequestLogEntity.primary_credential_id,
+                    RequestLogEntity.primary_credential_name,
+                    RequestLogEntity.error_message,
+                    RequestLogEntity.created_at,
+                )
             )
             items_stmt = self._apply_request_log_filters(
                 items_stmt,

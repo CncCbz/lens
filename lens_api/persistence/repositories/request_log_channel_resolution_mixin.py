@@ -224,13 +224,9 @@ class RequestLogChannelResolutionMixin:
         gateway_has_multiple_keys: bool = False,
         channel_has_multiple_credentials: bool = False,
     ) -> RequestLogItem:
-        attempts = cls._parse_attempts_json(entity.attempts_json)
-        primary_attempt = cls._request_log_primary_attempt(attempts, entity.channel_id)
-        credential_id = primary_attempt.get("credential_id")
-        credential_name = primary_attempt.get("credential_name")
-        reasoning_effort = cls._extract_reasoning_effort(
-            entity.request_content
-        ) or cls._clean_reasoning_effort(primary_attempt.get("reasoning_effort"))
+        credential_id = entity.primary_credential_id
+        credential_name = entity.primary_credential_name
+        reasoning_effort = entity.reasoning_effort
         return RequestLogItem(
             id=entity.id,
             request_id=entity.request_id or f"legacy-{entity.id}",
@@ -280,7 +276,7 @@ class RequestLogChannelResolutionMixin:
             input_cost_usd=entity.input_cost_usd,
             output_cost_usd=entity.output_cost_usd,
             total_cost_usd=entity.total_cost_usd,
-            attempt_count=len(attempts),
+            attempt_count=entity.attempt_count,
             error_message=entity.error_message,
             created_at=entity.created_at.replace(tzinfo=UTC).isoformat(),
         )

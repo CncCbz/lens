@@ -527,6 +527,13 @@ class RequestLogWriteMixin:
                 ),
                 upstream_protocol=upstream_protocol,
                 attempts_json=json.dumps(attempts or [], ensure_ascii=True),
+                attempt_count=len(attempts or []),
+                reasoning_effort=(
+                    self._extract_reasoning_effort(request_content)
+                    or self._clean_reasoning_effort(
+                        _primary_attempt_field(attempts, "reasoning_effort")
+                    )
+                ),
                 primary_credential_id=_primary_attempt_field(attempts, "credential_id"),
                 primary_credential_name=_primary_attempt_field(
                     attempts, "credential_name"
@@ -666,6 +673,12 @@ class RequestLogWriteMixin:
             if upstream_protocol is not None:
                 entity.upstream_protocol = upstream_protocol
             entity.attempts_json = json.dumps(attempts or [], ensure_ascii=True)
+            entity.attempt_count = len(attempts or [])
+            entity.reasoning_effort = self._extract_reasoning_effort(
+                request_content
+            ) or self._clean_reasoning_effort(
+                _primary_attempt_field(attempts, "reasoning_effort")
+            )
             entity.error_message = error_message
             entity.stats_archived = (
                 0 if lifecycle_value in REQUEST_LOG_TERMINAL_STATUSES else 1
@@ -723,7 +736,7 @@ class RequestLogWriteMixin:
         runtime = await self._settings_repo.get_runtime_settings()
         if not runtime["relay_log_keep_enabled"]:
             return
-        await self.persist_request_log_stats(force=True)
+        await self.persist_request_log_stats()
         keep_days = int(runtime["relay_log_keep_period"])
         cutoff = self._request_log_prune_cutoff(
             keep_days=keep_days,

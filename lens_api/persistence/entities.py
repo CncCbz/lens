@@ -270,6 +270,8 @@ class RequestLogEntity(Base):
     client_response_headers: Mapped[str | None] = mapped_column(Text, nullable=True)
     upstream_protocol: Mapped[str | None] = mapped_column(String(40), nullable=True)
     attempts_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    reasoning_effort: Mapped[str | None] = mapped_column(String(32), nullable=True)
     primary_credential_id: Mapped[str | None] = mapped_column(
         String(160), nullable=True
     )
@@ -292,6 +294,55 @@ class RequestLogEntity(Base):
         Index(
             "ix_request_logs_protocol_config_created",
             "protocol_config_id",
+            "created_at",
+            "id",
+        ),
+        Index(
+            "ix_request_logs_lifecycle_created_id",
+            "lifecycle_status",
+            "created_at",
+            "id",
+        ),
+        Index(
+            "ix_request_logs_channel_created_id",
+            "channel_id",
+            "created_at",
+            "id",
+        ),
+        Index(
+            "ix_request_logs_gateway_created_id",
+            "gateway_key_id",
+            "created_at",
+            "id",
+        ),
+        Index(
+            "ix_request_logs_protocol_created_id",
+            "protocol",
+            "created_at",
+            "id",
+        ),
+        Index(
+            "ix_request_logs_stats_archive_created",
+            "stats_archived",
+            "lifecycle_status",
+            "created_at",
+            "id",
+        ),
+        Index(
+            "ix_request_logs_cost_created_id",
+            "total_cost_usd",
+            "created_at",
+            "id",
+        ),
+        Index(
+            "ix_request_logs_latency_created_id",
+            "latency_ms",
+            "created_at",
+            "id",
+        ),
+        Index(
+            "ix_request_logs_tokens_created_id",
+            "total_tokens",
             "created_at",
             "id",
         ),
