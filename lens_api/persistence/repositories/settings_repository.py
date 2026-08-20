@@ -24,6 +24,7 @@ from ..shared import (
     SETTING_MULTIMODAL_RELAY_ENABLED,
     SETTING_PROXY_URL,
     SETTING_RELAY_LOG_BODY_ENABLED,
+    SETTING_RELAY_LOG_DEBUG_MODE,
     SETTING_RELAY_LOG_KEEP_ENABLED,
     SETTING_RELAY_LOG_KEEP_PERIOD,
     SETTING_ROUTER_CIRCUIT_FAILURE_RATE_THRESHOLD,
@@ -147,6 +148,9 @@ class SettingsRepository:
             "cors_allow_origins": cors_allow_origins or ["*"],
             "relay_log_body_enabled": self._parse_bool(
                 mapping.get(SETTING_RELAY_LOG_BODY_ENABLED), default=False
+            ),
+            "relay_log_debug_mode": self._parse_bool(
+                mapping.get(SETTING_RELAY_LOG_DEBUG_MODE), default=False
             ),
             "relay_log_keep_enabled": self._parse_bool(
                 mapping.get(SETTING_RELAY_LOG_KEEP_ENABLED), default=True

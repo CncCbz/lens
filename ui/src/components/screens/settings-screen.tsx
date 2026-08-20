@@ -67,6 +67,7 @@ const HEALTH_WINDOW_SECONDS = "health_window_seconds";
 const HEALTH_PENALTY_WEIGHT = "health_penalty_weight";
 const HEALTH_MIN_SAMPLES = "health_min_samples";
 const RELAY_LOG_BODY_ENABLED = "relay_log_body_enabled";
+const RELAY_LOG_DEBUG_MODE = "relay_log_debug_mode";
 const MODEL_LIST_COMPAT_MODE_ENABLED = "model_list_compat_mode_enabled";
 const ROUTER_ERROR_POLICY_CONFIG = "router_error_policy_config";
 const SITE_NAME = "site_name";
@@ -93,6 +94,7 @@ type DraftState = {
   healthPenaltyWeight: string;
   healthMinSamples: string;
   relayLogBodyEnabled: boolean;
+  relayLogDebugMode: boolean;
   modelListCompatModeEnabled: boolean;
   siteName: string;
   siteLogoUrl: string;
@@ -113,6 +115,7 @@ const EMPTY_DRAFT: DraftState = {
   healthPenaltyWeight: "0.5",
   healthMinSamples: "10",
   relayLogBodyEnabled: false,
+  relayLogDebugMode: false,
   modelListCompatModeEnabled: false,
   siteName: "Lens",
   siteLogoUrl: "",
@@ -139,6 +142,9 @@ function parseSettings(items: SettingItem[] | undefined) {
     healthMinSamples: mapping.get(HEALTH_MIN_SAMPLES) ?? "10",
     relayLogBodyEnabled:
       (mapping.get(RELAY_LOG_BODY_ENABLED) ?? "false").trim().toLowerCase() ===
+      "true",
+    relayLogDebugMode:
+      (mapping.get(RELAY_LOG_DEBUG_MODE) ?? "false").trim().toLowerCase() ===
       "true",
     modelListCompatModeEnabled:
       (mapping.get(MODEL_LIST_COMPAT_MODE_ENABLED) ?? "false")
@@ -348,6 +354,10 @@ export function SettingsScreen() {
         {
           key: RELAY_LOG_BODY_ENABLED,
           value: draft.relayLogBodyEnabled ? "true" : "false",
+        },
+        {
+          key: RELAY_LOG_DEBUG_MODE,
+          value: draft.relayLogDebugMode ? "true" : "false",
         },
         {
           key: MODEL_LIST_COMPAT_MODE_ENABLED,
@@ -664,6 +674,7 @@ export function SettingsScreen() {
                   proxyUrl={draft.proxyUrl}
                   corsAllowOrigins={draft.corsAllowOrigins}
                   relayLogBodyEnabled={draft.relayLogBodyEnabled}
+                  relayLogDebugMode={draft.relayLogDebugMode}
                   modelListCompatModeEnabled={draft.modelListCompatModeEnabled}
                   onProxyUrlChange={(value) => setDraftValue("proxyUrl", value)}
                   onCorsAllowOriginsChange={(value) =>
@@ -671,6 +682,9 @@ export function SettingsScreen() {
                   }
                   onRelayLogBodyEnabledChange={(checked) =>
                     setDraftValue("relayLogBodyEnabled", checked)
+                  }
+                  onRelayLogDebugModeChange={(checked) =>
+                    setDraftValue("relayLogDebugMode", checked)
                   }
                   onModelListCompatModeEnabledChange={(checked) =>
                     setDraftValue("modelListCompatModeEnabled", checked)

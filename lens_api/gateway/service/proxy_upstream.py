@@ -84,6 +84,7 @@ async def _build_sse_to_json_result(
     pricing_group_name: str | None,
     request_content: str | None,
     log_body_enabled: bool,
+    log_debug_enabled: bool = False,
 ) -> UpstreamResult:
     content = await response.aread()
     raw_content = _decode_content_bytes(content)
@@ -154,7 +155,9 @@ async def _build_sse_to_json_result(
         response_content=response_content if log_body_enabled else None,
         upstream_response_headers=_dump_log_json(upstream_response_headers),
         upstream_response_content=(
-            _sanitize_log_content_text(raw_content) if log_body_enabled else None
+            _sanitize_log_content_text(raw_content)
+            if log_body_enabled and log_debug_enabled
+            else None
         ),
         client_response_headers=_dump_log_json(response_headers),
     )
@@ -312,6 +315,7 @@ async def _build_json_result(
     pricing_group_name: str | None,
     request_content: str | None,
     log_body_enabled: bool,
+    log_debug_enabled: bool = False,
 ) -> UpstreamResult:
     content = await response.aread()
     raw_content = _decode_content_bytes(content)
@@ -365,7 +369,9 @@ async def _build_json_result(
         ),
         upstream_response_headers=_dump_log_json(upstream_response_headers),
         upstream_response_content=(
-            _sanitize_log_content_text(raw_content) if log_body_enabled else None
+            _sanitize_log_content_text(raw_content)
+            if log_body_enabled and log_debug_enabled
+            else None
         ),
         client_response_headers=_dump_log_json(response_headers),
     )
@@ -595,6 +601,7 @@ async def _call_channel(
     pricing_group_name: str | None = None,
     client_protocol: ProtocolKind | None = None,
     log_body_enabled: bool = False,
+    log_debug_enabled: bool = False,
     global_proxy_url: str | None = None,
 ) -> UpstreamResult:
     proxy_url = resolve_upstream_proxy_url(channel, global_proxy_url)
@@ -633,6 +640,7 @@ async def _call_channel(
                 pricing_group_name,
                 request_content,
                 log_body_enabled,
+                log_debug_enabled,
             )
         elif is_event_stream:
             result = await _build_stream_result(
@@ -670,6 +678,7 @@ async def _call_channel(
                 pricing_group_name,
                 request_content,
                 log_body_enabled,
+                log_debug_enabled,
             )
         if not result.is_stream:
             app_state.router.record_success(

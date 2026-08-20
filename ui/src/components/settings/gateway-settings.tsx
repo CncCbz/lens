@@ -16,10 +16,12 @@ interface GatewaySettingsProps {
   proxyUrl: string;
   corsAllowOrigins: string;
   relayLogBodyEnabled: boolean;
+  relayLogDebugMode: boolean;
   modelListCompatModeEnabled: boolean;
   onProxyUrlChange: (value: string) => void;
   onCorsAllowOriginsChange: (value: string) => void;
   onRelayLogBodyEnabledChange: (checked: boolean) => void;
+  onRelayLogDebugModeChange: (checked: boolean) => void;
   onModelListCompatModeEnabledChange: (checked: boolean) => void;
 }
 
@@ -27,10 +29,12 @@ export function GatewaySettings({
   proxyUrl,
   corsAllowOrigins,
   relayLogBodyEnabled,
+  relayLogDebugMode,
   modelListCompatModeEnabled,
   onProxyUrlChange,
   onCorsAllowOriginsChange,
   onRelayLogBodyEnabledChange,
+  onRelayLogDebugModeChange,
   onModelListCompatModeEnabledChange,
 }: GatewaySettingsProps) {
   const { locale } = useI18n();
@@ -95,6 +99,27 @@ export function GatewaySettings({
         <Switch
           checked={relayLogBodyEnabled}
           onCheckedChange={onRelayLogBodyEnabledChange}
+        />
+      </Field>
+      <Field
+        orientation="horizontal"
+        className="items-center justify-between gap-4"
+      >
+        <FieldContent>
+          <FieldLabel className="w-auto">
+            {titleForLocale(locale, "日志调试模式", "Log debug mode")}
+          </FieldLabel>
+          <FieldDescription>
+            {titleForLocale(
+              locale,
+              "开启后同时记录上游原始响应与客户端原始响应，日志体积会显著增大；默认只记录蒸馏后的响应内容。",
+              "When enabled, stores raw upstream and client responses in addition to distilled content; log size grows significantly. By default only distilled response content is stored.",
+            )}
+          </FieldDescription>
+        </FieldContent>
+        <Switch
+          checked={relayLogDebugMode}
+          onCheckedChange={onRelayLogDebugModeChange}
         />
       </Field>
     </FieldGroup>

@@ -274,6 +274,7 @@ async def _record_stream_request_log(
     started_at: float,
     result: UpstreamResult,
     attempts: list[dict[str, Any]],
+    log_debug_enabled: bool = False,
 ) -> None:
     capture = result.stream_capture
     _release_stream_concurrency(capture)
@@ -294,7 +295,9 @@ async def _record_stream_request_log(
         else None
     )
     upstream_response_content = (
-        _sanitize_log_content_text(raw_content) if raw_content else None
+        _sanitize_log_content_text(raw_content)
+        if raw_content and log_debug_enabled
+        else None
     )
     upstream_response_distilled = None
     if raw_content:
@@ -312,7 +315,7 @@ async def _record_stream_request_log(
     )
     client_response_raw_content = (
         _sanitize_log_content_text(client_response_content)
-        if client_response_content
+        if client_response_content and log_debug_enabled
         else None
     )
     if capture is not None:
@@ -450,6 +453,7 @@ async def _record_stream_request_log_and_release_probe(
     started_at: float,
     result: UpstreamResult,
     attempts: list[dict[str, Any]],
+    log_debug_enabled: bool = False,
 ) -> None:
     try:
         await _record_stream_request_log(
@@ -464,6 +468,7 @@ async def _record_stream_request_log_and_release_probe(
             started_at=started_at,
             result=result,
             attempts=attempts,
+            log_debug_enabled=log_debug_enabled,
         )
     finally:
         capture = result.stream_capture

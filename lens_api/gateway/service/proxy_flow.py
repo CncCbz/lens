@@ -670,6 +670,7 @@ async def _try_target(
         upstream_body.pop("stream", None)
 
     log_body_enabled = bool(runtime["relay_log_body_enabled"])
+    log_debug_enabled = bool(runtime["relay_log_debug_mode"])
     reasoning_effort = _extract_request_reasoning_effort(body, upstream_body)
     try:
         upstream, body_bytes, upstream_request_content = _prepare_channel_request(
@@ -746,6 +747,7 @@ async def _try_target(
             pricing_group_name=plan.resolved_group_name,
             client_protocol=protocol,
             log_body_enabled=log_body_enabled,
+            log_debug_enabled=log_debug_enabled,
             deadline=deadline,
             global_proxy_url=str(runtime["proxy_url"]),
         )
@@ -846,6 +848,7 @@ async def _try_target(
             started_at=log_ctx.started_at,
             result=result,
             attempts=_attempt_logs_to_dicts(log_ctx.attempts),
+            log_debug_enabled=log_debug_enabled,
         )
         return result.response
     _apply_response_headers(
