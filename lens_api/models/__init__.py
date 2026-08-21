@@ -22,6 +22,19 @@ class StrictBaseModel(BaseModel):
 _ALL_MODALITIES = ("text", "image", "video", "pdf", "audio")
 
 
+def _validate_pi_config(value: str | None) -> str | None:
+    """Reject non-empty pi configs that are not a JSON object."""
+    if not value or not value.strip():
+        return value
+    try:
+        payload = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"pi_config is not valid JSON: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("pi_config must be a JSON object")
+    return value
+
+
 def resolve_effective_modalities(group: "ModelGroup") -> list[str]:
     """Modalities a group effectively supports, honoring manual overrides."""
     mode = getattr(group, "multimodal", ModelGroupMultimodalMode.AUTO)
@@ -717,6 +730,11 @@ class ModelGroupCreate(StrictBaseModel):
         return self
 
     @model_validator(mode="after")
+    def validate_pi_config(self) -> "ModelGroupCreate":
+        _validate_pi_config(self.pi_config)
+        return self
+
+    @model_validator(mode="after")
     def validate_sync_filter(self) -> "ModelGroupCreate":
         self.sync_filter_mode, self.sync_filter_query = (
             normalize_model_group_sync_filter(
@@ -746,6 +764,11 @@ class ModelGroupUpdate(StrictBaseModel):
     def validate_param_override(self) -> "ModelGroupUpdate":
         if self.param_override is not None and "model" in self.param_override:
             raise ValueError("model cannot be overridden")
+        return self
+
+    @model_validator(mode="after")
+    def validate_pi_config(self) -> "ModelGroupUpdate":
+        _validate_pi_config(self.pi_config)
         return self
 
     @model_validator(mode="after")
