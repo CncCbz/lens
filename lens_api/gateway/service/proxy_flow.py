@@ -18,6 +18,7 @@ from .runtime_context import (
     _attempt_logs_to_dicts,
     _lens_response_headers,
     app_state,
+    relay_log_capture_flags,
     asyncio,
     convert_request,
     logger,
@@ -90,10 +91,12 @@ async def _proxy_protocol(
         float(runtime["stream_idle_timeout_seconds"]),
     )
     _apply_router_runtime_settings(runtime)
-    log_body_enabled = bool(runtime["relay_log_body_enabled"])
-    request_content = _dump_log_json(body) if log_body_enabled else None
+    log_request_headers, _, log_request_body, _ = relay_log_capture_flags(runtime)
+    request_content = _dump_log_json(body) if log_request_body else None
     request_headers_content = (
-        _dump_log_json(dict(request_headers)) if request_headers else None
+        _dump_log_json(dict(request_headers))
+        if log_request_headers and request_headers
+        else None
     )
     inbound_ua = _normalize_user_agent(inbound_user_agent)
     upstream_user_agent = (
@@ -673,7 +676,12 @@ async def _try_target(
     if protocol in {ProtocolKind.OPENAI_EMBEDDING, ProtocolKind.RERANK}:
         upstream_body.pop("stream", None)
 
-    log_body_enabled = bool(runtime["relay_log_body_enabled"])
+    (
+        log_request_headers,
+        log_response_headers,
+        log_request_body,
+        log_response_body,
+    ) = relay_log_capture_flags(runtime)
     log_debug_enabled = bool(runtime["relay_log_debug_mode"])
     reasoning_effort = _extract_request_reasoning_effort(body, upstream_body)
     try:
@@ -684,11 +692,13 @@ async def _try_target(
             user_agent=upstream_user_agent,
             forwarded_headers=inbound_headers,
             model_group_headers=tuple(model_group_headers),
-            log_body_enabled=log_body_enabled,
+            log_body_enabled=log_request_body,
             path_suffix=path_suffix,
             multipart_files=multipart_files,
         )
-        upstream_headers_content = _dump_log_json(dict(upstream.headers))
+        upstream_headers_content = (
+            _dump_log_json(dict(upstream.headers)) if log_request_headers else None
+        )
         effective_user_agent = _effective_user_agent_from_headers(
             upstream.headers, upstream_user_agent
         )
@@ -750,7 +760,8 @@ async def _try_target(
             model_name=target.model_name,
             pricing_group_name=plan.resolved_group_name,
             client_protocol=protocol,
-            log_body_enabled=log_body_enabled,
+            log_body_enabled=log_response_body,
+            log_response_headers_enabled=log_response_headers,
             log_debug_enabled=log_debug_enabled,
             deadline=deadline,
             global_proxy_url=str(runtime["proxy_url"]),

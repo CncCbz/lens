@@ -69,6 +69,10 @@ const HEALTH_MIN_SAMPLES = "health_min_samples";
 const FIRST_TOKEN_TIMEOUT_SECONDS = "first_token_timeout_seconds";
 const STREAM_IDLE_TIMEOUT_SECONDS = "stream_idle_timeout_seconds";
 const RELAY_LOG_BODY_ENABLED = "relay_log_body_enabled";
+const RELAY_LOG_REQUEST_HEADERS_ENABLED = "relay_log_request_headers_enabled";
+const RELAY_LOG_RESPONSE_HEADERS_ENABLED = "relay_log_response_headers_enabled";
+const RELAY_LOG_REQUEST_BODY_ENABLED = "relay_log_request_body_enabled";
+const RELAY_LOG_RESPONSE_BODY_ENABLED = "relay_log_response_body_enabled";
 const RELAY_LOG_DEBUG_MODE = "relay_log_debug_mode";
 const MODEL_LIST_COMPAT_MODE_ENABLED = "model_list_compat_mode_enabled";
 const ROUTER_ERROR_POLICY_CONFIG = "router_error_policy_config";
@@ -97,7 +101,10 @@ type DraftState = {
   healthMinSamples: string;
   firstTokenTimeoutSeconds: string;
   streamIdleTimeoutSeconds: string;
-  relayLogBodyEnabled: boolean;
+  relayLogRequestHeadersEnabled: boolean;
+  relayLogResponseHeadersEnabled: boolean;
+  relayLogRequestBodyEnabled: boolean;
+  relayLogResponseBodyEnabled: boolean;
   relayLogDebugMode: boolean;
   modelListCompatModeEnabled: boolean;
   siteName: string;
@@ -120,7 +127,10 @@ const EMPTY_DRAFT: DraftState = {
   healthMinSamples: "10",
   firstTokenTimeoutSeconds: "180",
   streamIdleTimeoutSeconds: "180",
-  relayLogBodyEnabled: false,
+  relayLogRequestHeadersEnabled: true,
+  relayLogResponseHeadersEnabled: true,
+  relayLogRequestBodyEnabled: false,
+  relayLogResponseBodyEnabled: false,
   relayLogDebugMode: false,
   modelListCompatModeEnabled: false,
   siteName: "Lens",
@@ -129,6 +139,16 @@ const EMPTY_DRAFT: DraftState = {
   modelTestPrompts: DEFAULT_MODEL_TEST_PROMPTS.join("\n"),
   routerErrorPolicyConfig: emptyErrorPolicyDraft(),
 };
+
+function parseBoolFlag(
+  mapping: Map<string, string>,
+  key: string,
+  fallback: boolean,
+) {
+  const raw = mapping.get(key);
+  if (raw === undefined) return fallback;
+  return raw.trim().toLowerCase() === "true";
+}
 
 function parseSettings(items: SettingItem[] | undefined) {
   const mapping = new Map((items ?? []).map((item) => [item.key, item.value]));
@@ -148,9 +168,26 @@ function parseSettings(items: SettingItem[] | undefined) {
     healthMinSamples: mapping.get(HEALTH_MIN_SAMPLES) ?? "10",
     firstTokenTimeoutSeconds: mapping.get(FIRST_TOKEN_TIMEOUT_SECONDS) ?? "180",
     streamIdleTimeoutSeconds: mapping.get(STREAM_IDLE_TIMEOUT_SECONDS) ?? "180",
-    relayLogBodyEnabled:
-      (mapping.get(RELAY_LOG_BODY_ENABLED) ?? "false").trim().toLowerCase() ===
-      "true",
+    relayLogRequestHeadersEnabled: parseBoolFlag(
+      mapping,
+      RELAY_LOG_REQUEST_HEADERS_ENABLED,
+      true,
+    ),
+    relayLogResponseHeadersEnabled: parseBoolFlag(
+      mapping,
+      RELAY_LOG_RESPONSE_HEADERS_ENABLED,
+      true,
+    ),
+    relayLogRequestBodyEnabled: parseBoolFlag(
+      mapping,
+      RELAY_LOG_REQUEST_BODY_ENABLED,
+      parseBoolFlag(mapping, RELAY_LOG_BODY_ENABLED, false),
+    ),
+    relayLogResponseBodyEnabled: parseBoolFlag(
+      mapping,
+      RELAY_LOG_RESPONSE_BODY_ENABLED,
+      parseBoolFlag(mapping, RELAY_LOG_BODY_ENABLED, false),
+    ),
     relayLogDebugMode:
       (mapping.get(RELAY_LOG_DEBUG_MODE) ?? "false").trim().toLowerCase() ===
       "true",
@@ -368,8 +405,28 @@ export function SettingsScreen() {
           value: draft.streamIdleTimeoutSeconds.trim() || "180",
         },
         {
+          key: RELAY_LOG_REQUEST_HEADERS_ENABLED,
+          value: draft.relayLogRequestHeadersEnabled ? "true" : "false",
+        },
+        {
+          key: RELAY_LOG_RESPONSE_HEADERS_ENABLED,
+          value: draft.relayLogResponseHeadersEnabled ? "true" : "false",
+        },
+        {
+          key: RELAY_LOG_REQUEST_BODY_ENABLED,
+          value: draft.relayLogRequestBodyEnabled ? "true" : "false",
+        },
+        {
+          key: RELAY_LOG_RESPONSE_BODY_ENABLED,
+          value: draft.relayLogResponseBodyEnabled ? "true" : "false",
+        },
+        {
           key: RELAY_LOG_BODY_ENABLED,
-          value: draft.relayLogBodyEnabled ? "true" : "false",
+          value:
+            draft.relayLogRequestBodyEnabled ||
+            draft.relayLogResponseBodyEnabled
+              ? "true"
+              : "false",
         },
         {
           key: RELAY_LOG_DEBUG_MODE,
@@ -689,15 +746,33 @@ export function SettingsScreen() {
                 <GatewaySettings
                   proxyUrl={draft.proxyUrl}
                   corsAllowOrigins={draft.corsAllowOrigins}
-                  relayLogBodyEnabled={draft.relayLogBodyEnabled}
+                  relayLogRequestHeadersEnabled={
+                    draft.relayLogRequestHeadersEnabled
+                  }
+                  relayLogResponseHeadersEnabled={
+                    draft.relayLogResponseHeadersEnabled
+                  }
+                  relayLogRequestBodyEnabled={draft.relayLogRequestBodyEnabled}
+                  relayLogResponseBodyEnabled={
+                    draft.relayLogResponseBodyEnabled
+                  }
                   relayLogDebugMode={draft.relayLogDebugMode}
                   modelListCompatModeEnabled={draft.modelListCompatModeEnabled}
                   onProxyUrlChange={(value) => setDraftValue("proxyUrl", value)}
                   onCorsAllowOriginsChange={(value) =>
                     setDraftValue("corsAllowOrigins", value)
                   }
-                  onRelayLogBodyEnabledChange={(checked) =>
-                    setDraftValue("relayLogBodyEnabled", checked)
+                  onRelayLogRequestHeadersEnabledChange={(checked) =>
+                    setDraftValue("relayLogRequestHeadersEnabled", checked)
+                  }
+                  onRelayLogResponseHeadersEnabledChange={(checked) =>
+                    setDraftValue("relayLogResponseHeadersEnabled", checked)
+                  }
+                  onRelayLogRequestBodyEnabledChange={(checked) =>
+                    setDraftValue("relayLogRequestBodyEnabled", checked)
+                  }
+                  onRelayLogResponseBodyEnabledChange={(checked) =>
+                    setDraftValue("relayLogResponseBodyEnabled", checked)
                   }
                   onRelayLogDebugModeChange={(checked) =>
                     setDraftValue("relayLogDebugMode", checked)

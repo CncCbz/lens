@@ -309,9 +309,15 @@ async def _record_stream_request_log(
             upstream_response_distilled = None
         if upstream_response_distilled is None:
             upstream_response_distilled = _sanitize_log_content_text(raw_content)
+    store_body = capture is not None and capture.capture_body
+    if not store_body:
+        upstream_response_content = None
+        upstream_response_distilled = None
     upstream_response_headers = result.upstream_response_headers
-    client_response_headers = json.dumps(
-        dict(result.response.headers), ensure_ascii=True
+    client_response_headers = (
+        json.dumps(dict(result.response.headers), ensure_ascii=True)
+        if result.client_response_headers is not None
+        else None
     )
     client_response_raw_content = (
         _sanitize_log_content_text(client_response_content)
@@ -428,7 +434,9 @@ async def _record_stream_request_log(
         request_content=result.request_content,
         client_request_content=client_request_content,
         upstream_request_content=result.request_content,
-        response_content=_sanitize_log_content_text(distilled_content),
+        response_content=(
+            _sanitize_log_content_text(distilled_content) if store_body else None
+        ),
         upstream_response_headers=upstream_response_headers,
         upstream_response_content=upstream_response_content,
         upstream_response_distilled=upstream_response_distilled,

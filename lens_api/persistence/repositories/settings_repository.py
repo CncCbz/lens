@@ -26,6 +26,10 @@ from ..shared import (
     SETTING_MULTIMODAL_RELAY_ENABLED,
     SETTING_PROXY_URL,
     SETTING_RELAY_LOG_BODY_ENABLED,
+    SETTING_RELAY_LOG_REQUEST_HEADERS_ENABLED,
+    SETTING_RELAY_LOG_RESPONSE_HEADERS_ENABLED,
+    SETTING_RELAY_LOG_REQUEST_BODY_ENABLED,
+    SETTING_RELAY_LOG_RESPONSE_BODY_ENABLED,
     SETTING_RELAY_LOG_DEBUG_MODE,
     SETTING_RELAY_LOG_KEEP_ENABLED,
     SETTING_RELAY_LOG_KEEP_PERIOD,
@@ -144,13 +148,28 @@ class SettingsRepository:
             mapping.get(SETTING_CORS_ALLOW_ORIGINS, "")
         )
         time_zone = normalize_time_zone(mapping.get(SETTING_TIME_ZONE))
+        old_log_body = self._parse_bool(
+            mapping.get(SETTING_RELAY_LOG_BODY_ENABLED), default=False
+        )
+        log_request_body = self._parse_bool(
+            mapping.get(SETTING_RELAY_LOG_REQUEST_BODY_ENABLED), default=old_log_body
+        )
+        log_response_body = self._parse_bool(
+            mapping.get(SETTING_RELAY_LOG_RESPONSE_BODY_ENABLED), default=old_log_body
+        )
         runtime = {
             "proxy_url": mapping.get(SETTING_PROXY_URL, "").strip(),
             "time_zone": time_zone,
             "cors_allow_origins": cors_allow_origins or ["*"],
-            "relay_log_body_enabled": self._parse_bool(
-                mapping.get(SETTING_RELAY_LOG_BODY_ENABLED), default=False
+            "relay_log_request_headers_enabled": self._parse_bool(
+                mapping.get(SETTING_RELAY_LOG_REQUEST_HEADERS_ENABLED), default=True
             ),
+            "relay_log_response_headers_enabled": self._parse_bool(
+                mapping.get(SETTING_RELAY_LOG_RESPONSE_HEADERS_ENABLED), default=True
+            ),
+            "relay_log_request_body_enabled": log_request_body,
+            "relay_log_response_body_enabled": log_response_body,
+            "relay_log_body_enabled": log_request_body or log_response_body,
             "relay_log_debug_mode": self._parse_bool(
                 mapping.get(SETTING_RELAY_LOG_DEBUG_MODE), default=False
             ),

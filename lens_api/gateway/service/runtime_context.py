@@ -139,6 +139,10 @@ from ...persistence.shared import (
     SETTING_MULTIMODAL_IMAGE_GROUP_ID,
     SETTING_MULTIMODAL_RELAY_ENABLED,
     SETTING_RELAY_LOG_BODY_ENABLED,
+    SETTING_RELAY_LOG_REQUEST_HEADERS_ENABLED,
+    SETTING_RELAY_LOG_RESPONSE_HEADERS_ENABLED,
+    SETTING_RELAY_LOG_REQUEST_BODY_ENABLED,
+    SETTING_RELAY_LOG_RESPONSE_BODY_ENABLED,
     SETTING_RELAY_LOG_KEEP_PERIOD,
     SETTING_ROUTER_CIRCUIT_FAILURE_RATE_THRESHOLD,
     SETTING_ROUTER_CIRCUIT_MINIMUM_REQUESTS,
@@ -263,8 +267,22 @@ FLOAT_SETTING_KEYS = {
 }
 BOOLEAN_SETTING_KEYS = {
     SETTING_RELAY_LOG_BODY_ENABLED,
+    SETTING_RELAY_LOG_REQUEST_HEADERS_ENABLED,
+    SETTING_RELAY_LOG_RESPONSE_HEADERS_ENABLED,
+    SETTING_RELAY_LOG_REQUEST_BODY_ENABLED,
+    SETTING_RELAY_LOG_RESPONSE_BODY_ENABLED,
     SETTING_MULTIMODAL_RELAY_ENABLED,
 }
+
+
+def relay_log_capture_flags(runtime: dict[str, Any]) -> tuple[bool, bool, bool, bool]:
+    old_body = bool(runtime.get("relay_log_body_enabled", False))
+    return (
+        bool(runtime.get("relay_log_request_headers_enabled", True)),
+        bool(runtime.get("relay_log_response_headers_enabled", True)),
+        bool(runtime.get("relay_log_request_body_enabled", old_body)),
+        bool(runtime.get("relay_log_response_body_enabled", old_body)),
+    )
 
 
 @lru_cache(maxsize=1)

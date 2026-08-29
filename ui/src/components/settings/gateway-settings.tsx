@@ -15,25 +15,59 @@ import { titleForLocale, useI18n } from "@/lib/i18n";
 interface GatewaySettingsProps {
   proxyUrl: string;
   corsAllowOrigins: string;
-  relayLogBodyEnabled: boolean;
+  relayLogRequestHeadersEnabled: boolean;
+  relayLogResponseHeadersEnabled: boolean;
+  relayLogRequestBodyEnabled: boolean;
+  relayLogResponseBodyEnabled: boolean;
   relayLogDebugMode: boolean;
   modelListCompatModeEnabled: boolean;
   onProxyUrlChange: (value: string) => void;
   onCorsAllowOriginsChange: (value: string) => void;
-  onRelayLogBodyEnabledChange: (checked: boolean) => void;
+  onRelayLogRequestHeadersEnabledChange: (checked: boolean) => void;
+  onRelayLogResponseHeadersEnabledChange: (checked: boolean) => void;
+  onRelayLogRequestBodyEnabledChange: (checked: boolean) => void;
+  onRelayLogResponseBodyEnabledChange: (checked: boolean) => void;
   onRelayLogDebugModeChange: (checked: boolean) => void;
   onModelListCompatModeEnabledChange: (checked: boolean) => void;
+}
+
+function LogSwitch({
+  label,
+  checked,
+  onCheckedChange,
+}: {
+  label: string;
+  checked: boolean;
+  onCheckedChange: (checked: boolean) => void;
+}) {
+  return (
+    <Field
+      orientation="horizontal"
+      className="items-center justify-between gap-4"
+    >
+      <FieldContent>
+        <FieldLabel className="w-auto">{label}</FieldLabel>
+      </FieldContent>
+      <Switch checked={checked} onCheckedChange={onCheckedChange} />
+    </Field>
+  );
 }
 
 export function GatewaySettings({
   proxyUrl,
   corsAllowOrigins,
-  relayLogBodyEnabled,
+  relayLogRequestHeadersEnabled,
+  relayLogResponseHeadersEnabled,
+  relayLogRequestBodyEnabled,
+  relayLogResponseBodyEnabled,
   relayLogDebugMode,
   modelListCompatModeEnabled,
   onProxyUrlChange,
   onCorsAllowOriginsChange,
-  onRelayLogBodyEnabledChange,
+  onRelayLogRequestHeadersEnabledChange,
+  onRelayLogResponseHeadersEnabledChange,
+  onRelayLogRequestBodyEnabledChange,
+  onRelayLogResponseBodyEnabledChange,
   onRelayLogDebugModeChange,
   onModelListCompatModeEnabledChange,
 }: GatewaySettingsProps) {
@@ -87,20 +121,33 @@ export function GatewaySettings({
           onCheckedChange={onModelListCompatModeEnabledChange}
         />
       </Field>
-      <Field
-        orientation="horizontal"
-        className="items-center justify-between gap-4"
-      >
-        <FieldContent>
-          <FieldLabel className="w-auto">
-            {titleForLocale(locale, "记录日志正文", "Record log body")}
-          </FieldLabel>
-        </FieldContent>
-        <Switch
-          checked={relayLogBodyEnabled}
-          onCheckedChange={onRelayLogBodyEnabledChange}
-        />
-      </Field>
+      <div>
+        <div className="mb-2 text-sm font-medium">
+          {titleForLocale(locale, "日志记录", "Log capture")}
+        </div>
+        <FieldGroup className="grid gap-4 sm:grid-cols-2">
+          <LogSwitch
+            label={titleForLocale(locale, "请求头", "Request headers")}
+            checked={relayLogRequestHeadersEnabled}
+            onCheckedChange={onRelayLogRequestHeadersEnabledChange}
+          />
+          <LogSwitch
+            label={titleForLocale(locale, "响应头", "Response headers")}
+            checked={relayLogResponseHeadersEnabled}
+            onCheckedChange={onRelayLogResponseHeadersEnabledChange}
+          />
+          <LogSwitch
+            label={titleForLocale(locale, "请求体", "Request body")}
+            checked={relayLogRequestBodyEnabled}
+            onCheckedChange={onRelayLogRequestBodyEnabledChange}
+          />
+          <LogSwitch
+            label={titleForLocale(locale, "响应体", "Response body")}
+            checked={relayLogResponseBodyEnabled}
+            onCheckedChange={onRelayLogResponseBodyEnabledChange}
+          />
+        </FieldGroup>
+      </div>
       <Field
         orientation="horizontal"
         className="items-center justify-between gap-4"

@@ -70,7 +70,7 @@ import {
 	filterOptionsWithSelected,
 	formatErrorDisplay,
 	gatewayKeyFilterOptionLabel,
-	parseRelayLogBodyEnabled,
+	parseRelayLogDetailEnabled,
 	titleForLocale,
 	type SelectedModelPrefix,
 	type SortMode,
@@ -164,7 +164,7 @@ export function RequestsScreen() {
 		queryFn: () => apiRequest<SettingItem[]>("/admin/settings"),
 		staleTime: 60_000,
 	});
-	const relayLogBodyEnabled = parseRelayLogBodyEnabled(settings);
+	const relayLogDetailEnabled = parseRelayLogDetailEnabled(settings);
 
 	const {
 		data: detail,
@@ -176,7 +176,7 @@ export function RequestsScreen() {
 		queryKey: ["request-log-detail", detailId],
 		queryFn: () =>
 			apiRequest<RequestLogDetail>(`/admin/request-logs/${detailId}`),
-		enabled: relayLogBodyEnabled && detailId !== null,
+		enabled: relayLogDetailEnabled && detailId !== null,
 		staleTime: 60_000,
 		gcTime: REQUEST_LOG_DETAIL_GC_TIME,
 	});
@@ -232,10 +232,10 @@ export function RequestsScreen() {
 	].filter(Boolean).length;
 
 	useEffect(() => {
-		if (!relayLogBodyEnabled && detailId !== null) {
+		if (!relayLogDetailEnabled && detailId !== null) {
 			setDetailId(null);
 		}
-	}, [detailId, relayLogBodyEnabled]);
+	}, [detailId, relayLogDetailEnabled]);
 
 	useEffect(() => {
 		if (selectedModelPrefix !== effectiveSelectedModelPrefix) {
@@ -274,7 +274,7 @@ export function RequestsScreen() {
 	async function refreshLogs() {
 		await Promise.all([
 			refetchRequestLogs(),
-			relayLogBodyEnabled && detailId !== null
+			relayLogDetailEnabled && detailId !== null
 				? refetchDetail()
 				: Promise.resolve(),
 			attemptDetailId !== null ? refetchAttemptDetail() : Promise.resolve(),
@@ -442,7 +442,7 @@ export function RequestsScreen() {
 											item={item}
 											locale={locale}
 											timeZone={timeZone}
-											canOpenDetail={relayLogBodyEnabled}
+											canOpenDetail={relayLogDetailEnabled}
 											onOpenDetail={() => setDetailId(item.id)}
 											onOpenAttempts={() => setAttemptDetailId(item.id)}
 										/>
@@ -744,7 +744,7 @@ export function RequestsScreen() {
 				) : null}
 
 				<Dialog
-					open={relayLogBodyEnabled && detailId !== null}
+					open={relayLogDetailEnabled && detailId !== null}
 					onOpenChange={(open) => {
 						if (!open) setDetailId(null);
 					}}

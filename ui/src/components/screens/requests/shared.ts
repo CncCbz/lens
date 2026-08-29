@@ -9,6 +9,13 @@ export { titleForLocale };
 export const PAGE_SIZE = 20;
 export const REQUEST_LOG_DETAIL_GC_TIME = 60_000;
 export const RELAY_LOG_BODY_ENABLED = "relay_log_body_enabled";
+export const RELAY_LOG_REQUEST_HEADERS_ENABLED =
+  "relay_log_request_headers_enabled";
+export const RELAY_LOG_RESPONSE_HEADERS_ENABLED =
+  "relay_log_response_headers_enabled";
+export const RELAY_LOG_REQUEST_BODY_ENABLED = "relay_log_request_body_enabled";
+export const RELAY_LOG_RESPONSE_BODY_ENABLED =
+  "relay_log_response_body_enabled";
 export const EMPTY_FILTER_OPTION_ID = "n/a";
 
 export type {
@@ -43,11 +50,27 @@ export type UserAgentProduct = {
   version: string;
 };
 
-export function parseRelayLogBodyEnabled(settings: SettingItem[] | undefined) {
-  const item = settings?.find(
-    (setting) => setting.key === RELAY_LOG_BODY_ENABLED,
+function parseSettingFlag(
+  settings: SettingItem[] | undefined,
+  key: string,
+  fallback: boolean,
+) {
+  const item = settings?.find((setting) => setting.key === key);
+  if (item === undefined) return fallback;
+  return item.value.trim().toLowerCase() === "true";
+}
+
+export function parseRelayLogDetailEnabled(
+  settings: SettingItem[] | undefined,
+) {
+  if (settings === undefined) return false;
+  const oldBody = parseSettingFlag(settings, RELAY_LOG_BODY_ENABLED, false);
+  return (
+    parseSettingFlag(settings, RELAY_LOG_REQUEST_HEADERS_ENABLED, true) ||
+    parseSettingFlag(settings, RELAY_LOG_RESPONSE_HEADERS_ENABLED, true) ||
+    parseSettingFlag(settings, RELAY_LOG_REQUEST_BODY_ENABLED, oldBody) ||
+    parseSettingFlag(settings, RELAY_LOG_RESPONSE_BODY_ENABLED, oldBody)
   );
-  return item?.value.trim().toLowerCase() === "true";
 }
 
 export function formatMs(value: number | null | undefined) {
