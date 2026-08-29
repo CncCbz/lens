@@ -607,6 +607,7 @@ class StreamCapture:
     concurrency_release: Callable[[], None] | None = None
     probe_owner: object | None = None
     route_health_recorded: bool = False
+    saw_response_completed: bool = False
 
 
 app_state = AppState()

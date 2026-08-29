@@ -381,6 +381,7 @@ async def _record_stream_request_log(
         channel=channel,
         capture=capture,
         capture_issue=capture_issue,
+        status_code=status_code,
         attempts=attempt_logs,
     )
     if capture is not None:
@@ -481,6 +482,7 @@ async def _record_stream_route_health(
     channel: ChannelConfig,
     capture: StreamCapture | None,
     capture_issue: str | None,
+    status_code: int,
     attempts: list[dict[str, Any]],
 ) -> bool:
     credential_id = _last_attempt_credential_id(attempts)
@@ -507,7 +509,6 @@ async def _record_stream_route_health(
 
     try:
         runtime = await app_state.settings_repo.get_runtime_settings()
-        status_code = capture.error_status_code if capture is not None else None
         _policy_key, policy = resolve_channel_error_policy(
             runtime,
             channel.router_error_policy_config,
@@ -562,7 +563,11 @@ def _stream_log_status_code(
         return result.status_code
     if capture is not None and capture.error_status_code is not None:
         return capture.error_status_code
-    return result.status_code
+    if _is_client_stream_disconnect(capture):
+        return result.status_code
+    if 400 <= result.status_code <= 599:
+        return result.status_code
+    return 502
 
 
 async def _stream_upstream_iterator(
@@ -729,6 +734,11 @@ def _record_stream_event_payload(
         _mark_stream_first_chunk(capture, stream_started_at)
     if protocol == ProtocolKind.OPENAI_CHAT:
         _record_chat_stream_finish_reasons(capture, payload)
+    if (
+        protocol == ProtocolKind.OPENAI_RESPONSES
+        and payload.get("type") == "response.completed"
+    ):
+        capture.saw_response_completed = True
     try:
         parsed = _extract_usage_from_payload(protocol, payload)
     except ValueError as exc:

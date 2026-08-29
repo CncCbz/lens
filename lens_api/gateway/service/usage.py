@@ -264,16 +264,22 @@ def _describe_stream_capture_issue(
                 issues.append(error)
         issues.extend(error for error in capture.parse_errors if error)
 
-    if capture is None or capture.capture_body:
-        if not raw_content:
+    if protocol == ProtocolKind.OPENAI_RESPONSES:
+        if capture is not None:
+            if not capture.saw_response_completed:
+                issues.append("stream ended before response.completed")
+        elif not raw_content:
             issues.append("no stream content captured")
-        elif protocol == ProtocolKind.OPENAI_RESPONSES:
+        else:
             payloads = _parse_sse_payloads(raw_content)
             has_completed = any(
                 payload.get("type") == "response.completed" for payload in payloads
             )
             if not has_completed:
                 issues.append("stream ended before response.completed")
+    elif capture is None or capture.capture_body:
+        if not raw_content:
+            issues.append("no stream content captured")
 
     if capture is not None and not capture.completed:
         if not client_disconnect_after_chat_finish:

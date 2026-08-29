@@ -15,7 +15,19 @@ from lens_api.gateway.service.proxy_upstream import (
     _build_stream_result,
     _call_channel,
 )
-from lens_api.gateway.service.runtime_context import _RequestDeadline
+from starlette.responses import Response
+
+from lens_api.gateway.service.runtime_context import (
+    StreamCapture,
+    UpstreamResult,
+    _RequestDeadline,
+    resolve_channel_error_policy,
+)
+from lens_api.gateway.service.stream_logging import (
+    _record_stream_event_payload,
+    _stream_log_status_code,
+)
+from lens_api.gateway.service.usage import _describe_stream_capture_issue
 from lens_api.gateway.upstreams import build_upstream_request
 from lens_api.models import ChannelConfig, ChannelKeyItem, ProtocolKind
 
@@ -411,3 +423,96 @@ def test_gemini_non_stream_request_keeps_plain_url() -> None:
     upstream = build_upstream_request(channel, body, Settings(auth_secret_key="s"))
     assert "alt=sse" not in upstream.url
     assert upstream.url.endswith(":generateContent?key=upstream-key")
+
+
+def _runtime_settings() -> dict[str, object]:
+    return {
+        "router_error_policy_config": None,
+        "circuit_breaker_threshold": 3,
+        "circuit_breaker_cooldown": 60,
+        "circuit_breaker_max_cooldown": 600,
+    }
+
+
+def test_responses_stream_marks_completed_event() -> None:
+    capture = StreamCapture(capture_body=False)
+    _record_stream_event_payload(
+        ProtocolKind.OPENAI_RESPONSES,
+        capture,
+        {"type": "response.created"},
+        0.0,
+    )
+    assert capture.saw_response_completed is False
+    _record_stream_event_payload(
+        ProtocolKind.OPENAI_RESPONSES,
+        capture,
+        {
+            "type": "response.completed",
+            "response": {
+                "model": "m",
+                "usage": {
+                    "input_tokens": 1,
+                    "output_tokens": 1,
+                    "total_tokens": 2,
+                },
+            },
+        },
+        0.0,
+    )
+    assert capture.saw_response_completed is True
+
+
+def test_responses_stream_missing_completed_is_issue_without_body_capture() -> None:
+    capture = StreamCapture(capture_body=False, completed=True, saw_first_chunk=True)
+    issue = _describe_stream_capture_issue(ProtocolKind.OPENAI_RESPONSES, capture, None)
+    assert issue == "stream ended before response.completed"
+    result = UpstreamResult(response=Response(), status_code=200)
+    assert _stream_log_status_code(result, capture, issue) == 502
+    key, policy = resolve_channel_error_policy(_runtime_settings(), "", status_code=502)
+    assert key == "502"
+    assert policy is not None
+    assert policy.fallback is True
+    none_key, none_policy = resolve_channel_error_policy(
+        _runtime_settings(), "", status_code=200
+    )
+    assert none_key is None
+    assert none_policy is None
+
+
+def test_responses_stream_completed_is_success() -> None:
+    capture = StreamCapture(
+        capture_body=False,
+        completed=True,
+        saw_first_chunk=True,
+        saw_response_completed=True,
+    )
+    assert (
+        _describe_stream_capture_issue(ProtocolKind.OPENAI_RESPONSES, capture, None)
+        is None
+    )
+    result = UpstreamResult(response=Response(), status_code=200)
+    assert _stream_log_status_code(result, capture, None) == 200
+
+
+def test_stream_explicit_error_status_is_preserved() -> None:
+    capture = StreamCapture(
+        capture_body=False,
+        completed=False,
+        error_status_code=504,
+        errors=["Gateway request timed out after 30s"],
+    )
+    issue = _describe_stream_capture_issue(ProtocolKind.OPENAI_RESPONSES, capture, None)
+    result = UpstreamResult(response=Response(), status_code=200)
+    assert _stream_log_status_code(result, capture, issue) == 504
+
+
+def test_client_disconnect_does_not_become_502() -> None:
+    capture = StreamCapture(
+        capture_body=False,
+        completed=False,
+        client_disconnected=True,
+        errors=["client disconnected"],
+    )
+    issue = _describe_stream_capture_issue(ProtocolKind.OPENAI_CHAT, capture, None)
+    result = UpstreamResult(response=Response(), status_code=200)
+    assert _stream_log_status_code(result, capture, issue) == 200
