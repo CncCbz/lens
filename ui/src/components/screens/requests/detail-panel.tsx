@@ -730,8 +730,8 @@ export function RequestLogDetailPanel({
         />
       </div>
 
-      <section className="min-w-0 shrink-0 overflow-hidden rounded-xl border">
-        <header className="flex flex-wrap items-end justify-between gap-2 border-b px-3 py-2.5 sm:px-4">
+      <section className="flex max-h-[min(420px,42dvh)] min-w-0 shrink-0 flex-col overflow-hidden rounded-xl border">
+        <header className="flex shrink-0 flex-wrap items-end justify-between gap-2 border-b px-3 py-2.5 sm:px-4">
           <div>
             <h2 className="text-sm font-semibold">
               {titleForLocale(locale, "网络链路", "Network flow")}
@@ -752,7 +752,7 @@ export function RequestLogDetailPanel({
             )}
           </Badge>
         </header>
-        <div className="overflow-x-auto">
+        <div className="min-h-0 overflow-auto">
           <div
             className="relative min-w-[800px] overflow-hidden bg-muted/10"
             style={{
