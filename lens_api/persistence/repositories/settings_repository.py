@@ -17,6 +17,8 @@ from ..shared import (
     SETTING_HEALTH_MIN_SAMPLES,
     SETTING_HEALTH_PENALTY_WEIGHT,
     SETTING_HEALTH_WINDOW_SECONDS,
+    SETTING_FIRST_TOKEN_TIMEOUT_SECONDS,
+    SETTING_STREAM_IDLE_TIMEOUT_SECONDS,
     SETTING_MODEL_LIST_COMPAT_MODE_ENABLED,
     SETTING_MAX_ATTEMPTS,
     SETTING_MULTIMODAL_AUDIO_GROUP_ID,
@@ -184,6 +186,12 @@ class SettingsRepository:
             ),
             "health_min_samples": self._parse_int(
                 mapping.get(SETTING_HEALTH_MIN_SAMPLES), default=10
+            ),
+            "first_token_timeout_seconds": self._parse_float(
+                mapping.get(SETTING_FIRST_TOKEN_TIMEOUT_SECONDS), default=180.0
+            ),
+            "stream_idle_timeout_seconds": self._parse_float(
+                mapping.get(SETTING_STREAM_IDLE_TIMEOUT_SECONDS), default=180.0
             ),
             "model_list_compat_mode_enabled": self._parse_bool(
                 mapping.get(SETTING_MODEL_LIST_COMPAT_MODE_ENABLED), default=False

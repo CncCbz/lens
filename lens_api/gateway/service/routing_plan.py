@@ -356,14 +356,17 @@ def _elapsed_ms(started_at: float) -> int:
 async def _deadline_scope(
     deadline: _RequestDeadline,
 ) -> AsyncIterator[None]:
-    remaining = deadline.remaining_seconds()
+    remaining = deadline.first_token_remaining_seconds()
     if remaining is None:
         yield
         return
     if remaining <= 0:
-        raise TimeoutError(deadline.message())
-    async with asyncio.timeout(remaining):
-        yield
+        raise TimeoutError(deadline.timeout_message(kind="first_token"))
+    try:
+        async with asyncio.timeout(remaining):
+            yield
+    except TimeoutError:
+        raise TimeoutError(deadline.timeout_message(kind="first_token")) from None
 
 
 def _request_body_too_large_message(size: int, limit: int) -> str | None:

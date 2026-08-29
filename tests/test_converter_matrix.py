@@ -215,6 +215,71 @@ def test_chat_to_anthropic_fragmented_tool_call_is_one_block() -> None:
     assert "".join(d["delta"]["partial_json"] for d in deltas) == '{"q":"beijing"}'
 
 
+def test_chat_to_anthropic_reused_tool_call_index_is_two_blocks() -> None:
+    raw = TrackedAsyncBytes(
+        [
+            _sse(
+                {
+                    "choices": [
+                        {
+                            "delta": {
+                                "tool_calls": [
+                                    {
+                                        "index": 0,
+                                        "id": "call_1",
+                                        "type": "function",
+                                        "function": {
+                                            "name": "weather",
+                                            "arguments": '{"q":"a"}',
+                                        },
+                                    }
+                                ]
+                            },
+                            "finish_reason": None,
+                        }
+                    ]
+                }
+            ),
+            _sse(
+                {
+                    "choices": [
+                        {
+                            "delta": {
+                                "tool_calls": [
+                                    {
+                                        "index": 0,
+                                        "id": "call_2",
+                                        "type": "function",
+                                        "function": {
+                                            "name": "time",
+                                            "arguments": '{"q":"b"}',
+                                        },
+                                    }
+                                ]
+                            },
+                            "finish_reason": None,
+                        }
+                    ]
+                }
+            ),
+            _sse({"choices": [{"delta": {}, "finish_reason": "tool_calls"}]}),
+            b"data: [DONE]\n\n",
+        ]
+    )
+    output = asyncio.run(_collect(chat_stream_to_anthropic_stream(raw, "m")))
+    payloads = _json_payloads(output)
+    starts = [p for p in payloads if p["type"] == "content_block_start"]
+    tool_blocks = [p for p in starts if p["content_block"]["type"] == "tool_use"]
+    assert [b["content_block"]["id"] for b in tool_blocks] == ["call_1", "call_2"]
+    deltas = [
+        p
+        for p in payloads
+        if p["type"] == "content_block_delta"
+        and p["delta"].get("type") == "input_json_delta"
+    ]
+    assert [d["delta"]["partial_json"] for d in deltas] == ['{"q":"a"}', '{"q":"b"}']
+
+
 def test_chat_to_anthropic_text_and_tool_block_indexes_stay_distinct() -> None:
     raw = TrackedAsyncBytes(
         [
@@ -554,6 +619,67 @@ def test_chat_to_responses_fragmented_tool_arguments() -> None:
     assert len(calls) == 1
     assert calls[0]["arguments"] == '{"a":1}'
     assert calls[0]["name"] == "f"
+
+
+def test_chat_to_responses_reused_tool_call_index_is_two_calls() -> None:
+    raw = TrackedAsyncBytes(
+        [
+            _sse(
+                {
+                    "choices": [
+                        {
+                            "delta": {
+                                "tool_calls": [
+                                    {
+                                        "index": 0,
+                                        "id": "call_1",
+                                        "type": "function",
+                                        "function": {
+                                            "name": "f",
+                                            "arguments": '{"a":1}',
+                                        },
+                                    }
+                                ]
+                            },
+                            "finish_reason": None,
+                        }
+                    ]
+                }
+            ),
+            _sse(
+                {
+                    "choices": [
+                        {
+                            "delta": {
+                                "tool_calls": [
+                                    {
+                                        "index": 0,
+                                        "id": "call_2",
+                                        "type": "function",
+                                        "function": {
+                                            "name": "g",
+                                            "arguments": '{"b":2}',
+                                        },
+                                    }
+                                ]
+                            },
+                            "finish_reason": None,
+                        }
+                    ]
+                }
+            ),
+            _sse({"choices": [{"delta": {}, "finish_reason": "tool_calls"}]}),
+            b"data: [DONE]\n\n",
+        ]
+    )
+    output = asyncio.run(_collect(chat_stream_to_responses_stream(raw, "m")))
+    payloads = _json_payloads(output)
+    completed = [p for p in payloads if p["type"] == "response.completed"][0]
+    calls = [i for i in completed["response"]["output"] if i["type"] == "function_call"]
+    assert [(c["call_id"], c["name"], c["arguments"]) for c in calls] == [
+        ("call_1", "f", '{"a":1}'),
+        ("call_2", "g", '{"b":2}'),
+    ]
 
 
 def test_chat_to_responses_invalid_tool_json_raises() -> None:

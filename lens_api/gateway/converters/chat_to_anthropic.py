@@ -3,6 +3,7 @@ import time
 import uuid
 from typing import Any, AsyncIterator
 
+from ._chat_stream import ChatToolCalls, chat_choice_index
 from ._shared import (
     FINISH_REASON_CHAT_TO_ANTHROPIC,
     _anthropic_budget_to_effort,
@@ -306,8 +307,7 @@ async def chat_stream_to_anthropic_stream(
     output_tokens = 0
     text_block_index: int | None = None
     thinking_index: int | None = None
-    tool_index: dict[int, int] = {}
-    tool_args: dict[int, str] = {}
+    tool_calls_state = ChatToolCalls()
     next_block_index = 0
     finish_reason: str | None = None
 
@@ -389,50 +389,81 @@ async def chat_stream_to_anthropic_stream(
 
             if tc_deltas:
                 for tc in tc_deltas:
-                    call_id = tc.get("id") or ""
-                    tc_idx = _coerce_index(tc.get("index"))
-                    if tc_idx is None:
-                        tc_idx = len(tool_index)
-                    if tc_idx not in tool_index:
-                        func = tc.get("function", {})
-                        tool_index[tc_idx] = next_block_index
-                        next_block_index += 1
-                        yield format_sse_event(
-                            "content_block_start",
-                            {
-                                "type": "content_block_start",
-                                "index": tool_index[tc_idx],
-                                "content_block": {
-                                    "type": "tool_use",
-                                    "id": call_id or f"toolu_{uuid.uuid4().hex[:24]}",
-                                    "name": func.get("name", ""),
-                                    "input": {},
+                    if not isinstance(tc, dict):
+                        continue
+                    for tool_call in tool_calls_state.update_many(
+                        tc, choice_index=chat_choice_index(choice)
+                    ):
+                        if tool_call.target_index is None:
+                            tool_call.target_index = next_block_index
+                            next_block_index += 1
+                        if not tool_call.announced:
+                            yield format_sse_event(
+                                "content_block_start",
+                                {
+                                    "type": "content_block_start",
+                                    "index": tool_call.target_index,
+                                    "content_block": {
+                                        "type": "tool_use",
+                                        "id": tool_call.call_id
+                                        or f"toolu_{uuid.uuid4().hex[:24]}",
+                                        "name": tool_call.name,
+                                        "input": {},
+                                    },
                                 },
-                            },
-                        )
-                    args_delta = (tc.get("function") or {}).get("arguments", "")
-                    if args_delta:
-                        tool_args[tc_idx] = tool_args.get(tc_idx, "") + args_delta
-                        yield format_sse_event(
-                            "content_block_delta",
-                            {
-                                "type": "content_block_delta",
-                                "index": tool_index[tc_idx],
-                                "delta": {
-                                    "type": "input_json_delta",
-                                    "partial_json": args_delta,
+                            )
+                            tool_call.announced = True
+                        arguments_delta = tool_call.take_argument_delta()
+                        if arguments_delta:
+                            yield format_sse_event(
+                                "content_block_delta",
+                                {
+                                    "type": "content_block_delta",
+                                    "index": tool_call.target_index,
+                                    "delta": {
+                                        "type": "input_json_delta",
+                                        "partial_json": arguments_delta,
+                                    },
                                 },
-                            },
-                        )
+                            )
 
-    # Fail visibly instead of terminating a message whose tool arguments do
-    # not form valid JSON (deltas were already streamed; a client would only
-    # receive a broken tool otherwise).
-    for block_idx, args in tool_args.items():
-        if not args.strip():
+    for tool_call in tool_calls_state:
+        if not tool_call.announced:
+            yield format_sse_event(
+                "content_block_start",
+                {
+                    "type": "content_block_start",
+                    "index": (
+                        tool_call.target_index
+                        if tool_call.target_index is not None
+                        else 0
+                    ),
+                    "content_block": {
+                        "type": "tool_use",
+                        "id": tool_call.call_id or f"toolu_{uuid.uuid4().hex[:24]}",
+                        "name": tool_call.name,
+                        "input": {},
+                    },
+                },
+            )
+            tool_call.announced = True
+        leftover = tool_call.take_argument_delta()
+        if leftover:
+            yield format_sse_event(
+                "content_block_delta",
+                {
+                    "type": "content_block_delta",
+                    "index": tool_call.target_index or 0,
+                    "delta": {
+                        "type": "input_json_delta",
+                        "partial_json": leftover,
+                    },
+                },
+            )
+        if not tool_call.arguments.strip():
             continue
         try:
-            json.loads(args)
+            json.loads(tool_call.arguments)
         except json.JSONDecodeError as exc:
             raise ValueError("Invalid tool call arguments JSON") from exc
 

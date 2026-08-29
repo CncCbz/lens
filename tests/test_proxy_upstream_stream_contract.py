@@ -44,7 +44,11 @@ def _channel(protocol: ProtocolKind) -> ChannelConfig:
 
 
 def _deadline() -> _RequestDeadline:
-    return _RequestDeadline(started_at=time.time(), timeout_seconds=30)
+    return _RequestDeadline(
+        started_at=time.time(),
+        first_token_timeout_seconds=30,
+        stream_idle_timeout_seconds=30,
+    )
 
 
 def _chat_sse_body(text: str = "hi", *, complete: bool = True) -> bytes:

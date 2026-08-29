@@ -4,6 +4,7 @@ import time
 import uuid
 from typing import Any, AsyncIterator
 
+from ._chat_stream import ChatToolCalls, chat_choice_index
 from ._shared import (
     FINISH_REASON_CHAT_TO_RESPONSES,
     _clean_thinking_effort,
@@ -344,7 +345,7 @@ async def chat_stream_to_responses_stream(
     text_id = f"msg_{uuid.uuid4().hex[:24]}"
     text_content = ""
     tool_items: dict[int, dict[str, Any]] = {}  # oi -> {item, args}
-    tool_idx_to_oi: dict[int, int] = {}
+    tool_calls_state = ChatToolCalls()
 
     yield format_sse_event(
         "response.created",
@@ -463,44 +464,43 @@ async def chat_stream_to_responses_stream(
                 for tc in tc_deltas:
                     if not isinstance(tc, dict):
                         continue
-                    tc_idx = _coerce_index(tc.get("index"))
-                    if tc_idx is None:
-                        tc_idx = len(tool_idx_to_oi)
-                    if tc_idx not in tool_idx_to_oi:
-                        oi = next_output_index
-                        next_output_index += 1
-                        tool_idx_to_oi[tc_idx] = oi
-                        func = tc.get("function", {})
-                        call_id = tc.get("id") or f"call_{uuid.uuid4().hex[:24]}"
-                        item = {
-                            "id": f"fc_{uuid.uuid4().hex[:24]}",
-                            "type": "function_call",
-                            "status": "in_progress",
-                            "name": func.get("name", ""),
-                            "arguments": "",
-                            "call_id": call_id,
-                        }
-                        tool_items[oi] = {"item": item, "args": ""}
-                        yield format_sse_event(
-                            "response.output_item.added",
-                            {
-                                "type": "response.output_item.added",
-                                "output_index": oi,
-                                "item": item,
-                            },
-                        )
-                    oi = tool_idx_to_oi[tc_idx]
-                    args_delta = (tc.get("function") or {}).get("arguments", "")
-                    if args_delta:
-                        tool_items[oi]["args"] += args_delta
-                        yield format_sse_event(
-                            "response.function_call_arguments.delta",
-                            {
-                                "type": "response.function_call_arguments.delta",
-                                "output_index": oi,
-                                "delta": args_delta,
-                            },
-                        )
+                    for tool_call in tool_calls_state.update_many(
+                        tc, choice_index=chat_choice_index(choice)
+                    ):
+                        if tool_call.target_index is None:
+                            oi = next_output_index
+                            next_output_index += 1
+                            tool_call.target_index = oi
+                            item = {
+                                "id": f"fc_{uuid.uuid4().hex[:24]}",
+                                "type": "function_call",
+                                "status": "in_progress",
+                                "name": tool_call.name,
+                                "arguments": "",
+                                "call_id": tool_call.call_id
+                                or f"call_{uuid.uuid4().hex[:24]}",
+                            }
+                            tool_items[oi] = {"item": item, "args": ""}
+                            yield format_sse_event(
+                                "response.output_item.added",
+                                {
+                                    "type": "response.output_item.added",
+                                    "output_index": oi,
+                                    "item": item,
+                                },
+                            )
+                        oi = tool_call.target_index
+                        arguments_delta = tool_call.take_argument_delta()
+                        if arguments_delta:
+                            tool_items[oi]["args"] += arguments_delta
+                            yield format_sse_event(
+                                "response.function_call_arguments.delta",
+                                {
+                                    "type": "response.function_call_arguments.delta",
+                                    "output_index": oi,
+                                    "delta": arguments_delta,
+                                },
+                            )
 
     # Finalize completed output items and emit their done events in output index
     # order so a Responses client can reconstruct the full response.

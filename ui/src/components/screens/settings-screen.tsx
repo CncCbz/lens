@@ -66,6 +66,8 @@ const ROUTER_CIRCUIT_FAILURE_RATE_THRESHOLD =
 const HEALTH_WINDOW_SECONDS = "health_window_seconds";
 const HEALTH_PENALTY_WEIGHT = "health_penalty_weight";
 const HEALTH_MIN_SAMPLES = "health_min_samples";
+const FIRST_TOKEN_TIMEOUT_SECONDS = "first_token_timeout_seconds";
+const STREAM_IDLE_TIMEOUT_SECONDS = "stream_idle_timeout_seconds";
 const RELAY_LOG_BODY_ENABLED = "relay_log_body_enabled";
 const RELAY_LOG_DEBUG_MODE = "relay_log_debug_mode";
 const MODEL_LIST_COMPAT_MODE_ENABLED = "model_list_compat_mode_enabled";
@@ -93,6 +95,8 @@ type DraftState = {
   healthWindowSeconds: string;
   healthPenaltyWeight: string;
   healthMinSamples: string;
+  firstTokenTimeoutSeconds: string;
+  streamIdleTimeoutSeconds: string;
   relayLogBodyEnabled: boolean;
   relayLogDebugMode: boolean;
   modelListCompatModeEnabled: boolean;
@@ -114,6 +118,8 @@ const EMPTY_DRAFT: DraftState = {
   healthWindowSeconds: "300",
   healthPenaltyWeight: "0.5",
   healthMinSamples: "10",
+  firstTokenTimeoutSeconds: "180",
+  streamIdleTimeoutSeconds: "180",
   relayLogBodyEnabled: false,
   relayLogDebugMode: false,
   modelListCompatModeEnabled: false,
@@ -140,6 +146,8 @@ function parseSettings(items: SettingItem[] | undefined) {
     healthWindowSeconds: mapping.get(HEALTH_WINDOW_SECONDS) ?? "300",
     healthPenaltyWeight: mapping.get(HEALTH_PENALTY_WEIGHT) ?? "0.5",
     healthMinSamples: mapping.get(HEALTH_MIN_SAMPLES) ?? "10",
+    firstTokenTimeoutSeconds: mapping.get(FIRST_TOKEN_TIMEOUT_SECONDS) ?? "180",
+    streamIdleTimeoutSeconds: mapping.get(STREAM_IDLE_TIMEOUT_SECONDS) ?? "180",
     relayLogBodyEnabled:
       (mapping.get(RELAY_LOG_BODY_ENABLED) ?? "false").trim().toLowerCase() ===
       "true",
@@ -350,6 +358,14 @@ export function SettingsScreen() {
         {
           key: HEALTH_MIN_SAMPLES,
           value: draft.healthMinSamples.trim() || "10",
+        },
+        {
+          key: FIRST_TOKEN_TIMEOUT_SECONDS,
+          value: draft.firstTokenTimeoutSeconds.trim() || "180",
+        },
+        {
+          key: STREAM_IDLE_TIMEOUT_SECONDS,
+          value: draft.streamIdleTimeoutSeconds.trim() || "180",
         },
         {
           key: RELAY_LOG_BODY_ENABLED,
@@ -719,6 +735,58 @@ export function SettingsScreen() {
               <SettingCard title={titleForLocale(locale, "路由", "Routing")}>
                 <div className="space-y-6">
                   <div>
+                    <div className="mb-2 text-sm font-medium">
+                      {titleForLocale(locale, "超时", "Timeouts")}
+                    </div>
+                    <FieldGroup className="grid gap-4 sm:grid-cols-2">
+                      <Field>
+                        <FieldLabel>
+                          {titleForLocale(
+                            locale,
+                            "首字超时（秒）",
+                            "First token (s)",
+                          )}
+                        </FieldLabel>
+                        <Input
+                          type="number"
+                          min="0"
+                          max="86400"
+                          step="1"
+                          value={draft.firstTokenTimeoutSeconds}
+                          onChange={(event) =>
+                            setDraftValue(
+                              "firstTokenTimeoutSeconds",
+                              event.target.value,
+                            )
+                          }
+                        />
+                      </Field>
+                      <Field>
+                        <FieldLabel>
+                          {titleForLocale(
+                            locale,
+                            "空闲超时（秒）",
+                            "Stream idle (s)",
+                          )}
+                        </FieldLabel>
+                        <Input
+                          type="number"
+                          min="0"
+                          max="86400"
+                          step="1"
+                          value={draft.streamIdleTimeoutSeconds}
+                          onChange={(event) =>
+                            setDraftValue(
+                              "streamIdleTimeoutSeconds",
+                              event.target.value,
+                            )
+                          }
+                        />
+                      </Field>
+                    </FieldGroup>
+                  </div>
+
+                  <div className="border-t pt-6">
                     <div className="mb-2 text-sm font-medium">
                       {titleForLocale(locale, "健康评分", "Health scoring")}
                     </div>

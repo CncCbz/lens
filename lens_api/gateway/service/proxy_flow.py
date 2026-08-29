@@ -80,10 +80,14 @@ async def _proxy_protocol(
 ) -> Response:
     started_at = perf_counter()
     request_id = uuid.uuid4().hex
-    deadline = _RequestDeadline(started_at, settings.request_timeout_seconds)
     channels, runtime = await asyncio.gather(
         app_state.channel_store.list(),
         app_state.settings_repo.get_runtime_settings(),
+    )
+    deadline = _RequestDeadline(
+        started_at,
+        float(runtime["first_token_timeout_seconds"]),
+        float(runtime["stream_idle_timeout_seconds"]),
     )
     _apply_router_runtime_settings(runtime)
     log_body_enabled = bool(runtime["relay_log_body_enabled"])

@@ -41,6 +41,9 @@ from .runtime_context import (
     SETTING_CIRCUIT_BREAKER_COOLDOWN,
     SETTING_CIRCUIT_BREAKER_MAX_COOLDOWN,
     SETTING_CIRCUIT_BREAKER_THRESHOLD,
+    SETTING_FIRST_TOKEN_TIMEOUT_SECONDS,
+    SETTING_STREAM_IDLE_TIMEOUT_SECONDS,
+    GATEWAY_TIMEOUT_SECONDS_MAX,
     SETTING_MULTIMODAL_AUDIO_GROUP_ID,
     SETTING_MULTIMODAL_IMAGE_GROUP_ID,
     SETTING_MULTIMODAL_RELAY_ENABLED,
@@ -557,9 +560,15 @@ def _parse_integer_setting(key: str, value: str) -> int:
 
 def _parse_float_setting(key: str, value: str) -> float:
     try:
-        return float(value)
+        parsed = float(value)
     except ValueError as exc:
         raise ValueError(f"Invalid numeric setting: {key}") from exc
+    if key in {
+        SETTING_FIRST_TOKEN_TIMEOUT_SECONDS,
+        SETTING_STREAM_IDLE_TIMEOUT_SECONDS,
+    } and (parsed < 0 or parsed > GATEWAY_TIMEOUT_SECONDS_MAX):
+        raise ValueError(f"Invalid numeric setting: {key}")
+    return parsed
 
 
 def _parse_boolean_setting(key: str, value: str) -> bool:

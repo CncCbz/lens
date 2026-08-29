@@ -34,6 +34,7 @@ from .runtime_context import (
     resolve_upstream_proxy_url,
     settings,
 )
+from ..converters._chat_stream import normalize_chat_stream
 from ..router import (
     classify_error,
     decide_route_error,
@@ -247,6 +248,8 @@ async def _build_stream_result(
         capture,
         stream_started_at,
     )
+    if channel.protocol == ProtocolKind.OPENAI_CHAT:
+        raw_iter = normalize_chat_stream(raw_iter)
 
     if client_protocol is not None and needs_conversion(
         client_protocol, channel.protocol
@@ -610,9 +613,14 @@ async def _call_channel(
 
     try:
         stream_started_at = perf_counter()
+        send_timeout = httpx.Timeout(None, connect=settings.connect_timeout_seconds)
         async with _deadline_scope(deadline):
             response = await _send_upstream(
-                client, upstream, stream=is_stream_request, body_bytes=body_bytes
+                client,
+                upstream,
+                stream=is_stream_request,
+                body_bytes=body_bytes,
+                timeout=send_timeout,
             )
         response.raise_for_status()
 
@@ -713,7 +721,7 @@ async def _call_channel(
     except TimeoutError as exc:
         raise UpstreamRequestError(
             status_code=504,
-            detail=deadline.message(),
+            detail=str(exc).strip() or deadline.message(),
             router_status_code=None,
             error_type="gateway_timeout",
             decision=decide_route_error(None, timeout=True),
@@ -725,7 +733,12 @@ async def _call_channel(
 
 
 async def _send_upstream(
-    client: httpx.AsyncClient, upstream: Any, *, stream: bool, body_bytes: bytes
+    client: httpx.AsyncClient,
+    upstream: Any,
+    *,
+    stream: bool,
+    body_bytes: bytes,
+    timeout: httpx.Timeout | None = None,
 ) -> httpx.Response:
     if stream:
         request = client.build_request(
@@ -733,6 +746,7 @@ async def _send_upstream(
             upstream.url,
             headers=upstream.headers,
             content=body_bytes,
+            timeout=timeout,
         )
         return await client.send(request, stream=True)
     return await client.request(
@@ -740,4 +754,5 @@ async def _send_upstream(
         upstream.url,
         headers=upstream.headers,
         content=body_bytes,
+        timeout=timeout,
     )

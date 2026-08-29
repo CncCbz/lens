@@ -582,7 +582,11 @@ async def _stream_upstream_iterator(
         iterator = response.aiter_bytes().__aiter__()
         while True:
             try:
-                chunk = await _next_stream_chunk(iterator, deadline)
+                chunk = await _next_stream_chunk(
+                    iterator,
+                    deadline,
+                    has_seen_first_chunk=capture.saw_first_chunk,
+                )
             except StopAsyncIteration:
                 break
             if not chunk:
@@ -599,9 +603,9 @@ async def _stream_upstream_iterator(
         capture.error_status_code = 499
         await _cancel_stream_capture(capture, "client disconnected")
         raise
-    except TimeoutError:
+    except TimeoutError as exc:
         capture.error_status_code = 504
-        capture.errors.append(deadline.message())
+        capture.errors.append(str(exc).strip() or deadline.message())
     except httpx.HTTPError as exc:
         capture.error_status_code = 502
         capture.errors.append(f"stream failed: {type(exc).__name__}: {exc}")
@@ -610,15 +614,24 @@ async def _stream_upstream_iterator(
 
 
 async def _next_stream_chunk(
-    iterator: AsyncIterator[bytes], deadline: _RequestDeadline
+    iterator: AsyncIterator[bytes],
+    deadline: _RequestDeadline,
+    *,
+    has_seen_first_chunk: bool,
 ) -> bytes:
-    remaining = deadline.remaining_seconds()
+    remaining = deadline.stream_chunk_wait_seconds(
+        has_seen_first_chunk=has_seen_first_chunk
+    )
+    kind = "stream_idle" if has_seen_first_chunk else "first_token"
     if remaining is None:
         return await iterator.__anext__()
     if remaining <= 0:
-        raise TimeoutError(deadline.message())
-    async with asyncio.timeout(remaining):
-        return await iterator.__anext__()
+        raise TimeoutError(deadline.timeout_message(kind=kind))
+    try:
+        async with asyncio.timeout(remaining):
+            return await iterator.__anext__()
+    except TimeoutError:
+        raise TimeoutError(deadline.timeout_message(kind=kind)) from None
 
 
 async def _capture_converted_stream_iterator(

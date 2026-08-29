@@ -3,6 +3,7 @@ import time
 import uuid
 from typing import Any, AsyncIterator
 
+from ._chat_stream import ChatToolCalls, chat_choice_index
 from ._shared import (
     _effort_to_gemini_budget,
     _extract_chat_reasoning_effort,
@@ -227,6 +228,7 @@ async def chat_stream_to_gemini_stream(
     raw_iterator: AsyncIterator[bytes], original_model: str
 ) -> AsyncIterator[bytes]:
     finished = False
+    tool_calls_state = ChatToolCalls()
     async for payload in _parse_sse_stream(raw_iterator):
         for choice in payload.get("choices", []):
             delta = choice.get("delta") if isinstance(choice.get("delta"), dict) else {}
@@ -236,7 +238,15 @@ async def chat_stream_to_gemini_stream(
                 parts.append({"text": text})
             tool_calls = delta.get("tool_calls")
             if isinstance(tool_calls, list):
-                parts.extend(_chat_tool_calls_to_gemini_parts(tool_calls))
+                normalized: list[dict[str, Any]] = []
+                for tc in tool_calls:
+                    if isinstance(tc, dict):
+                        normalized.extend(
+                            tool_calls_state.normalize_tool_call(
+                                tc, choice_index=chat_choice_index(choice)
+                            )
+                        )
+                parts.extend(_chat_tool_calls_to_gemini_parts(normalized))
             finish_reason = choice.get("finish_reason")
             usage = (
                 payload.get("usage") if isinstance(payload.get("usage"), dict) else {}

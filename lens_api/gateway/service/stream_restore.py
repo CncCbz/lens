@@ -9,6 +9,7 @@ from .runtime_context import (
     deepcopy,
     json,
 )
+from ..converters._chat_stream import ChatToolCalls
 from .payload_serialization import _dump_log_json
 from .usage import _parse_ndjson_payloads, _parse_sse_payloads
 
@@ -76,10 +77,12 @@ def _restore_openai_chat_stream(
     finish_reason_seen = False
     choices: dict[int, dict[str, Any]] = {}
     tool_calls: dict[int, dict[int, dict[str, Any]]] = {}
+    normalizer = ChatToolCalls()
 
     for payload in payloads:
         if not isinstance(payload, dict):
             continue
+        payload = normalizer.normalize_payload(payload)
         model = payload.get("model") or model
         resp_id = payload.get("id") or resp_id
         created = payload.get("created") or created
