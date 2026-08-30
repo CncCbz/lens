@@ -989,6 +989,9 @@ export function GroupsScreen() {
             proxy_mode: protocolConfig.proxy_mode,
             channel_proxy: protocolConfig.channel_proxy,
             concurrency_limit: protocolConfig.concurrency_limit,
+            rpm_limit: protocolConfig.rpm_limit,
+            token_limit: protocolConfig.token_limit,
+            cost_limit_usd: protocolConfig.cost_limit_usd,
             param_override: protocolConfig.param_override,
             match_regex: protocolConfig.match_regex,
             router_error_policy_config:

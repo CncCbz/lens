@@ -67,6 +67,22 @@ from .stream_logging import (
 )
 
 _RETRY_AFTER_WAIT_CAP_SECONDS = 10.0
+_CAPACITY_ERRORS = {
+    "concurrency": (
+        "concurrency_limit",
+        "All matching channels are at concurrency limit",
+    ),
+    "rpm": ("rpm_limit", "All matching channels are at RPM limit"),
+    "usage": ("usage_limit", "All matching channels are at usage limit"),
+}
+
+
+def _capacity_error(reasons: set[str]) -> tuple[str, str]:
+    if len(reasons) == 1:
+        key = next(iter(reasons))
+        if key in _CAPACITY_ERRORS:
+            return _CAPACITY_ERRORS[key]
+    return "channel_limit", "All matching channels are at their limit"
 
 
 async def _proxy_protocol(
@@ -251,7 +267,7 @@ async def _proxy_protocol(
         failure_status_codes: list[int | None] = []
         candidates = [selection.primary, *selection.fallbacks]
         cooled_only = True
-        capacity_rejected = False
+        capacity_reasons: set[str] = set()
         unavailable_rejected = False
         for target in candidates:
             if deadline.expired():
@@ -281,10 +297,14 @@ async def _proxy_protocol(
             target_attempts = 0
             same_target_budget = 1
             while target_attempts < same_target_budget:
-                release_target, at_capacity = app_state.router.acquire_target(target)
+                release_target, capacity_reason = app_state.router.acquire_target(
+                    target
+                )
                 if release_target is None:
-                    capacity_rejected = capacity_rejected or at_capacity
-                    unavailable_rejected = unavailable_rejected or not at_capacity
+                    if capacity_reason:
+                        capacity_reasons.add(capacity_reason)
+                    else:
+                        unavailable_rejected = True
                     break
                 cooled_only = False
                 try:
@@ -345,10 +365,9 @@ async def _proxy_protocol(
 
         if cooled_only and not errors:
             headers = _response_headers_for_log(log_ctx)
-            if capacity_rejected and not unavailable_rejected:
-                error_type = "concurrency_limit"
-                message = "All matching channels are at concurrency limit"
-            elif unavailable_rejected and not capacity_rejected:
+            if capacity_reasons and not unavailable_rejected:
+                error_type, message = _capacity_error(capacity_reasons)
+            elif unavailable_rejected and not capacity_reasons:
                 error_type = "routing_error"
                 message = "All matching channels are in cooldown"
                 recovery = app_state.router.min_recovery_seconds(candidates)

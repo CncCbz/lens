@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import defaultdict, deque
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from email.utils import parsedate_to_datetime
@@ -27,6 +27,8 @@ from ...models import (
     RoutingStrategy,
 )
 from ..converters import can_reach_protocol
+
+_RPM_WINDOW_SECONDS = 60.0
 
 
 class ErrorCategory(Enum):
@@ -541,6 +543,7 @@ class GatewayRouter:
         self._target_windows: dict[tuple[str, str], _HealthWindow] = {}
         self._swrr_nodes: dict[tuple[str, str, str], _SWRRNode] = {}
         self._channel_inflight: dict[str, int] = {}
+        self._channel_rpm: dict[str, deque[float]] = {}
         self._health_window_seconds = health_window_seconds
         self._health_penalty_weight = health_penalty_weight
         self._health_min_samples = health_min_samples
@@ -828,8 +831,8 @@ class GatewayRouter:
 
     def acquire_target(
         self, target: RouteTarget
-    ) -> tuple[Callable[[], None] | None, bool]:
-        """Reserve a target and report whether a rejection was capacity-based."""
+    ) -> tuple[Callable[[], None] | None, str | None]:
+        """Reserve a target. Second value is a capacity reason when rejected."""
         with self._lock:
             concurrency_key = protocol_config_id_from_runtime_channel_id(
                 target.channel.id
@@ -839,10 +842,20 @@ class GatewayRouter:
                 target.channel.concurrency_limit > 0
                 and current >= target.channel.concurrency_limit
             ):
-                return None, True
+                return None, "concurrency"
+            if self._rpm_limit_reached_locked(
+                concurrency_key, target.channel.rpm_limit
+            ):
+                return None, "rpm"
+            if self._usage_limit_reached(target.channel):
+                return None, "usage"
             if not self._try_acquire_target_locked(target):
-                return None, False
+                return None, None
             self._channel_inflight[concurrency_key] = current + 1
+            if target.channel.rpm_limit > 0:
+                self._channel_rpm.setdefault(concurrency_key, deque()).append(
+                    monotonic()
+                )
 
         released = False
 
@@ -858,7 +871,30 @@ class GatewayRouter:
                 else:
                     self._channel_inflight.pop(concurrency_key, None)
 
-        return release, False
+        return release, None
+
+    def _rpm_limit_reached_locked(self, key: str, rpm_limit: int) -> bool:
+        window = self._channel_rpm.get(key)
+        if window is None:
+            return False
+        cutoff = monotonic() - _RPM_WINDOW_SECONDS
+        while window and window[0] <= cutoff:
+            window.popleft()
+        if not window:
+            self._channel_rpm.pop(key, None)
+            return False
+        return rpm_limit > 0 and len(window) >= rpm_limit
+
+    @staticmethod
+    def _usage_limit_reached(channel: ChannelConfig) -> bool:
+        if channel.token_limit > 0 and channel.spent_tokens >= channel.token_limit:
+            return True
+        if (
+            channel.cost_limit_usd > 0
+            and channel.spent_cost_usd >= channel.cost_limit_usd
+        ):
+            return True
+        return False
 
     def _try_acquire_target_locked(self, target: RouteTarget) -> bool:
         now = monotonic()

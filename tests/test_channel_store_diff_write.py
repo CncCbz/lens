@@ -14,7 +14,10 @@ from lens_api.models import (
     SiteUpdate,
 )
 from lens_api.persistence.channel_store.store import ChannelStore
-from lens_api.persistence.entities import SiteDiscoveredModelEntity
+from lens_api.persistence.entities import (
+    SiteDiscoveredModelEntity,
+    SiteProtocolConfigEntity,
+)
 from sqlalchemy import select
 
 
@@ -75,6 +78,14 @@ async def test_update_site_preserves_model_ids(postgres_url: str) -> None:
     )
     assert created.protocols[0].models[0].id == "model-1"
 
+    session_factory = create_session_factory(engine)
+    async with session_factory() as session:
+        entity = await session.get(SiteProtocolConfigEntity, "pcfg-1")
+        assert entity is not None
+        entity.spent_tokens = 42
+        entity.spent_cost_usd = 1.25
+        await session.commit()
+
     updated = await store.update_site(
         created.id,
         SiteUpdate(
@@ -124,6 +135,8 @@ async def test_update_site_preserves_model_ids(postgres_url: str) -> None:
     )
     assert updated.protocols[0].models[0].id == "model-1"
     assert updated.protocols[0].headers == {"x": "1"}
+    assert updated.protocols[0].spent_tokens == 42
+    assert updated.protocols[0].spent_cost_usd == 1.25
 
     async with create_session_factory(engine)() as session:
         rows = (

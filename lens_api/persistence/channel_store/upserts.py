@@ -267,6 +267,9 @@ class ChannelUpsertsMixin:
             entity.proxy_mode = protocol_config.proxy_mode.value
             entity.channel_proxy = protocol_config.channel_proxy
             entity.concurrency_limit = protocol_config.concurrency_limit
+            entity.rpm_limit = protocol_config.rpm_limit
+            entity.token_limit = protocol_config.token_limit
+            entity.cost_limit_usd = protocol_config.cost_limit_usd
             entity.param_override = protocol_config.param_override
             entity.match_regex = protocol_config.match_regex
             entity.router_error_policy_config = (

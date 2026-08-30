@@ -60,6 +60,9 @@ export type FormProtocolConfig = {
   proxy_mode: ChannelProxyMode;
   channel_proxy: string;
   concurrency_limit: number;
+  rpm_limit: number;
+  token_limit: number;
+  cost_limit_usd: number;
   param_override: string;
   match_regex: string;
   router_error_policy_config: string;
@@ -195,6 +198,9 @@ export const emptyProtocolConfig = (
   proxy_mode: "inherit",
   channel_proxy: "",
   concurrency_limit: 0,
+  rpm_limit: 0,
+  token_limit: 0,
+  cost_limit_usd: 0,
   param_override: "",
   match_regex: "",
   router_error_policy_config: "",
@@ -244,6 +250,9 @@ export const batchImportTemplate: SiteBatchImportPayload = {
           proxy_mode: "inherit",
           channel_proxy: "",
           concurrency_limit: 0,
+          rpm_limit: 0,
+          token_limit: 0,
+          cost_limit_usd: 0,
           param_override: "",
           match_regex: "",
           router_error_policy_config: "",
@@ -669,6 +678,9 @@ export function toForm(site: Site, locale: Locale = "zh-CN"): FormState {
           proxy_mode: protocolConfig.proxy_mode,
           channel_proxy: protocolConfig.channel_proxy,
           concurrency_limit: protocolConfig.concurrency_limit ?? 0,
+          rpm_limit: protocolConfig.rpm_limit ?? 0,
+          token_limit: protocolConfig.token_limit ?? 0,
+          cost_limit_usd: protocolConfig.cost_limit_usd ?? 0,
           param_override: protocolConfig.param_override,
           match_regex: safeText(protocolConfig.match_regex),
           router_error_policy_config: safeText(
@@ -779,6 +791,17 @@ export function toPayload(form: FormState): SitePayload {
             Math.max(Math.trunc(protocolConfig.concurrency_limit), 0),
             MAX_CHANNEL_CONCURRENCY,
           ),
+          rpm_limit: Math.min(
+            Math.max(Math.trunc(protocolConfig.rpm_limit), 0),
+            MAX_CHANNEL_CONCURRENCY,
+          ),
+          token_limit: Math.min(
+            Math.max(Math.trunc(protocolConfig.token_limit), 0),
+            MAX_CHANNEL_CONCURRENCY,
+          ),
+          cost_limit_usd: Number.isFinite(protocolConfig.cost_limit_usd)
+            ? Math.max(protocolConfig.cost_limit_usd, 0)
+            : 0,
           param_override: protocolConfig.param_override.trim(),
           match_regex: safeText(protocolConfig.match_regex).trim(),
           router_error_policy_config:

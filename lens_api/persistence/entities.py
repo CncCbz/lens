@@ -90,6 +90,11 @@ class SiteProtocolConfigEntity(Base):
     )
     channel_proxy: Mapped[str] = mapped_column(Text, nullable=False, default="")
     concurrency_limit: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    rpm_limit: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    token_limit: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    cost_limit_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    spent_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    spent_cost_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     param_override: Mapped[str] = mapped_column(Text, nullable=False, default="")
     match_regex: Mapped[str] = mapped_column(Text, nullable=False, default="")
     router_error_policy_config: Mapped[str] = mapped_column(

@@ -694,19 +694,73 @@ def test_protocol_channels_share_concurrency_limit() -> None:
         }
     )
 
-    release, at_capacity = router.acquire_target(RouteTarget(chat))
+    release, reason = router.acquire_target(RouteTarget(chat))
     assert release is not None
-    assert at_capacity is False
-    rejected, at_capacity = router.acquire_target(RouteTarget(responses))
+    assert reason is None
+    rejected, reason = router.acquire_target(RouteTarget(responses))
     assert rejected is None
-    assert at_capacity is True
+    assert reason == "concurrency"
 
     release()
     release()
-    next_release, at_capacity = router.acquire_target(RouteTarget(responses))
+    next_release, reason = router.acquire_target(RouteTarget(responses))
     assert next_release is not None
-    assert at_capacity is False
+    assert reason is None
     next_release()
+
+
+def test_protocol_channels_share_rpm_limit() -> None:
+    router = GatewayRouter()
+    chat = _router_channel("cfg_openai_chat", "shared").model_copy(
+        update={"rpm_limit": 1}
+    )
+    responses = chat.model_copy(
+        update={
+            "id": "cfg_openai_responses",
+            "protocol": ProtocolKind.OPENAI_RESPONSES,
+        }
+    )
+
+    release, reason = router.acquire_target(RouteTarget(chat))
+    assert release is not None
+    assert reason is None
+    rejected, reason = router.acquire_target(RouteTarget(responses))
+    assert rejected is None
+    assert reason == "rpm"
+    release()
+    still_rejected, reason = router.acquire_target(RouteTarget(responses))
+    assert still_rejected is None
+    assert reason == "rpm"
+
+
+def test_protocol_usage_limit_blocks_acquire() -> None:
+    router = GatewayRouter()
+    token_blocked = _router_channel("cfg_openai_chat", "shared").model_copy(
+        update={"token_limit": 10, "spent_tokens": 10}
+    )
+    rejected, reason = router.acquire_target(RouteTarget(token_blocked))
+    assert rejected is None
+    assert reason == "usage"
+
+    cost_blocked = _router_channel("cfg_openai_chat", "shared").model_copy(
+        update={"cost_limit_usd": 1.5, "spent_cost_usd": 1.5}
+    )
+    rejected, reason = router.acquire_target(RouteTarget(cost_blocked))
+    assert rejected is None
+    assert reason == "usage"
+
+    allowed = _router_channel("cfg_openai_chat", "shared").model_copy(
+        update={
+            "token_limit": 10,
+            "spent_tokens": 9,
+            "cost_limit_usd": 1.5,
+            "spent_cost_usd": 1.49,
+        }
+    )
+    release, reason = router.acquire_target(RouteTarget(allowed))
+    assert release is not None
+    assert reason is None
+    release()
 
 
 def test_stream_client_iterator_releases_concurrency() -> None:

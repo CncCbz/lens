@@ -684,6 +684,18 @@ export function ProtocolConfigItem({
 
 type AdvancedConfigTab = "limits" | "proxy" | "headers" | "body" | "errors";
 
+function parseIntLimit(raw: string): number {
+  const value = Number.parseInt(raw, 10);
+  return Number.isFinite(value)
+    ? Math.min(Math.max(value, 0), MAX_CHANNEL_CONCURRENCY)
+    : 0;
+}
+
+function parseCostLimit(raw: string): number {
+  const value = Number.parseFloat(raw);
+  return Number.isFinite(value) ? Math.max(value, 0) : 0;
+}
+
 function headersToJson(headers: HeaderItem[]): string {
   const object = Object.fromEntries(
     headers
@@ -849,27 +861,59 @@ export function AdvancedProtocolConfigDialog({
             </div>
 
             {tab === "limits" ? (
-              <Field>
-                <FieldLabel htmlFor="protocol-concurrency-limit">
-                  {locale === "zh-CN" ? "并发上限" : "Concurrency limit"}
-                </FieldLabel>
-                <Input
-                  id="protocol-concurrency-limit"
-                  type="number"
-                  min={0}
-                  max={MAX_CHANNEL_CONCURRENCY}
-                  step={1}
-                  value={protocolConfig.concurrency_limit}
-                  onChange={(event) => {
-                    const value = Number.parseInt(event.target.value, 10);
-                    onUpdateProtocolConfig(protocolConfigIndex, {
-                      concurrency_limit: Number.isFinite(value)
-                        ? Math.min(Math.max(value, 0), MAX_CHANNEL_CONCURRENCY)
-                        : 0,
-                    });
-                  }}
-                />
-              </Field>
+              <div className="grid gap-4 sm:grid-cols-2">
+                {(
+                  [
+                    {
+                      key: "concurrency_limit",
+                      id: "protocol-concurrency-limit",
+                      label:
+                        locale === "zh-CN" ? "并发上限" : "Concurrency limit",
+                      integer: true,
+                    },
+                    {
+                      key: "rpm_limit",
+                      id: "protocol-rpm-limit",
+                      label: locale === "zh-CN" ? "RPM 上限" : "RPM limit",
+                      integer: true,
+                    },
+                    {
+                      key: "token_limit",
+                      id: "protocol-token-limit",
+                      label: locale === "zh-CN" ? "Token 上限" : "Token limit",
+                      integer: true,
+                    },
+                    {
+                      key: "cost_limit_usd",
+                      id: "protocol-cost-limit",
+                      label:
+                        locale === "zh-CN"
+                          ? "费用上限 (USD)"
+                          : "Cost limit (USD)",
+                      integer: false,
+                    },
+                  ] as const
+                ).map((field) => (
+                  <Field key={field.key}>
+                    <FieldLabel htmlFor={field.id}>{field.label}</FieldLabel>
+                    <Input
+                      id={field.id}
+                      type="number"
+                      min={0}
+                      max={field.integer ? MAX_CHANNEL_CONCURRENCY : undefined}
+                      step={field.integer ? 1 : 0.0001}
+                      value={protocolConfig[field.key]}
+                      onChange={(event) => {
+                        onUpdateProtocolConfig(protocolConfigIndex, {
+                          [field.key]: field.integer
+                            ? parseIntLimit(event.target.value)
+                            : parseCostLimit(event.target.value),
+                        });
+                      }}
+                    />
+                  </Field>
+                ))}
+              </div>
             ) : null}
 
             {tab === "proxy" ? (

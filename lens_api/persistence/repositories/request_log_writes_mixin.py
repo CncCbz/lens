@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from sqlalchemy import case
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from ...core.auth import (
@@ -24,6 +25,7 @@ from ..shared import (
     RequestLogLifecycleStatus,
     SETTING_STATS_TIME_ZONE,
     SettingEntity,
+    SiteProtocolConfigEntity,
     UTC,
     datetime,
     delete,
@@ -559,6 +561,18 @@ class RequestLogWriteMixin:
                     total_cost_usd,
                 ),
             )
+            usage_tokens, usage_cost = self._protocol_usage_contribution(
+                entity.protocol_config_id,
+                lifecycle_value,
+                total_tokens,
+                total_cost_usd,
+            )
+            await self._adjust_protocol_usage(
+                session,
+                entity.protocol_config_id,
+                usage_tokens,
+                usage_cost,
+            )
             await session.commit()
             await session.refresh(entity)
             item = self._to_request_log(entity)
@@ -614,6 +628,15 @@ class RequestLogWriteMixin:
                 previous_gateway_key_id,
                 entity.lifecycle_status,
                 entity.total_cost_usd,
+            )
+            previous_protocol_config_id = entity.protocol_config_id
+            previous_usage_tokens, previous_usage_cost = (
+                self._protocol_usage_contribution(
+                    previous_protocol_config_id,
+                    entity.lifecycle_status,
+                    entity.total_tokens,
+                    entity.total_cost_usd,
+                )
             )
             entity.protocol = protocol
             entity.user_agent = user_agent.strip()[:300]
@@ -705,6 +728,32 @@ class RequestLogWriteMixin:
                     gateway_key_id,
                     next_spend,
                 )
+            next_usage_tokens, next_usage_cost = self._protocol_usage_contribution(
+                entity.protocol_config_id,
+                lifecycle_value,
+                total_tokens,
+                total_cost_usd,
+            )
+            if previous_protocol_config_id == entity.protocol_config_id:
+                await self._adjust_protocol_usage(
+                    session,
+                    entity.protocol_config_id,
+                    next_usage_tokens - previous_usage_tokens,
+                    next_usage_cost - previous_usage_cost,
+                )
+            else:
+                await self._adjust_protocol_usage(
+                    session,
+                    previous_protocol_config_id,
+                    -previous_usage_tokens,
+                    -previous_usage_cost,
+                )
+                await self._adjust_protocol_usage(
+                    session,
+                    entity.protocol_config_id,
+                    next_usage_tokens,
+                    next_usage_cost,
+                )
             await session.commit()
             await session.refresh(entity)
             return self._to_request_log(entity)
@@ -747,6 +796,44 @@ class RequestLogWriteMixin:
                 delete(RequestLogEntity).where(RequestLogEntity.created_at < cutoff)
             )
             await session.commit()
+
+    @staticmethod
+    def _protocol_usage_contribution(
+        protocol_config_id: str | None,
+        lifecycle_status: RequestLogLifecycleStatus | str,
+        total_tokens: int,
+        total_cost_usd: float,
+    ) -> tuple[int, float]:
+        if not protocol_config_id:
+            return 0, 0.0
+        lifecycle_value = (
+            lifecycle_status.value
+            if isinstance(lifecycle_status, RequestLogLifecycleStatus)
+            else str(lifecycle_status)
+        )
+        if lifecycle_value not in REQUEST_LOG_TERMINAL_STATUSES:
+            return 0, 0.0
+        return max(int(total_tokens), 0), max(float(total_cost_usd), 0.0)
+
+    @staticmethod
+    async def _adjust_protocol_usage(
+        session: AsyncSession,
+        protocol_config_id: str | None,
+        token_delta: int,
+        cost_delta: float,
+    ) -> None:
+        if not protocol_config_id or (token_delta == 0 and cost_delta == 0):
+            return
+        next_tokens = SiteProtocolConfigEntity.spent_tokens + int(token_delta)
+        next_cost = SiteProtocolConfigEntity.spent_cost_usd + float(cost_delta)
+        await session.execute(
+            update(SiteProtocolConfigEntity)
+            .where(SiteProtocolConfigEntity.id == protocol_config_id)
+            .values(
+                spent_tokens=case((next_tokens < 0, 0), else_=next_tokens),
+                spent_cost_usd=case((next_cost < 0, 0.0), else_=next_cost),
+            )
+        )
 
     @staticmethod
     def _gateway_key_spend_contribution(

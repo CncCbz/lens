@@ -224,6 +224,11 @@ class ChannelConfig(StrictBaseModel):
     proxy_mode: ChannelProxyMode = ChannelProxyMode.INHERIT
     channel_proxy: str = ""
     concurrency_limit: int = Field(default=0, ge=0, le=MAX_CHANNEL_CONCURRENCY)
+    rpm_limit: int = Field(default=0, ge=0, le=MAX_CHANNEL_CONCURRENCY)
+    token_limit: int = Field(default=0, ge=0, le=MAX_CHANNEL_CONCURRENCY)
+    cost_limit_usd: float = Field(default=0.0, ge=0.0)
+    spent_tokens: int = Field(default=0, ge=0)
+    spent_cost_usd: float = Field(default=0.0, ge=0.0)
     param_override: str = ""
     match_regex: str = ""
     router_error_policy_config: str = ""
@@ -296,6 +301,11 @@ class SiteProtocolConfig(StrictBaseModel):
     proxy_mode: ChannelProxyMode = ChannelProxyMode.INHERIT
     channel_proxy: str = ""
     concurrency_limit: int = Field(default=0, ge=0, le=MAX_CHANNEL_CONCURRENCY)
+    rpm_limit: int = Field(default=0, ge=0, le=MAX_CHANNEL_CONCURRENCY)
+    token_limit: int = Field(default=0, ge=0, le=MAX_CHANNEL_CONCURRENCY)
+    cost_limit_usd: float = Field(default=0.0, ge=0.0)
+    spent_tokens: int = Field(default=0, ge=0)
+    spent_cost_usd: float = Field(default=0.0, ge=0.0)
     param_override: str = ""
     match_regex: str = ""
     router_error_policy_config: str = ""
@@ -313,6 +323,9 @@ class SiteProtocolConfigInput(StrictBaseModel):
     proxy_mode: ChannelProxyMode = ChannelProxyMode.INHERIT
     channel_proxy: str = ""
     concurrency_limit: int = Field(default=0, ge=0, le=MAX_CHANNEL_CONCURRENCY)
+    rpm_limit: int = Field(default=0, ge=0, le=MAX_CHANNEL_CONCURRENCY)
+    token_limit: int = Field(default=0, ge=0, le=MAX_CHANNEL_CONCURRENCY)
+    cost_limit_usd: float = Field(default=0.0, ge=0.0)
     param_override: str = ""
     match_regex: str = ""
     router_error_policy_config: str = ""
@@ -403,6 +416,9 @@ class SiteImportProtocolInput(StrictBaseModel):
     proxy_mode: ChannelProxyMode = ChannelProxyMode.INHERIT
     channel_proxy: str = ""
     concurrency_limit: int = Field(default=0, ge=0, le=MAX_CHANNEL_CONCURRENCY)
+    rpm_limit: int = Field(default=0, ge=0, le=MAX_CHANNEL_CONCURRENCY)
+    token_limit: int = Field(default=0, ge=0, le=MAX_CHANNEL_CONCURRENCY)
+    cost_limit_usd: float = Field(default=0.0, ge=0.0)
     param_override: str = ""
     match_regex: str = ""
     router_error_policy_config: str = ""

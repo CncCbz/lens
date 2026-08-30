@@ -282,6 +282,11 @@ export type SiteProtocolConfig = {
   proxy_mode: ChannelProxyMode;
   channel_proxy: string;
   concurrency_limit: number;
+  rpm_limit: number;
+  token_limit: number;
+  cost_limit_usd: number;
+  spent_tokens: number;
+  spent_cost_usd: number;
   param_override: string;
   match_regex: string;
   router_error_policy_config: string;
@@ -299,6 +304,9 @@ export type SiteProtocolConfigInput = {
   proxy_mode: ChannelProxyMode;
   channel_proxy: string;
   concurrency_limit: number;
+  rpm_limit: number;
+  token_limit: number;
+  cost_limit_usd: number;
   param_override: string;
   match_regex: string;
   router_error_policy_config: string;
@@ -375,6 +383,9 @@ export type SiteBatchImportProtocolInput = {
   proxy_mode?: ChannelProxyMode;
   channel_proxy?: string;
   concurrency_limit?: number;
+  rpm_limit?: number;
+  token_limit?: number;
+  cost_limit_usd?: number;
   param_override?: string;
   match_regex?: string;
   router_error_policy_config?: string;
