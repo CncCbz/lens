@@ -270,6 +270,17 @@ export function isGatewayKeyOutOfBalance(item: GatewayApiKey) {
   return item.max_cost_usd > 0 && item.spent_cost_usd >= item.max_cost_usd;
 }
 
+export function groupVisibleToGatewayKey(
+  group: ModelGroup,
+  keyId: string | null,
+) {
+  const allowed = group.allowed_key_ids ?? [];
+  if (!group.restrict_keys && allowed.length === 0) {
+    return true;
+  }
+  return keyId != null && allowed.includes(keyId);
+}
+
 export function buildGatewayModelGroupOptions(groups: ModelGroup[]) {
   const mapping = new Map<string, GatewayModelGroupOption>();
   const groupById = new Map(groups.map((group) => [group.id, group]));

@@ -164,6 +164,12 @@ class ModelGroupEntity(Base):
     multimodal_overrides_json: Mapped[str] = mapped_column(
         Text, nullable=False, default="{}", server_default="{}"
     )
+    allowed_key_ids_json: Mapped[str] = mapped_column(
+        Text, nullable=False, default="[]", server_default="[]"
+    )
+    restrict_keys: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
 
 
 class ModelGroupItemEntity(Base):

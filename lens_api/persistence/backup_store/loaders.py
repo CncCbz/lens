@@ -296,6 +296,8 @@ class BackupLoadersMixin:
                             price.context_window if price is not None else None
                         ),
                         "pi_config": row.pi_config_json,
+                        "allowed_key_ids": json.loads(row.allowed_key_ids_json or "[]"),
+                        "restrict_keys": bool(row.restrict_keys),
                         "items": items_by_group.get(row.id, []),
                     }
                 )

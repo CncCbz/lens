@@ -26,11 +26,15 @@ export type FormItem = {
   weight: number;
 };
 
+export type GroupKeyAccessMode = "all" | "selected";
+
 export type FormState = {
   name: string;
   protocols: ProtocolKind[];
   strategy: RoutingStrategy;
   route_group_id: string;
+  keyAccessMode: GroupKeyAccessMode;
+  allowedKeyIds: string[];
   headers: string;
   param_override: string;
   pi_config: string;
@@ -106,6 +110,8 @@ export const emptyForm: FormState = {
   protocols: ["openai_chat"],
   strategy: "round_robin",
   route_group_id: "",
+  keyAccessMode: "all",
+  allowedKeyIds: [],
   headers: "{}",
   param_override: "{}",
   pi_config: "",
@@ -444,12 +450,21 @@ export function protocolBaseUrl(site: Site, baseUrlId: string) {
   return bound?.url || "";
 }
 
+export function groupRestrictsKeys(group: ModelGroup) {
+  return (
+    Boolean(group.restrict_keys) || (group.allowed_key_ids?.length ?? 0) > 0
+  );
+}
+
 export function toForm(group: ModelGroup): FormState {
+  const allowedKeyIds = [...(group.allowed_key_ids ?? [])];
   return {
     name: group.name,
     protocols: group.protocols,
     strategy: group.strategy,
     route_group_id: group.route_group_id ?? "",
+    keyAccessMode: groupRestrictsKeys(group) ? "selected" : "all",
+    allowedKeyIds,
     headers: JSON.stringify(group.headers ?? {}, null, 2),
     param_override: JSON.stringify(group.param_override ?? {}, null, 2),
     sync_filter_mode: group.sync_filter_mode,
@@ -525,6 +540,9 @@ export function toPayload(form: FormState): ModelGroupPayload {
       : form.sync_filter_query.trim(),
     multimodal: form.multimodal,
     multimodal_overrides: form.multimodal_overrides,
+    allowed_key_ids:
+      form.keyAccessMode === "selected" ? form.allowedKeyIds : [],
+    restrict_keys: form.keyAccessMode === "selected",
     items: form.items.map((item) => ({
       channel_id: item.channel_id,
       credential_id: item.credential_id,

@@ -359,6 +359,10 @@ class BackupReplacersMixin:
                     pi_config_json=group.pi_config,
                     sync_filter_mode=group.sync_filter_mode.value,
                     sync_filter_query=group.sync_filter_query,
+                    allowed_key_ids_json=json.dumps(
+                        group.allowed_key_ids, ensure_ascii=True
+                    ),
+                    restrict_keys=1 if group.restrict_keys else 0,
                 )
             )
 

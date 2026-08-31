@@ -85,6 +85,8 @@ export type ModelGroup = {
   context_window?: number | null;
   pi_config: string;
   items: ModelGroupItem[];
+  allowed_key_ids?: string[];
+  restrict_keys?: boolean;
   multimodal: ModelGroupMultimodalMode;
   multimodal_resolved: Record<string, boolean>;
   multimodal_overrides: Record<string, boolean>;
@@ -149,6 +151,8 @@ export type ModelGroupPayload = {
   multimodal?: ModelGroupMultimodalMode;
   multimodal_overrides?: Record<string, boolean>;
   items: ModelGroupItemPayload[];
+  allowed_key_ids?: string[];
+  restrict_keys?: boolean;
 };
 
 export type PiConfigGenerateResponse = {

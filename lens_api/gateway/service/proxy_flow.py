@@ -31,7 +31,7 @@ from ..router import (
     RouteSelection,
     RouteTarget,
 )
-from .auth import _gateway_key_allows_model
+from .auth import _gateway_key_allows_group, _gateway_key_allows_model
 from .errors import (
     _apply_router_runtime_settings,
     _protocol_error_response,
@@ -168,7 +168,13 @@ async def _proxy_protocol(
             retryable=False,
         )
     requested_model = requested_model.strip()
-    if not _gateway_key_allows_model(gateway_key, requested_model):
+    requested_group = await app_state.group_repo.find_group_by_name(requested_model)
+    model_allowed = (
+        _gateway_key_allows_group(gateway_key, requested_group)
+        if requested_group is not None
+        else _gateway_key_allows_model(gateway_key, requested_model)
+    )
+    if not model_allowed:
         request_log = await app_state.request_log_store.create_pending_request_log(
             protocol=protocol.value,
             user_agent=upstream_user_agent,

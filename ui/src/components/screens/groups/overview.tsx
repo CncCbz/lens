@@ -6,6 +6,7 @@ import {
   Copy,
   Filter,
   GripVertical,
+  Lock,
   RefreshCw,
   Route,
   Trash2,
@@ -60,6 +61,7 @@ import { cn } from "@/lib/utils";
 import { CompactPriceSummary, SeriesChip, StrategyToggle } from "./components";
 import {
   credentialNumberLabel,
+  groupRestrictsKeys,
   isGroupEnabled,
   protocolBadgeClassName,
   protocolLabel,
@@ -301,6 +303,17 @@ export function GroupsOverview({
                                 className="px-2.5 py-0.5"
                               >
                                 {locale === "zh-CN" ? "路由组" : "Route group"}
+                              </Badge>
+                            ) : null}
+                            {groupRestrictsKeys(group) ? (
+                              <Badge
+                                variant="outline"
+                                className="px-2.5 py-0.5"
+                              >
+                                <Lock data-icon="inline-start" />
+                                {locale === "zh-CN"
+                                  ? `${group.allowed_key_ids?.length ?? 0} 个密钥`
+                                  : `${group.allowed_key_ids?.length ?? 0} keys`}
                               </Badge>
                             ) : null}
                             {!group.is_route_group &&

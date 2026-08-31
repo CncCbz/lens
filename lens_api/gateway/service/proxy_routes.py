@@ -15,7 +15,7 @@ from .runtime_context import (
     can_reach_protocol,
     json,
 )
-from .auth import _gateway_key_allows_model
+from .auth import _gateway_key_allows_group
 from .proxy_flow import _proxy_protocol
 from .auth import get_current_gateway_key
 
@@ -205,7 +205,7 @@ def _filtered_group_names(
             if group.name.strip()
             and set(group.protocols) & requested_protocols
             and has_enabled_item(group)
-            and _gateway_key_allows_model(gateway_key, group.name)
+            and _gateway_key_allows_group(gateway_key, group)
         }
     )
 
@@ -309,9 +309,7 @@ async def export_gateway_models_config(
         models=collect_group_models(
             groups,
             entries,
-            allow_group=lambda group: _gateway_key_allows_model(
-                gateway_key, group.name
-            ),
+            allow_group=lambda group: _gateway_key_allows_group(gateway_key, group),
             relay_image_group_id=relay_image_group_id,
         ),
     )

@@ -426,6 +426,7 @@ async def update_gateway_api_key(
 async def delete_gateway_api_key(
     key_id: str, _: Any = Depends(get_current_admin)
 ) -> Response:
+    await app_state.group_repo.detach_gateway_key(key_id)
     await app_state.gateway_api_key_repo.delete_gateway_api_key(key_id)
     return Response(status_code=204)
 

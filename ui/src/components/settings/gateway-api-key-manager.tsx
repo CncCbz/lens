@@ -30,6 +30,7 @@ import { type Locale } from "@/lib/i18n";
 
 import {
   buildGatewayModelGroupOptions,
+  groupVisibleToGatewayKey,
   formatDateOnly,
   formatDateTime,
   formatGatewayAmount,
@@ -63,17 +64,17 @@ export function GatewayApiKeyManager({ locale }: { locale: Locale }) {
     refetchOnMount: "always",
   });
 
-  const modelGroupOptions = useMemo(
-    () => buildGatewayModelGroupOptions(modelGroups),
-    [modelGroups],
-  );
-  const availableModelGroupNames = useMemo(
-    () => new Set(modelGroupOptions.map((option) => option.name)),
-    [modelGroupOptions],
-  );
-
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingKey, setEditingKey] = useState<GatewayApiKey | null>(null);
+  const dialogModelGroupOptions = useMemo(
+    () =>
+      buildGatewayModelGroupOptions(
+        modelGroups.filter((group) =>
+          groupVisibleToGatewayKey(group, editingKey?.id ?? null),
+        ),
+      ),
+    [modelGroups, editingKey],
+  );
   const [removingKeyId, setRemovingKeyId] = useState("");
   const [togglingKeyId, setTogglingKeyId] = useState("");
   const [copiedKey, setCopiedKey] = useState("");
@@ -85,13 +86,18 @@ export function GatewayApiKeyManager({ locale }: { locale: Locale }) {
   }
 
   function openEditDialog(item: GatewayApiKey) {
+    const visibleNames = new Set(
+      modelGroups
+        .filter((group) => groupVisibleToGatewayKey(group, item.id))
+        .map((group) => group.name),
+    );
     setEditingKey({
       ...item,
       allowed_models: item.allowed_models.filter((name) =>
-        availableModelGroupNames.has(name),
+        visibleNames.has(name),
       ),
       excluded_models: item.excluded_models.filter((name) =>
-        availableModelGroupNames.has(name),
+        visibleNames.has(name),
       ),
     });
     setDialogOpen(true);
@@ -138,6 +144,7 @@ export function GatewayApiKeyManager({ locale }: { locale: Locale }) {
         titleForLocale(locale, "API Key 已删除", "API key deleted"),
       );
       await refreshKeys();
+      await queryClient.invalidateQueries({ queryKey: ["model-groups"] });
     } catch (requestError) {
       const message =
         requestError instanceof ApiError
@@ -484,7 +491,7 @@ export function GatewayApiKeyManager({ locale }: { locale: Locale }) {
           locale={locale}
           open={dialogOpen}
           editingKey={editingKey}
-          modelGroupOptions={modelGroupOptions}
+          modelGroupOptions={dialogModelGroupOptions}
           timeZone={timeZone}
           onClose={() => setDialogOpen(false)}
           onSaved={refreshKeys}

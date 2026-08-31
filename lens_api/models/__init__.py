@@ -35,6 +35,18 @@ def _validate_pi_config(value: str | None) -> str | None:
     return value
 
 
+def _normalize_unique_str_list(values: list[str]) -> list[str]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for item in values:
+        value = str(item).strip()
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        normalized.append(value)
+    return normalized
+
+
 def resolve_effective_modalities(group: "ModelGroup") -> list[str]:
     """Modalities a group effectively supports, honoring manual overrides."""
     mode = getattr(group, "multimodal", ModelGroupMultimodalMode.AUTO)
@@ -676,6 +688,8 @@ class ModelGroup(StrictBaseModel):
     cache_write_price_per_million: float = 0.0
     context_window: int | None = None
     items: list["ModelGroupItem"] = Field(default_factory=list)
+    allowed_key_ids: list[str] = Field(default_factory=list)
+    restrict_keys: bool = False
     multimodal: ModelGroupMultimodalMode = ModelGroupMultimodalMode.AUTO
     multimodal_resolved: dict[str, bool] = Field(default_factory=dict)
     multimodal_overrides: dict[str, bool] = Field(default_factory=dict)
@@ -684,6 +698,11 @@ class ModelGroup(StrictBaseModel):
     @property
     def effective_modalities(self) -> list[str]:
         return resolve_effective_modalities(self)
+
+    @field_validator("allowed_key_ids")
+    @classmethod
+    def normalize_allowed_key_ids(cls, value: list[str]) -> list[str]:
+        return _normalize_unique_str_list(value)
 
     @model_validator(mode="after")
     def validate_param_override(self) -> "ModelGroup":
@@ -736,8 +755,15 @@ class ModelGroupCreate(StrictBaseModel):
     sync_filter_mode: ModelGroupSyncFilterMode = ModelGroupSyncFilterMode.NONE
     sync_filter_query: str = ""
     items: list[ModelGroupItemInput] = Field(default_factory=list)
+    allowed_key_ids: list[str] = Field(default_factory=list)
+    restrict_keys: bool = False
     multimodal: ModelGroupMultimodalMode = ModelGroupMultimodalMode.AUTO
     multimodal_overrides: dict[str, bool] = Field(default_factory=dict)
+
+    @field_validator("allowed_key_ids")
+    @classmethod
+    def normalize_allowed_key_ids(cls, value: list[str]) -> list[str]:
+        return _normalize_unique_str_list(value)
 
     @model_validator(mode="after")
     def validate_param_override(self) -> "ModelGroupCreate":
@@ -773,8 +799,17 @@ class ModelGroupUpdate(StrictBaseModel):
     sync_filter_mode: ModelGroupSyncFilterMode | None = None
     sync_filter_query: str | None = None
     items: list[ModelGroupItemInput] | None = None
+    allowed_key_ids: list[str] | None = None
+    restrict_keys: bool | None = None
     multimodal: ModelGroupMultimodalMode | None = None
     multimodal_overrides: dict[str, bool] | None = None
+
+    @field_validator("allowed_key_ids")
+    @classmethod
+    def normalize_allowed_key_ids(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        return _normalize_unique_str_list(value)
 
     @model_validator(mode="after")
     def validate_param_override(self) -> "ModelGroupUpdate":

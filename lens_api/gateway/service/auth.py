@@ -13,6 +13,7 @@ from .runtime_context import (
     Depends,
     GatewayApiKey,
     HTTPAuthorizationCredentials,
+    ModelGroup,
     HTTPException,
     PublicBranding,
     Request,
@@ -139,6 +140,16 @@ def _gateway_key_allows_model(
         item.strip().lower() for item in gateway_key.excluded_models if item.strip()
     }
     return normalized_name not in normalized_excluded
+
+
+def _group_restricts_keys(group: ModelGroup) -> bool:
+    return group.restrict_keys or bool(group.allowed_key_ids)
+
+
+def _gateway_key_allows_group(gateway_key: GatewayApiKey, group: ModelGroup) -> bool:
+    if _group_restricts_keys(group) and gateway_key.id not in group.allowed_key_ids:
+        return False
+    return _gateway_key_allows_model(gateway_key, group.name)
 
 
 async def public_branding() -> PublicBranding:

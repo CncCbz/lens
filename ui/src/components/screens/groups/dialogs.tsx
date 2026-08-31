@@ -2,9 +2,11 @@
 
 import { useMemo, useState } from "react";
 import type { Dispatch, FormEventHandler, SetStateAction } from "react";
+import { useQuery } from "@tanstack/react-query";
 import {
   AlertCircle,
   ChevronDown,
+  ChevronsUpDown,
   Plus,
   RefreshCcw,
   Search,
@@ -15,6 +17,15 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { AppDialogContent, Dialog } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -36,10 +47,12 @@ import { Separator } from "@/components/ui/separator";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { ModalityToggleRow } from "@/components/screens/multimodal-relay/modality-toggle-row";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import type {
-  ModelGroup,
-  ModelGroupCandidateItem,
-  ProtocolKind,
+import {
+  apiRequest,
+  type GatewayApiKey,
+  type ModelGroup,
+  type ModelGroupCandidateItem,
+  type ProtocolKind,
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import {
@@ -74,6 +87,17 @@ function hasConfiguredJson(value: string): boolean {
   } catch {
     return value.trim().length > 0;
   }
+}
+
+function gatewayKeyLabel(
+  key: Pick<GatewayApiKey, "id" | "remark" | "api_key">,
+) {
+  const remark = key.remark.trim();
+  if (remark) return remark;
+  const secret = key.api_key.trim();
+  if (!secret) return key.id;
+  if (secret.length <= 8) return secret;
+  return `${secret.slice(0, 8)}…`;
 }
 
 function hasConfiguredPricing(form: FormState): boolean {
@@ -178,6 +202,15 @@ export function GroupEditorDialog({
   generatingPiConfig: boolean;
 }) {
   const [candidateDrawerOpen, setCandidateDrawerOpen] = useState(false);
+  const [keyPickerOpen, setKeyPickerOpen] = useState(false);
+  const { data: gatewayKeys = [] } = useQuery({
+    queryKey: ["gateway-api-keys"],
+    queryFn: () => apiRequest<GatewayApiKey[]>("/admin/gateway-api-keys"),
+    staleTime: 30_000,
+  });
+  const selectedGatewayKeys = gatewayKeys.filter((key) =>
+    form.allowedKeyIds.includes(key.id),
+  );
 
   const priorityLevels = useMemo(() => {
     const byPriority = new Map<number, FoldedMember[]>();
@@ -451,6 +484,130 @@ export function GroupEditorDialog({
                   />
                 </Field>
               </FieldGroup>
+              <Field>
+                <FieldLabel>
+                  {locale === "zh-CN" ? "密钥可见性" : "Key access"}
+                </FieldLabel>
+                <SegmentedControl
+                  value={form.keyAccessMode}
+                  onValueChange={(value) =>
+                    setForm((current) => ({
+                      ...current,
+                      keyAccessMode: value as FormState["keyAccessMode"],
+                    }))
+                  }
+                  options={[
+                    {
+                      value: "all",
+                      label: locale === "zh-CN" ? "全部密钥" : "All keys",
+                    },
+                    {
+                      value: "selected",
+                      label: locale === "zh-CN" ? "指定密钥" : "Selected keys",
+                    },
+                  ]}
+                />
+              </Field>
+              {form.keyAccessMode === "selected" ? (
+                <Field>
+                  <FieldLabel>
+                    {locale === "zh-CN" ? "可见密钥" : "Visible to"}
+                  </FieldLabel>
+                  <Popover open={keyPickerOpen} onOpenChange={setKeyPickerOpen}>
+                    <PopoverTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="w-full justify-between"
+                      >
+                        <span className="truncate text-left">
+                          {selectedGatewayKeys.length > 0
+                            ? selectedGatewayKeys
+                                .map((key) => gatewayKeyLabel(key))
+                                .join(", ")
+                            : locale === "zh-CN"
+                              ? "选择密钥"
+                              : "Select keys"}
+                        </span>
+                        <ChevronsUpDown className="text-muted-foreground" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent
+                      align="start"
+                      className="w-[calc(100vw-2rem)] p-0 sm:w-[360px]"
+                    >
+                      <Command>
+                        <CommandInput
+                          placeholder={
+                            locale === "zh-CN"
+                              ? "搜索密钥..."
+                              : "Search keys..."
+                          }
+                        />
+                        <CommandList>
+                          <CommandEmpty>
+                            {gatewayKeys.length > 0
+                              ? locale === "zh-CN"
+                                ? "没有匹配的密钥"
+                                : "No matching keys"
+                              : locale === "zh-CN"
+                                ? "当前没有可用密钥"
+                                : "No API keys available"}
+                          </CommandEmpty>
+                          <CommandGroup>
+                            {gatewayKeys.map((key) => {
+                              const checked = form.allowedKeyIds.includes(
+                                key.id,
+                              );
+                              return (
+                                <CommandItem
+                                  key={key.id}
+                                  value={`${gatewayKeyLabel(key)} ${key.api_key} ${key.id}`}
+                                  onSelect={() =>
+                                    setForm((current) => ({
+                                      ...current,
+                                      allowedKeyIds: checked
+                                        ? current.allowedKeyIds.filter(
+                                            (id) => id !== key.id,
+                                          )
+                                        : [...current.allowedKeyIds, key.id],
+                                    }))
+                                  }
+                                  className="items-start gap-3"
+                                >
+                                  <Checkbox
+                                    checked={checked}
+                                    className="mt-0.5 pointer-events-none"
+                                  />
+                                  <div className="min-w-0 flex-1">
+                                    <div className="truncate font-medium text-foreground">
+                                      {gatewayKeyLabel(key)}
+                                    </div>
+                                    {key.remark.trim() ? (
+                                      <div className="truncate text-xs text-muted-foreground">
+                                        {key.api_key.slice(0, 8)}…
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                </CommandItem>
+                              );
+                            })}
+                          </CommandGroup>
+                        </CommandList>
+                      </Command>
+                    </PopoverContent>
+                  </Popover>
+                  {selectedGatewayKeys.length > 0 ? (
+                    <div className="flex flex-wrap gap-1">
+                      {selectedGatewayKeys.map((key) => (
+                        <Badge key={key.id} variant="outline">
+                          {gatewayKeyLabel(key)}
+                        </Badge>
+                      ))}
+                    </div>
+                  ) : null}
+                </Field>
+              ) : null}
             </section>
 
             <Tabs

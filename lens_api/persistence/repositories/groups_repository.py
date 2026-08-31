@@ -59,6 +59,24 @@ def _parse_json_object(value: str | None) -> dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {}
 
 
+def _parse_json_str_list(value: str | None) -> list[str]:
+    try:
+        parsed = json.loads(value or "[]")
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return []
+    if not isinstance(parsed, list):
+        return []
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for item in parsed:
+        text = str(item).strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        normalized.append(text)
+    return normalized
+
+
 @dataclass
 class _EnsurePreparedItem:
     group_name: str
@@ -795,6 +813,10 @@ class GroupRepository:
                 multimodal_overrides_json=json.dumps(
                     payload.multimodal_overrides, ensure_ascii=True
                 ),
+                allowed_key_ids_json=json.dumps(
+                    payload.allowed_key_ids, ensure_ascii=True
+                ),
+                restrict_keys=1 if payload.restrict_keys else 0,
             )
             session.add(entity)
             await session.flush()
@@ -902,6 +924,12 @@ class GroupRepository:
                     entity.multimodal_overrides_json = json.dumps(
                         value, ensure_ascii=True
                     )
+                elif key == "allowed_key_ids":
+                    entity.allowed_key_ids_json = json.dumps(
+                        value or [], ensure_ascii=True
+                    )
+                elif key == "restrict_keys":
+                    entity.restrict_keys = 1 if value else 0
                 else:
                     setattr(entity, key, value)
 
@@ -1009,6 +1037,22 @@ class GroupRepository:
                         modality: bool(supported)
                         for modality, supported in resolved.items()
                     }
+                )
+            await session.commit()
+
+    async def detach_gateway_key(self, key_id: str) -> None:
+        normalized_key_id = key_id.strip()
+        if not normalized_key_id:
+            return
+        async with self._session_factory() as session:
+            entities = (await session.execute(select(ModelGroupEntity))).scalars().all()
+            for entity in entities:
+                allowed_key_ids = _parse_json_str_list(entity.allowed_key_ids_json)
+                if normalized_key_id not in allowed_key_ids:
+                    continue
+                entity.allowed_key_ids_json = json.dumps(
+                    [item for item in allowed_key_ids if item != normalized_key_id],
+                    ensure_ascii=True,
                 )
             await session.commit()
 
@@ -1490,6 +1534,8 @@ class GroupRepository:
             multimodal=entity.multimodal,
             multimodal_resolved=_parse_json_object(entity.multimodal_resolved_json),
             multimodal_overrides=_parse_json_object(entity.multimodal_overrides_json),
+            allowed_key_ids=_parse_json_str_list(entity.allowed_key_ids_json),
+            restrict_keys=bool(entity.restrict_keys),
             pi_config=entity.pi_config_json,
             pi_config_auto=bool(entity.pi_config_auto),
             input_price_per_million=(
