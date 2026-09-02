@@ -538,17 +538,17 @@ function conditionToForm(node: MatchCondition): MatchNodeForm {
 }
 
 function conditionFromForm(node: MatchNodeForm): MatchCondition {
+  if (node.type === "leaf") {
+    return {
+      path: node.path.trim(),
+      op: node.op,
+      value: parseMatchValue(node.value, node.path.trim()),
+    };
+  }
   if (node.type === "all") {
     return { all: node.children.map(conditionFromForm) };
   }
-  if (node.type === "any") {
-    return { any: node.children.map(conditionFromForm) };
-  }
-  return {
-    path: node.path.trim(),
-    op: node.op,
-    value: parseMatchValue(node.value, node.path.trim()),
-  };
+  return { any: node.children.map(conditionFromForm) };
 }
 
 function actionFromForm(action: MatchActionForm): MatchAction {
