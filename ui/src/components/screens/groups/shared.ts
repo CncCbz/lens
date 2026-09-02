@@ -16,6 +16,7 @@ import { isGeneratedCredentialName } from "@/lib/utils";
 import { protocolLabel, protocolOptions } from "@/lib/protocols";
 export { isGeneratedCredentialName, protocolLabel, protocolOptions };
 export { protocolBadgeClassName } from "@/lib/protocols";
+export type { MatchOp };
 
 export type FormItem = {
   channel_id: string;
