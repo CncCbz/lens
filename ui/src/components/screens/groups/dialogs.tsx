@@ -1139,7 +1139,13 @@ export function GroupEditorDialog({
                 <div className="flex flex-col gap-4">
                   <MatchOverridesEditor
                     locale={locale}
-                    items={form.items}
+                    items={
+                      form.route_group_id
+                        ? (routeTargetOptions.find(
+                            (group) => group.id === form.route_group_id,
+                          )?.items ?? [])
+                        : form.items
+                    }
                     rules={form.match_overrides}
                     onChange={(match_overrides) =>
                       setForm((current) => ({ ...current, match_overrides }))

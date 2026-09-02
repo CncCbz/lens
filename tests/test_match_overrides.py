@@ -402,6 +402,108 @@ def test_legacy_headers_absorbed_on_create() -> None:
     assert dumped[1]["then"][0]["value"] == "xhigh"
 
 
+def _proxy_flow_match_rules(
+    *,
+    requested_route_group_id: str,
+    requested_rules: list[dict],
+    resolved_rules: list[dict],
+) -> list[dict]:
+    match_rules: list[dict] = []
+    if requested_route_group_id:
+        match_rules.extend(requested_rules)
+    match_rules.extend(resolved_rules)
+    return match_rules
+
+
+def test_route_group_rules_apply_to_target_channel() -> None:
+    rules = _proxy_flow_match_rules(
+        requested_route_group_id="exec-id",
+        requested_rules=_REWRITE_CHAT,
+        resolved_rules=[],
+    )
+    body, _ = _pipeline(
+        client_protocol=ProtocolKind.OPENAI_CHAT,
+        channel_protocol=ProtocolKind.OPENAI_CHAT,
+        channel_id="chan-b",
+        body=_CHAT_MAX,
+        rules=rules,
+    )
+    assert body["reasoning_effort"] == "xhigh"
+
+
+def test_route_group_rules_skip_other_target_channel() -> None:
+    rules = _proxy_flow_match_rules(
+        requested_route_group_id="exec-id",
+        requested_rules=_REWRITE_CHAT,
+        resolved_rules=[],
+    )
+    body, _ = _pipeline(
+        client_protocol=ProtocolKind.OPENAI_CHAT,
+        channel_protocol=ProtocolKind.OPENAI_CHAT,
+        channel_id="chan-a",
+        body=_CHAT_MAX,
+        rules=rules,
+    )
+    assert body["reasoning_effort"] == "max"
+
+
+def test_execution_group_rules_win_after_route_group() -> None:
+    rules = _proxy_flow_match_rules(
+        requested_route_group_id="exec-id",
+        requested_rules=[
+            {
+                "if": {"all": []},
+                "then": [{"path": "body.reasoning_effort", "value": "from-route"}],
+            }
+        ],
+        resolved_rules=[
+            {
+                "if": {"all": []},
+                "then": [{"path": "body.reasoning_effort", "value": "from-exec"}],
+            }
+        ],
+    )
+    body, _ = _pipeline(
+        client_protocol=ProtocolKind.OPENAI_CHAT,
+        channel_protocol=ProtocolKind.OPENAI_CHAT,
+        channel_id="chan-b",
+        body=_CHAT_MAX,
+        rules=rules,
+    )
+    assert body["reasoning_effort"] == "from-exec"
+
+
+def test_match_editor_items_use_route_target() -> None:
+    form_items: list[dict] = []
+    route_targets = [
+        {
+            "id": "exec-id",
+            "items": [
+                {
+                    "channel_id": "pcfg_openai_chat",
+                    "channel_name": "upstream-b",
+                    "protocol": "openai_chat",
+                }
+            ],
+        }
+    ]
+    route_group_id = "exec-id"
+    items = (
+        next(
+            (
+                group["items"]
+                for group in route_targets
+                if group["id"] == route_group_id
+            ),
+            [],
+        )
+        if route_group_id
+        else form_items
+    )
+    assert items[0]["channel_id"] == "pcfg_openai_chat"
+    assert items[0]["channel_name"] == "upstream-b"
+
+
 def test_action_model_rejected_on_validate() -> None:
     try:
         MatchAction.model_validate({"path": "body.model", "value": "other"})

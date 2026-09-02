@@ -31,7 +31,13 @@ const PATH_OPTIONS = [
 
 type ChannelOption = { id: string; label: string };
 
-function channelOptions(items: FormItem[]): ChannelOption[] {
+type MatchChannelItem = {
+  channel_id: string;
+  channel_name?: string;
+  protocol?: FormItem["protocol"];
+};
+
+function channelOptions(items: MatchChannelItem[]): ChannelOption[] {
   const seen = new Map<string, ChannelOption>();
   for (const item of items) {
     if (seen.has(item.channel_id)) continue;
@@ -52,7 +58,7 @@ export function MatchOverridesEditor({
   onChange,
 }: {
   locale: "zh-CN" | "en-US";
-  items: FormItem[];
+  items: MatchChannelItem[];
   rules: MatchRuleForm[];
   onChange: (rules: MatchRuleForm[]) => void;
 }) {
