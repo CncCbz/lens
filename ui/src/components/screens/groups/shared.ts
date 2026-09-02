@@ -255,6 +255,15 @@ export const PROTOCOL_SUFFIXES: ProtocolKind[] = [
   "gemini",
 ];
 
+export function channelProtocol(
+  item: Pick<FormItem, "channel_id"> & { protocol?: ProtocolKind | null },
+): ProtocolKind | undefined {
+  if (item.protocol) return item.protocol;
+  return PROTOCOL_SUFFIXES.find((suffix) =>
+    item.channel_id.endsWith(`_${suffix}`),
+  );
+}
+
 export function protocolConfigIdFromChannelId(channelId: string): string {
   for (const suffix of PROTOCOL_SUFFIXES) {
     if (channelId.endsWith(`_${suffix}`)) {
@@ -355,17 +364,6 @@ export function credentialNumberLabel(
 ) {
   const number = item.credential_number > 0 ? item.credential_number : 1;
   return locale === "zh-CN" ? `密钥 ${number}` : `Key ${number}`;
-}
-
-export function foldedMemberSourceLabel(
-  member: FoldedMember,
-  locale: "zh-CN" | "en-US",
-) {
-  const channelNames = Array.from(
-    new Set(member.subItems.map((item) => item.channel_name).filter(Boolean)),
-  );
-  const credentialLabel = credentialDisplayLabel(member, locale);
-  return [...channelNames, credentialLabel].join(" · ");
 }
 
 export function formatMoney(value: number) {

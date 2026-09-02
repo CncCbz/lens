@@ -26,10 +26,11 @@ import type {
   RoutingStrategy,
 } from "@/lib/api";
 import { isItemValidForProtocols } from "@/lib/api";
+import { compactProtocolLabel } from "@/lib/protocols";
 import { cn } from "@/lib/utils";
 import {
+  channelProtocol,
   credentialDisplayLabel,
-  foldedMemberSourceLabel,
   formatMoney,
   metricLabel,
   protocolBadgeClassName,
@@ -243,6 +244,20 @@ export function CandidateRow({
   );
 }
 
+export function ProtocolTag({ protocol }: { protocol: ProtocolKind }) {
+  return (
+    <Badge
+      variant="outline"
+      className={cn(
+        "px-1.5 py-0 text-[10px] font-normal",
+        protocolBadgeClassName(protocol),
+      )}
+    >
+      {compactProtocolLabel(protocol)}
+    </Badge>
+  );
+}
+
 export function FoldedMemberRow({
   member,
   index,
@@ -280,7 +295,25 @@ export function FoldedMemberRow({
   onDragEnd: () => void;
   locale: "zh-CN" | "en-US";
 }) {
-  const sourceLabel = foldedMemberSourceLabel(member, locale);
+  const credentialLabel = credentialDisplayLabel(member, locale);
+  const channelGroups: { name: string; protocols: ProtocolKind[] }[] = [];
+  const seenChannels = new Set<string>();
+  const nameIndex = new Map<string, number>();
+  for (const item of member.subItems) {
+    if (seenChannels.has(item.channel_id)) continue;
+    seenChannels.add(item.channel_id);
+    const name = item.channel_name || item.channel_id;
+    const protocol = channelProtocol(item);
+    const existing = nameIndex.get(name);
+    if (existing !== undefined) {
+      if (protocol && !channelGroups[existing].protocols.includes(protocol)) {
+        channelGroups[existing].protocols.push(protocol);
+      }
+      continue;
+    }
+    nameIndex.set(name, channelGroups.length);
+    channelGroups.push({ name, protocols: protocol ? [protocol] : [] });
+  }
   const showWeightInput =
     mode === "round_robin" || mode === "priority_weighted";
 
@@ -319,8 +352,17 @@ export function FoldedMemberRow({
         <div className="truncate text-sm font-medium text-foreground">
           {member.model_name}
         </div>
-        <div className="truncate text-xs text-muted-foreground">
-          {sourceLabel}
+        <div className="flex min-w-0 flex-wrap items-center gap-1 text-xs text-muted-foreground">
+          {channelGroups.map((group, channelIndex) => (
+            <span key={group.name} className="flex min-w-0 items-center gap-1">
+              {channelIndex > 0 ? <span>·</span> : null}
+              <span className="truncate">{group.name}</span>
+              {group.protocols.map((protocol) => (
+                <ProtocolTag key={protocol} protocol={protocol} />
+              ))}
+            </span>
+          ))}
+          <span>· {credentialLabel}</span>
           {!member.enabled
             ? ` · ${locale === "zh-CN" ? "已关闭" : "Disabled"}`
             : ""}

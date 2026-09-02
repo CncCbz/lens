@@ -12,9 +12,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { compactProtocolLabel } from "@/lib/protocols";
+import { cn } from "@/lib/utils";
 import {
+  channelProtocol,
   emptyMatchLeaf,
   emptyMatchRule,
+  protocolBadgeClassName,
   type FormItem,
   type MatchActionForm,
   type MatchNodeForm,
@@ -29,7 +32,11 @@ const PATH_OPTIONS = [
   "body.reasoning.effort",
 ];
 
-type ChannelOption = { id: string; label: string };
+type ChannelOption = {
+  id: string;
+  name: string;
+  protocol?: FormItem["protocol"];
+};
 
 type MatchChannelItem = {
   channel_id: string;
@@ -41,11 +48,10 @@ function channelOptions(items: MatchChannelItem[]): ChannelOption[] {
   const seen = new Map<string, ChannelOption>();
   for (const item of items) {
     if (seen.has(item.channel_id)) continue;
-    const protocol = item.protocol ? compactProtocolLabel(item.protocol) : "";
-    const name = item.channel_name || item.channel_id;
     seen.set(item.channel_id, {
       id: item.channel_id,
-      label: protocol ? `${name} / ${protocol}` : name,
+      name: item.channel_name?.trim() || item.channel_id,
+      protocol: channelProtocol(item),
     });
   }
   return [...seen.values()];
@@ -336,8 +342,25 @@ function LeafRow({
           </SelectTrigger>
           <SelectContent>
             {channels.map((channel) => (
-              <SelectItem key={channel.id} value={channel.id}>
-                {channel.label}
+              <SelectItem
+                key={channel.id}
+                value={channel.id}
+                textValue={channel.name}
+              >
+                <span className="flex min-w-0 items-center gap-1.5">
+                  <span className="truncate">{channel.name}</span>
+                  {channel.protocol ? (
+                    <Badge
+                      variant="outline"
+                      className={cn(
+                        "px-1.5 py-0 text-[10px] font-normal",
+                        protocolBadgeClassName(channel.protocol),
+                      )}
+                    >
+                      {compactProtocolLabel(channel.protocol)}
+                    </Badge>
+                  ) : null}
+                </span>
               </SelectItem>
             ))}
           </SelectContent>
