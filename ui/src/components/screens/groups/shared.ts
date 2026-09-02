@@ -87,7 +87,7 @@ export type GroupDisplayMember = {
 };
 
 export type GroupSort =
-  "members-desc" | "enabled-desc" | "name-asc" | "name-desc";
+  "name-asc" | "name-desc" | "members-desc" | "enabled-desc";
 export type CandidateSearchMode = Exclude<ModelGroupSyncFilterMode, "">;
 
 export type GroupRow = ModelGroup & {

@@ -118,7 +118,7 @@ export function GroupsScreen() {
   const [strategyFilter, setStrategyFilter] = useState<"all" | RoutingStrategy>(
     "all",
   );
-  const [sortBy, setSortBy] = useState<GroupSort>("members-desc");
+  const [sortBy, setSortBy] = useState<GroupSort>("name-asc");
   const [previewGroupName, setPreviewGroupName] = useState("");
   const [previewProtocol, setPreviewProtocol] =
     useState<ProtocolKind>("openai_chat");
@@ -1445,7 +1445,7 @@ export function GroupsScreen() {
     setSearch("");
     setProtocolFilter("all");
     setStrategyFilter("all");
-    setSortBy("members-desc");
+    setSortBy("name-asc");
   }
 
   const syncPricesLabel = syncingPrices

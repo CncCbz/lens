@@ -551,7 +551,7 @@ export function GroupsOverview({
               variant="ghost"
               size="sm"
               onClick={resetFilters}
-              disabled={!activeFilterCount && sortBy === "members-desc"}
+              disabled={!activeFilterCount && sortBy === "name-asc"}
             >
               {locale === "zh-CN" ? "清空" : "Clear"}
             </Button>
@@ -649,17 +649,17 @@ export function GroupsOverview({
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="members-desc">
-                      {locale === "zh-CN" ? "成员优先" : "Members first"}
-                    </SelectItem>
-                    <SelectItem value="enabled-desc">
-                      {locale === "zh-CN" ? "启用优先" : "Enabled first"}
-                    </SelectItem>
                     <SelectItem value="name-asc">
                       {locale === "zh-CN" ? "名称 A-Z" : "Name A-Z"}
                     </SelectItem>
                     <SelectItem value="name-desc">
                       {locale === "zh-CN" ? "名称 Z-A" : "Name Z-A"}
+                    </SelectItem>
+                    <SelectItem value="members-desc">
+                      {locale === "zh-CN" ? "成员优先" : "Members first"}
+                    </SelectItem>
+                    <SelectItem value="enabled-desc">
+                      {locale === "zh-CN" ? "启用优先" : "Enabled first"}
                     </SelectItem>
                   </SelectContent>
                 </Select>
