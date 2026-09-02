@@ -62,6 +62,7 @@ import {
   PriorityLevelCard,
   StrategyToggle,
 } from "./components";
+import { MatchOverridesEditor } from "./match-overrides";
 import {
   applyWeightPreset,
   membersSharePct,
@@ -74,20 +75,6 @@ import {
   type FormItem,
   type FormState,
 } from "./shared";
-
-function hasConfiguredJson(value: string): boolean {
-  try {
-    const parsed: unknown = JSON.parse(value.trim() || "{}");
-    return (
-      !!parsed &&
-      typeof parsed === "object" &&
-      !Array.isArray(parsed) &&
-      Object.keys(parsed as Record<string, unknown>).length > 0
-    );
-  } catch {
-    return value.trim().length > 0;
-  }
-}
 
 function gatewayKeyLabel(
   key: Pick<GatewayApiKey, "id" | "remark" | "api_key">,
@@ -343,8 +330,7 @@ export function GroupEditorDialog({
   }
 
   const advancedConfiguredCount =
-    (hasConfiguredJson(form.headers) ? 1 : 0) +
-    (hasConfiguredJson(form.param_override) ? 1 : 0) +
+    (form.match_overrides.length ? 1 : 0) +
     (form.multimodal !== "auto" ? 1 : 0) +
     (hasConfiguredPricing(form) ? 1 : 0) +
     (form.context_window.trim() !== "" ? 1 : 0) +
@@ -1151,79 +1137,14 @@ export function GroupEditorDialog({
               ) : null}
               <TabsContent value="advanced">
                 <div className="flex flex-col gap-4">
-                  <div className="flex flex-col gap-2">
-                    <div className="flex items-center gap-2 text-base font-semibold text-foreground">
-                      {locale === "zh-CN" ? "请求头覆盖" : "Request headers"}
-                      <Badge
-                        variant={
-                          hasConfiguredJson(form.headers)
-                            ? "default"
-                            : "secondary"
-                        }
-                      >
-                        {locale === "zh-CN"
-                          ? hasConfiguredJson(form.headers)
-                            ? "已配置"
-                            : "未配置"
-                          : hasConfiguredJson(form.headers)
-                            ? "Configured"
-                            : "Not set"}
-                      </Badge>
-                    </div>
-                    <Textarea
-                      id="group-headers"
-                      value={form.headers}
-                      onChange={(event) =>
-                        setForm((current) => ({
-                          ...current,
-                          headers: event.target.value,
-                        }))
-                      }
-                      className="min-h-24 font-mono text-xs"
-                    />
-                    <p className="text-sm text-muted-foreground">
-                      {locale === "zh-CN"
-                        ? "大小写不敏感；authorization / host 等系统头不可覆盖"
-                        : "Case-insensitive; system headers such as authorization/host are protected"}
-                    </p>
-                  </div>
-                  <Separator />
-                  <div className="flex flex-col gap-2">
-                    <div className="flex items-center gap-2 text-base font-semibold text-foreground">
-                      {locale === "zh-CN" ? "参数覆盖" : "Parameter override"}
-                      <Badge
-                        variant={
-                          hasConfiguredJson(form.param_override)
-                            ? "default"
-                            : "secondary"
-                        }
-                      >
-                        {locale === "zh-CN"
-                          ? hasConfiguredJson(form.param_override)
-                            ? "已配置"
-                            : "未配置"
-                          : hasConfiguredJson(form.param_override)
-                            ? "Configured"
-                            : "Not set"}
-                      </Badge>
-                    </div>
-                    <Textarea
-                      id="group-param-override"
-                      value={form.param_override}
-                      onChange={(event) =>
-                        setForm((current) => ({
-                          ...current,
-                          param_override: event.target.value,
-                        }))
-                      }
-                      className="min-h-24 font-mono text-xs"
-                    />
-                    <p className="text-sm text-muted-foreground">
-                      {locale === "zh-CN"
-                        ? "递归合并，禁止覆盖 model"
-                        : "Deep-merged; model is not overridable"}
-                    </p>
-                  </div>
+                  <MatchOverridesEditor
+                    locale={locale}
+                    items={form.items}
+                    rules={form.match_overrides}
+                    onChange={(match_overrides) =>
+                      setForm((current) => ({ ...current, match_overrides }))
+                    }
+                  />
                   {!form.route_group_id ? (
                     <>
                       <Separator />

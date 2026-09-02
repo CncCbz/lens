@@ -52,7 +52,6 @@ from .request_logger import _RequestLogger, _update_request_log
 from .runtime_context import resolve_channel_error_policy
 from .routing_plan import (
     _apply_deepseek_thinking_compat,
-    _apply_model_group_param_override,
     _apply_param_override,
     _elapsed_ms,
     _extract_request_reasoning_effort,
@@ -60,6 +59,10 @@ from .routing_plan import (
     _is_deepseek_thinking_target,
     _prepare_upstream_body,
     _resolve_routing_plan,
+)
+from ...core.match_overrides import (
+    MatchOverrideError,
+    apply_match_overrides,
 )
 from .stream_logging import (
     _close_stream_resources,
@@ -632,11 +635,6 @@ async def _try_target(
 ) -> Response | None:
     channel = target.channel
     attempt_started_at = perf_counter()
-    model_group_headers: list[Mapping[str, str]] = []
-    if plan.requested_group is not None and plan.requested_group.route_group_id:
-        model_group_headers.append(plan.requested_group.headers)
-    if plan.resolved_group is not None:
-        model_group_headers.append(plan.resolved_group.headers)
 
     if needs_conversion(protocol, channel.protocol):
         try:
@@ -670,19 +668,29 @@ async def _try_target(
     else:
         upstream_body = _prepare_upstream_body(protocol, body, target.model_name)
     try:
+        upstream_body = _apply_param_override(channel, upstream_body)
+        match_rules = []
         if plan.requested_group is not None and plan.requested_group.route_group_id:
-            upstream_body = _apply_model_group_param_override(
-                upstream_body,
-                plan.requested_group.param_override,
-                plan.requested_group.name,
+            match_rules.extend(
+                rule.model_dump() for rule in plan.requested_group.match_overrides
             )
         if plan.resolved_group is not None:
-            upstream_body = _apply_model_group_param_override(
-                upstream_body,
-                plan.resolved_group.param_override,
-                plan.resolved_group.name,
+            match_rules.extend(
+                rule.model_dump() for rule in plan.resolved_group.match_overrides
             )
-        upstream_body = _apply_param_override(channel, upstream_body)
+        try:
+            upstream_body, match_headers = apply_match_overrides(
+                match_rules,
+                channel_id=channel.id,
+                inbound_headers=inbound_headers,
+                body=upstream_body,
+            )
+        except MatchOverrideError as exc:
+            raise UpstreamRequestError(
+                status_code=400,
+                detail=str(exc),
+                router_status_code=None,
+            ) from exc
         upstream_body = _apply_deepseek_thinking_compat(channel, upstream_body)
     except UpstreamRequestError as exc:
         return await _record_target_failure(
@@ -716,10 +724,11 @@ async def _try_target(
             credential_id=target.credential_id,
             user_agent=upstream_user_agent,
             forwarded_headers=inbound_headers,
-            model_group_headers=tuple(model_group_headers),
+            model_group_headers=(),
             log_body_enabled=log_request_body,
             path_suffix=path_suffix,
             multipart_files=multipart_files,
+            extra_headers=match_headers,
         )
         upstream_headers_content = (
             _dump_log_json(dict(upstream.headers)) if log_request_headers else None

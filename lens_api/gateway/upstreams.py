@@ -91,6 +91,7 @@ def build_upstream_request(
     user_agent: str | None = None,
     forwarded_headers: Mapping[str, str] | None = None,
     model_group_headers: Iterable[Mapping[str, str]] = (),
+    extra_headers: Mapping[str, str] | None = None,
     path_suffix: str | None = None,
 ) -> UpstreamRequest:
     api_key = resolve_channel_api_key(channel, credential_id=credential_id)
@@ -122,6 +123,7 @@ def build_upstream_request(
                 user_agent=user_agent,
                 model_group_headers=model_group_headers,
                 inbound_headers=forwarded_headers,
+                extra_headers=extra_headers,
             ),
             json_body=payload,
         )
@@ -153,6 +155,7 @@ def build_upstream_request(
             user_agent=user_agent,
             model_group_headers=model_group_headers,
             inbound_headers=forwarded_headers,
+            extra_headers=extra_headers,
         ),
         json_body=dict(body),
     )
@@ -164,8 +167,9 @@ def build_upstream_headers(
     user_agent: str | None = None,
     model_group_headers: Iterable[Mapping[str, str]] = (),
     inbound_headers: Mapping[str, str] | None = None,
+    extra_headers: Mapping[str, str] | None = None,
 ) -> dict[str, str]:
-    # Merge order: inbound base -> Lens defaults -> UA -> route group -> execution group -> channel.
+    # Merge order: inbound base -> Lens defaults -> UA -> route group -> execution group -> channel -> match overrides.
     headers: dict[str, str] = {}
     _merge_headers(headers, _inbound_headers_for_upstream(inbound_headers))
     _merge_headers(headers, default_headers)
@@ -174,6 +178,7 @@ def build_upstream_headers(
     for group_headers in model_group_headers:
         _merge_headers(headers, group_headers, protected=_SYSTEM_HEADER_NAMES)
     _merge_headers(headers, channel_headers)
+    _merge_headers(headers, extra_headers, protected=_SYSTEM_HEADER_NAMES)
     return headers
 
 

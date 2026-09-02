@@ -11,7 +11,14 @@ from pydantic import (
     HttpUrl,
     computed_field,
     field_validator,
+    model_serializer,
     model_validator,
+)
+
+from ..core.match_overrides import (
+    absorb_legacy_group_overrides,
+    validate_action_path,
+    validate_condition_path,
 )
 
 
@@ -669,6 +676,60 @@ class AppInfo(StrictBaseModel):
     protocol_conversions: dict[str, list[str]] = Field(default_factory=dict)
 
 
+class MatchCondition(StrictBaseModel):
+    all: list["MatchCondition"] | None = None
+    any: list["MatchCondition"] | None = None
+    path: str | None = None
+    op: Literal["is", "is_not"] | None = None
+    value: Any = None
+
+    @model_validator(mode="after")
+    def validate_shape(self) -> "MatchCondition":
+        has_all = self.all is not None
+        has_any = self.any is not None
+        has_leaf = self.path is not None
+        if sum((has_all, has_any, has_leaf)) != 1:
+            raise ValueError("condition must be all, any, or path")
+        if has_leaf:
+            if self.op not in {"is", "is_not"}:
+                raise ValueError("leaf condition requires op")
+            validate_condition_path(self.path or "")
+        return self
+
+    @model_serializer
+    def serialize(self) -> dict[str, Any]:
+        if self.all is not None:
+            return {"all": self.all}
+        if self.any is not None:
+            return {"any": self.any}
+        return {"path": self.path, "op": self.op, "value": self.value}
+
+
+class MatchAction(StrictBaseModel):
+    path: str
+    value: Any = None
+
+    @field_validator("path")
+    @classmethod
+    def validate_path(cls, value: str) -> str:
+        return validate_action_path(value)
+
+
+class MatchOverrideRule(StrictBaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    if_: MatchCondition = Field(alias="if")
+    then: list[MatchAction] = Field(default_factory=list)
+
+    @model_serializer
+    def serialize(self) -> dict[str, Any]:
+        return {"if": self.if_, "then": self.then}
+
+
+MatchCondition.model_rebuild()
+MatchOverrideRule.model_rebuild()
+
+
 class ModelGroup(StrictBaseModel):
     id: str
     name: str
@@ -676,8 +737,7 @@ class ModelGroup(StrictBaseModel):
     strategy: RoutingStrategy
     route_group_id: str = ""
     route_group_name: str = ""
-    headers: dict[str, str] = Field(default_factory=dict)
-    param_override: dict[str, Any] = Field(default_factory=dict)
+    match_overrides: list[MatchOverrideRule] = Field(default_factory=list)
     pi_config: str = ""
     pi_config_auto: bool = False
     sync_filter_mode: ModelGroupSyncFilterMode = ModelGroupSyncFilterMode.NONE
@@ -704,11 +764,10 @@ class ModelGroup(StrictBaseModel):
     def normalize_allowed_key_ids(cls, value: list[str]) -> list[str]:
         return _normalize_unique_str_list(value)
 
-    @model_validator(mode="after")
-    def validate_param_override(self) -> "ModelGroup":
-        if "model" in self.param_override:
-            raise ValueError("model cannot be overridden")
-        return self
+    @model_validator(mode="before")
+    @classmethod
+    def absorb_legacy_param_override(cls, data: Any) -> Any:
+        return absorb_legacy_group_overrides(data)
 
     @model_validator(mode="after")
     def validate_sync_filter(self) -> "ModelGroup":
@@ -749,8 +808,7 @@ class ModelGroupCreate(StrictBaseModel):
     protocols: list[ProtocolKind] = Field(min_length=1)
     strategy: RoutingStrategy = RoutingStrategy.ROUND_ROBIN
     route_group_id: str = ""
-    headers: dict[str, str] = Field(default_factory=dict)
-    param_override: dict[str, Any] = Field(default_factory=dict)
+    match_overrides: list[MatchOverrideRule] = Field(default_factory=list)
     pi_config: str = ""
     sync_filter_mode: ModelGroupSyncFilterMode = ModelGroupSyncFilterMode.NONE
     sync_filter_query: str = ""
@@ -765,11 +823,10 @@ class ModelGroupCreate(StrictBaseModel):
     def normalize_allowed_key_ids(cls, value: list[str]) -> list[str]:
         return _normalize_unique_str_list(value)
 
-    @model_validator(mode="after")
-    def validate_param_override(self) -> "ModelGroupCreate":
-        if "model" in self.param_override:
-            raise ValueError("model cannot be overridden")
-        return self
+    @model_validator(mode="before")
+    @classmethod
+    def absorb_legacy_param_override(cls, data: Any) -> Any:
+        return absorb_legacy_group_overrides(data)
 
     @model_validator(mode="after")
     def validate_pi_config(self) -> "ModelGroupCreate":
@@ -793,8 +850,7 @@ class ModelGroupUpdate(StrictBaseModel):
     protocols: list[ProtocolKind] | None = Field(default=None, min_length=1)
     strategy: RoutingStrategy | None = None
     route_group_id: str | None = None
-    headers: dict[str, str] | None = None
-    param_override: dict[str, Any] | None = None
+    match_overrides: list[MatchOverrideRule] | None = None
     pi_config: str | None = None
     sync_filter_mode: ModelGroupSyncFilterMode | None = None
     sync_filter_query: str | None = None
@@ -811,11 +867,10 @@ class ModelGroupUpdate(StrictBaseModel):
             return None
         return _normalize_unique_str_list(value)
 
-    @model_validator(mode="after")
-    def validate_param_override(self) -> "ModelGroupUpdate":
-        if self.param_override is not None and "model" in self.param_override:
-            raise ValueError("model cannot be overridden")
-        return self
+    @model_validator(mode="before")
+    @classmethod
+    def absorb_legacy_param_override(cls, data: Any) -> Any:
+        return absorb_legacy_group_overrides(data)
 
     @model_validator(mode="after")
     def validate_pi_config(self) -> "ModelGroupUpdate":

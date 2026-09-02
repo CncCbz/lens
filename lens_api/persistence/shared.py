@@ -38,6 +38,7 @@ from ..models import (
     ModelGroupItemInput,
     ModelGroupMultimodalMode,
     ModelGroupUpdate,
+    MatchOverrideRule,
     ModelPriceItem,
     ModelPriceListResponse,
     ModelPriceUpdate,

@@ -1,4 +1,8 @@
 import type {
+  MatchAction,
+  MatchCondition,
+  MatchOp,
+  MatchOverrideRule,
   ModelGroup,
   ModelGroupCandidateItem,
   ModelGroupMultimodalMode,
@@ -28,6 +32,30 @@ export type FormItem = {
 
 export type GroupKeyAccessMode = "all" | "selected";
 
+export type MatchLeafForm = {
+  type: "leaf";
+  path: string;
+  op: MatchOp;
+  value: string;
+};
+
+export type MatchBoolForm = {
+  type: "all" | "any";
+  children: MatchNodeForm[];
+};
+
+export type MatchNodeForm = MatchLeafForm | MatchBoolForm;
+
+export type MatchActionForm = {
+  path: string;
+  value: string;
+};
+
+export type MatchRuleForm = {
+  if: MatchNodeForm;
+  then: MatchActionForm[];
+};
+
 export type FormState = {
   name: string;
   protocols: ProtocolKind[];
@@ -35,8 +63,6 @@ export type FormState = {
   route_group_id: string;
   keyAccessMode: GroupKeyAccessMode;
   allowedKeyIds: string[];
-  headers: string;
-  param_override: string;
   pi_config: string;
   pi_config_edited: boolean;
   sync_filter_mode: ModelGroupSyncFilterMode;
@@ -50,6 +76,7 @@ export type FormState = {
   cache_write_price_per_million: string;
   context_window: string;
   items: FormItem[];
+  match_overrides: MatchRuleForm[];
 };
 
 export type CandidateChannelGroup = {
@@ -112,8 +139,6 @@ export const emptyForm: FormState = {
   route_group_id: "",
   keyAccessMode: "all",
   allowedKeyIds: [],
-  headers: "{}",
-  param_override: "{}",
   pi_config: "",
   pi_config_edited: false,
   sync_filter_mode: "",
@@ -127,6 +152,7 @@ export const emptyForm: FormState = {
   cache_write_price_per_million: "0",
   context_window: "",
   items: [],
+  match_overrides: [],
 };
 
 export function buildCandidateHaystack(
@@ -456,6 +482,89 @@ export function groupRestrictsKeys(group: ModelGroup) {
   );
 }
 
+export function emptyMatchLeaf(): MatchLeafForm {
+  return { type: "leaf", path: "channel", op: "is", value: "" };
+}
+
+export function emptyMatchRule(): MatchRuleForm {
+  return {
+    if: { type: "all", children: [emptyMatchLeaf()] },
+    then: [{ path: "body.reasoning_effort", value: "" }],
+  };
+}
+
+function matchValueToInput(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (value === undefined) return "";
+  return JSON.stringify(value);
+}
+
+function parseMatchValue(raw: string, path: string): unknown {
+  if (path === "channel" || path.startsWith("header.")) return raw;
+  const trimmed = raw.trim();
+  if (!trimmed) return "";
+  if (
+    (trimmed.startsWith("{") && trimmed.endsWith("}")) ||
+    (trimmed.startsWith("[") && trimmed.endsWith("]")) ||
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    trimmed === "true" ||
+    trimmed === "false" ||
+    trimmed === "null" ||
+    /^-?\d+(\.\d+)?$/.test(trimmed)
+  ) {
+    try {
+      return JSON.parse(trimmed) as unknown;
+    } catch {
+      return raw;
+    }
+  }
+  return raw;
+}
+
+function conditionToForm(node: MatchCondition): MatchNodeForm {
+  if ("all" in node) {
+    return { type: "all", children: node.all.map(conditionToForm) };
+  }
+  if ("any" in node) {
+    return { type: "any", children: node.any.map(conditionToForm) };
+  }
+  return {
+    type: "leaf",
+    path: node.path,
+    op: node.op,
+    value: matchValueToInput(node.value),
+  };
+}
+
+function conditionFromForm(node: MatchNodeForm): MatchCondition {
+  if (node.type === "all") {
+    return { all: node.children.map(conditionFromForm) };
+  }
+  if (node.type === "any") {
+    return { any: node.children.map(conditionFromForm) };
+  }
+  return {
+    path: node.path.trim(),
+    op: node.op,
+    value: parseMatchValue(node.value, node.path.trim()),
+  };
+}
+
+function actionFromForm(action: MatchActionForm): MatchAction {
+  const path = action.path.trim();
+  return { path, value: parseMatchValue(action.value, path) };
+}
+
+function ruleToForm(rule: MatchOverrideRule): MatchRuleForm {
+  return {
+    if: conditionToForm(rule.if),
+    then: rule.then.map((action) => ({
+      path: action.path,
+      value: matchValueToInput(action.value),
+    })),
+  };
+}
+
 export function toForm(group: ModelGroup): FormState {
   const allowedKeyIds = [...(group.allowed_key_ids ?? [])];
   return {
@@ -465,8 +574,6 @@ export function toForm(group: ModelGroup): FormState {
     route_group_id: group.route_group_id ?? "",
     keyAccessMode: groupRestrictsKeys(group) ? "selected" : "all",
     allowedKeyIds,
-    headers: JSON.stringify(group.headers ?? {}, null, 2),
-    param_override: JSON.stringify(group.param_override ?? {}, null, 2),
     sync_filter_mode: group.sync_filter_mode,
     sync_filter_query: group.sync_filter_query,
     multimodal: group.multimodal ?? "auto",
@@ -480,6 +587,7 @@ export function toForm(group: ModelGroup): FormState {
       group.context_window == null ? "" : String(group.context_window),
     pi_config: group.pi_config ?? "",
     pi_config_edited: false,
+    match_overrides: (group.match_overrides ?? []).map(ruleToForm),
     items: group.items
       .slice()
       .sort((a, b) => a.priority - b.priority)
@@ -498,35 +606,16 @@ export function toForm(group: ModelGroup): FormState {
   };
 }
 
-function parseJsonObject(
-  value: string,
-  field: string,
-): Record<string, unknown> {
-  const parsed: unknown = JSON.parse(value.trim() || "{}");
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error(`${field} must be a JSON object`);
-  }
-  return parsed as Record<string, unknown>;
-}
-
-function parseHeaders(value: string): Record<string, string> {
-  const parsed = parseJsonObject(value, "headers");
-  for (const headerValue of Object.values(parsed)) {
-    if (typeof headerValue !== "string") {
-      throw new Error("headers values must be strings");
-    }
-  }
-  return parsed as Record<string, string>;
-}
-
 export function toPayload(form: FormState): ModelGroupPayload {
   return {
     name: form.name.trim(),
     protocols: form.protocols,
     strategy: form.strategy,
     route_group_id: form.route_group_id.trim(),
-    headers: parseHeaders(form.headers),
-    param_override: parseJsonObject(form.param_override, "param_override"),
+    match_overrides: form.match_overrides.map((rule) => ({
+      if: conditionFromForm(rule.if),
+      then: rule.then.map(actionFromForm),
+    })),
     pi_config:
       form.route_group_id.trim() && !form.pi_config_edited
         ? undefined

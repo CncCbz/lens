@@ -574,6 +574,7 @@ def _prepare_channel_request(
     log_body_enabled: bool,
     path_suffix: str | None = None,
     multipart_files: list[tuple[str, tuple[str, bytes, str]]] | None = None,
+    extra_headers: Mapping[str, str] | None = None,
 ) -> tuple[Any, bytes, str | None]:
     upstream = build_upstream_request(
         channel,
@@ -583,6 +584,7 @@ def _prepare_channel_request(
         user_agent=user_agent,
         forwarded_headers=forwarded_headers,
         model_group_headers=model_group_headers,
+        extra_headers=extra_headers,
         path_suffix=path_suffix,
     )
     if multipart_files is not None:

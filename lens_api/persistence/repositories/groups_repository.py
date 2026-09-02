@@ -24,6 +24,7 @@ from ..shared import (
     ModelGroupItemEntity,
     ModelGroupItemInput,
     ModelGroupUpdate,
+    MatchOverrideRule,
     ModelPriceEntity,
     ProtocolKind,
     REQUEST_LOG_TERMINAL_STATUSES,
@@ -75,6 +76,27 @@ def _parse_json_str_list(value: str | None) -> list[str]:
         seen.add(text)
         normalized.append(text)
     return normalized
+
+
+def _parse_match_overrides(value: str | None) -> list[MatchOverrideRule]:
+    try:
+        parsed = json.loads(value or "[]")
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return [MatchOverrideRule.model_validate(item) for item in parsed]
+
+
+def _dump_match_overrides(value: object) -> str:
+    if not value:
+        return "[]"
+    if not isinstance(value, list):
+        raise ValueError("match_overrides must be a list")
+    return json.dumps(
+        [MatchOverrideRule.model_validate(item).model_dump() for item in value],
+        ensure_ascii=True,
+    )
 
 
 @dataclass
@@ -803,10 +825,7 @@ class GroupRepository:
                 route_group_id=route_group.id if route_group is not None else "",
                 sync_filter_mode=payload.sync_filter_mode.value,
                 sync_filter_query=payload.sync_filter_query,
-                headers_json=json.dumps(payload.headers, ensure_ascii=True),
-                param_override_json=json.dumps(
-                    payload.param_override, ensure_ascii=True
-                ),
+                match_overrides_json=_dump_match_overrides(payload.match_overrides),
                 pi_config_json=payload.pi_config,
                 pi_config_auto=0,
                 multimodal=payload.multimodal.value,
@@ -903,10 +922,8 @@ class GroupRepository:
                     entity.sync_filter_mode = value.value
                 elif key == "items":
                     continue
-                elif key == "headers":
-                    entity.headers_json = json.dumps(value, ensure_ascii=True)
-                elif key == "param_override":
-                    entity.param_override_json = json.dumps(value, ensure_ascii=True)
+                elif key == "match_overrides":
+                    entity.match_overrides_json = _dump_match_overrides(value)
                 elif key == "pi_config":
                     entity.pi_config_json = value or ""
                     entity.pi_config_auto = 0
@@ -1527,8 +1544,7 @@ class GroupRepository:
             strategy=entity.strategy,
             route_group_id=entity.route_group_id,
             route_group_name=route_group_name,
-            headers=_parse_json_object(entity.headers_json),
-            param_override=_parse_json_object(entity.param_override_json),
+            match_overrides=_parse_match_overrides(entity.match_overrides_json),
             sync_filter_mode=entity.sync_filter_mode,
             sync_filter_query=entity.sync_filter_query,
             multimodal=entity.multimodal,

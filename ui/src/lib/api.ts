@@ -54,6 +54,23 @@ export function isItemValidForProtocols(
 export type RoutingStrategy = "round_robin" | "failover" | "priority_weighted";
 export type ModelGroupSyncFilterMode = "" | "contains" | "regex";
 
+export type MatchOp = "is" | "is_not";
+
+export type MatchCondition =
+  | { all: MatchCondition[] }
+  | { any: MatchCondition[] }
+  | { path: string; op: MatchOp; value: unknown };
+
+export type MatchAction = {
+  path: string;
+  value: unknown;
+};
+
+export type MatchOverrideRule = {
+  if: MatchCondition;
+  then: MatchAction[];
+};
+
 export type ModelGroupItem = {
   channel_id: string;
   channel_name: string;
@@ -74,8 +91,7 @@ export type ModelGroup = {
   strategy: RoutingStrategy;
   route_group_id?: string;
   route_group_name?: string;
-  headers: Record<string, string>;
-  param_override: Record<string, unknown>;
+  match_overrides?: MatchOverrideRule[];
   sync_filter_mode: ModelGroupSyncFilterMode;
   sync_filter_query: string;
   input_price_per_million: number;
@@ -143,8 +159,7 @@ export type ModelGroupPayload = {
   protocols: ProtocolKind[];
   strategy: RoutingStrategy;
   route_group_id?: string;
-  headers: Record<string, string>;
-  param_override: Record<string, unknown>;
+  match_overrides?: MatchOverrideRule[];
   pi_config?: string;
   sync_filter_mode: ModelGroupSyncFilterMode;
   sync_filter_query: string;

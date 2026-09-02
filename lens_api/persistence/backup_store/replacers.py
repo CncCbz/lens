@@ -352,9 +352,9 @@ class BackupReplacersMixin:
                     ),
                     strategy=group.strategy.value,
                     route_group_id=group.route_group_id,
-                    headers_json=json.dumps(group.headers, ensure_ascii=True),
-                    param_override_json=json.dumps(
-                        group.param_override, ensure_ascii=True
+                    match_overrides_json=json.dumps(
+                        [rule.model_dump() for rule in group.match_overrides],
+                        ensure_ascii=True,
                     ),
                     pi_config_json=group.pi_config,
                     sync_filter_mode=group.sync_filter_mode.value,

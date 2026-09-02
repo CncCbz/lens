@@ -59,6 +59,14 @@ def _parse_json_object(value: str | None) -> dict[str, object]:
     return parsed if isinstance(parsed, dict) else {}
 
 
+def _parse_json_list(value: str | None) -> list[object]:
+    try:
+        parsed = json.loads(value or "[]")
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return []
+    return parsed if isinstance(parsed, list) else []
+
+
 class BackupLoadersMixin:
     async def _load_sites(self, session: AsyncSession) -> list[SiteConfig]:
         (
@@ -269,8 +277,7 @@ class BackupLoadersMixin:
                         "protocols": json.loads(row.protocols_json),
                         "strategy": row.strategy,
                         "route_group_id": row.route_group_id,
-                        "headers": _parse_json_object(row.headers_json),
-                        "param_override": _parse_json_object(row.param_override_json),
+                        "match_overrides": _parse_json_list(row.match_overrides_json),
                         "route_group_name": route_group_names.get(
                             row.route_group_id, ""
                         ),
