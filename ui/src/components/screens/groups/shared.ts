@@ -504,9 +504,14 @@ function parseMatchValue(raw: string, path: string): unknown {
   if (path === "channel" || path.startsWith("header.")) return raw;
   const trimmed = raw.trim();
   if (!trimmed) return "";
+  if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+    try {
+      return JSON.parse(trimmed) as unknown;
+    } catch {
+      throw new Error(`匹配覆盖 ${path} 的值不是合法 JSON`);
+    }
+  }
   if (
-    (trimmed.startsWith("{") && trimmed.endsWith("}")) ||
-    (trimmed.startsWith("[") && trimmed.endsWith("]")) ||
     (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
     trimmed === "true" ||
     trimmed === "false" ||
