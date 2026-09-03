@@ -110,8 +110,17 @@ async def _proxy_protocol(
         float(runtime["stream_idle_timeout_seconds"]),
     )
     _apply_router_runtime_settings(runtime)
-    log_request_headers, _, log_request_body, _ = relay_log_capture_flags(runtime)
-    request_content = _dump_log_json(body) if log_request_body else None
+    (
+        log_request_headers,
+        _,
+        log_request_body,
+        _,
+        log_input,
+        _,
+    ) = relay_log_capture_flags(runtime)
+    request_content = (
+        _dump_log_json(body, log_input=log_input) if log_request_body else None
+    )
     request_headers_content = (
         _dump_log_json(dict(request_headers))
         if log_request_headers and request_headers
@@ -714,6 +723,8 @@ async def _try_target(
         log_response_headers,
         log_request_body,
         log_response_body,
+        log_input,
+        log_output,
     ) = relay_log_capture_flags(runtime)
     log_debug_enabled = bool(runtime["relay_log_debug_mode"])
     reasoning_effort = _extract_request_reasoning_effort(body, upstream_body)
@@ -726,6 +737,7 @@ async def _try_target(
             forwarded_headers=inbound_headers,
             model_group_headers=(),
             log_body_enabled=log_request_body,
+            log_input=log_input,
             path_suffix=path_suffix,
             multipart_files=multipart_files,
             extra_headers=match_headers,
@@ -797,6 +809,7 @@ async def _try_target(
             log_body_enabled=log_response_body,
             log_response_headers_enabled=log_response_headers,
             log_debug_enabled=log_debug_enabled,
+            log_output=log_output,
             deadline=deadline,
             global_proxy_url=str(runtime["proxy_url"]),
         )
@@ -898,6 +911,7 @@ async def _try_target(
             result=result,
             attempts=_attempt_logs_to_dicts(log_ctx.attempts),
             log_debug_enabled=log_debug_enabled,
+            log_output=log_output,
         )
         return result.response
     _apply_response_headers(

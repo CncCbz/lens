@@ -12,6 +12,18 @@ _BASE64_CHARS = frozenset(
 )
 _BASE64_PAYLOAD_KEYS = frozenset({"b64_json", "image_base64"})
 _MIME_KEYS = frozenset({"media_type", "mime_type", "mimetype"})
+_OMITTED_PLACEHOLDER = "<omitted>"
+_INPUT_PAYLOAD_KEYS = frozenset(
+    {
+        "messages",
+        "prompt",
+        "input",
+        "contents",
+        "system",
+        "systemInstruction",
+        "instructions",
+    }
+)
 
 
 def _json_body_bytes(value: Any) -> bytes:
@@ -25,7 +37,81 @@ def _dump_json(value: Any) -> str | None:
         return None
 
 
-def _dump_log_json(value: Any) -> str | None:
+def _filter_payload_content(
+    value: Any, *, log_input: bool = True, log_output: bool = True
+) -> Any:
+    if not isinstance(value, dict):
+        return value
+    filtered = dict(value)
+    if not log_input:
+        for k in _INPUT_PAYLOAD_KEYS:
+            if k in filtered:
+                filtered[k] = _OMITTED_PLACEHOLDER
+
+    if not log_output:
+        if "choices" in filtered and isinstance(filtered["choices"], list):
+            new_choices = []
+            for item in filtered["choices"]:
+                if isinstance(item, dict):
+                    c = dict(item)
+                    if "message" in c and isinstance(c["message"], dict):
+                        m = dict(c["message"])
+                        m["content"] = _OMITTED_PLACEHOLDER
+                        if "reasoning_content" in m:
+                            m["reasoning_content"] = _OMITTED_PLACEHOLDER
+                        if "reasoning" in m:
+                            m["reasoning"] = _OMITTED_PLACEHOLDER
+                        if "tool_calls" in m:
+                            m["tool_calls"] = _OMITTED_PLACEHOLDER
+                        if "refusal" in m and m["refusal"] is not None:
+                            m["refusal"] = _OMITTED_PLACEHOLDER
+                        c["message"] = m
+                    elif "delta" in c and isinstance(c["delta"], dict):
+                        d = dict(c["delta"])
+                        if "content" in d and d["content"] is not None:
+                            d["content"] = _OMITTED_PLACEHOLDER
+                        if "reasoning_content" in d:
+                            d["reasoning_content"] = _OMITTED_PLACEHOLDER
+                        if "reasoning" in d:
+                            d["reasoning"] = _OMITTED_PLACEHOLDER
+                        if "tool_calls" in d:
+                            d["tool_calls"] = _OMITTED_PLACEHOLDER
+                        c["delta"] = d
+                    elif "text" in c:
+                        c["text"] = _OMITTED_PLACEHOLDER
+                    new_choices.append(c)
+                else:
+                    new_choices.append(item)
+            filtered["choices"] = new_choices
+
+        if "content" in filtered and isinstance(filtered["content"], list):
+            filtered["content"] = _OMITTED_PLACEHOLDER
+
+        if "candidates" in filtered and isinstance(filtered["candidates"], list):
+            new_candidates = []
+            for item in filtered["candidates"]:
+                if isinstance(item, dict):
+                    cand = dict(item)
+                    if "content" in cand:
+                        cand["content"] = _OMITTED_PLACEHOLDER
+                    new_candidates.append(cand)
+                else:
+                    new_candidates.append(item)
+            filtered["candidates"] = new_candidates
+
+        if "output" in filtered:
+            filtered["output"] = _OMITTED_PLACEHOLDER
+
+    return filtered
+
+
+def _dump_log_json(
+    value: Any, *, log_input: bool = True, log_output: bool = True
+) -> str | None:
+    if not log_input or not log_output:
+        value = _filter_payload_content(
+            value, log_input=log_input, log_output=log_output
+        )
     sanitized, changed = _sanitize_log_payload(value)
     return _dump_json(sanitized if changed else value)
 
@@ -39,21 +125,31 @@ def _decode_content_bytes(content: bytes | None) -> str | None:
         return content.decode("utf-8", errors="replace")
 
 
-def _decode_log_content_bytes(content: bytes | None) -> str | None:
-    return _sanitize_log_content_text(_decode_content_bytes(content))
+def _decode_log_content_bytes(
+    content: bytes | None, *, log_input: bool = True, log_output: bool = True
+) -> str | None:
+    return _sanitize_log_content_text(
+        _decode_content_bytes(content), log_input=log_input, log_output=log_output
+    )
 
 
-def _sanitize_log_content_text(value: str | None) -> str | None:
+def _sanitize_log_content_text(
+    value: str | None, *, log_input: bool = True, log_output: bool = True
+) -> str | None:
     if not value:
         return None
     try:
         payload = json.loads(value)
     except (TypeError, ValueError):
-        return _sanitize_sse_log_content(value)
-    return _dump_log_json(payload)
+        return _sanitize_sse_log_content(
+            value, log_input=log_input, log_output=log_output
+        )
+    return _dump_log_json(payload, log_input=log_input, log_output=log_output)
 
 
-def _sanitize_sse_log_content(value: str) -> str:
+def _sanitize_sse_log_content(
+    value: str, *, log_input: bool = True, log_output: bool = True
+) -> str:
     lines = value.splitlines(keepends=True)
     data_lines: list[tuple[int, str]] = []
 
@@ -65,7 +161,7 @@ def _sanitize_sse_log_content(value: str) -> str:
         except (TypeError, ValueError):
             data_lines.clear()
             return
-        sanitized = _dump_log_json(payload)
+        sanitized = _dump_log_json(payload, log_input=log_input, log_output=log_output)
         if sanitized is None:
             data_lines.clear()
             return

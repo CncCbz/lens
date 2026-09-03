@@ -19,6 +19,8 @@ interface GatewaySettingsProps {
   relayLogResponseHeadersEnabled: boolean;
   relayLogRequestBodyEnabled: boolean;
   relayLogResponseBodyEnabled: boolean;
+  relayLogInputEnabled: boolean;
+  relayLogOutputEnabled: boolean;
   relayLogDebugMode: boolean;
   modelListCompatModeEnabled: boolean;
   onProxyUrlChange: (value: string) => void;
@@ -27,6 +29,8 @@ interface GatewaySettingsProps {
   onRelayLogResponseHeadersEnabledChange: (checked: boolean) => void;
   onRelayLogRequestBodyEnabledChange: (checked: boolean) => void;
   onRelayLogResponseBodyEnabledChange: (checked: boolean) => void;
+  onRelayLogInputEnabledChange: (checked: boolean) => void;
+  onRelayLogOutputEnabledChange: (checked: boolean) => void;
   onRelayLogDebugModeChange: (checked: boolean) => void;
   onModelListCompatModeEnabledChange: (checked: boolean) => void;
 }
@@ -35,10 +39,12 @@ function LogSwitch({
   label,
   checked,
   onCheckedChange,
+  disabled,
 }: {
   label: string;
   checked: boolean;
   onCheckedChange: (checked: boolean) => void;
+  disabled?: boolean;
 }) {
   return (
     <Field
@@ -48,7 +54,11 @@ function LogSwitch({
       <FieldContent>
         <FieldLabel className="w-auto">{label}</FieldLabel>
       </FieldContent>
-      <Switch checked={checked} onCheckedChange={onCheckedChange} />
+      <Switch
+        checked={checked}
+        onCheckedChange={onCheckedChange}
+        disabled={disabled}
+      />
     </Field>
   );
 }
@@ -60,6 +70,8 @@ export function GatewaySettings({
   relayLogResponseHeadersEnabled,
   relayLogRequestBodyEnabled,
   relayLogResponseBodyEnabled,
+  relayLogInputEnabled,
+  relayLogOutputEnabled,
   relayLogDebugMode,
   modelListCompatModeEnabled,
   onProxyUrlChange,
@@ -68,6 +80,8 @@ export function GatewaySettings({
   onRelayLogResponseHeadersEnabledChange,
   onRelayLogRequestBodyEnabledChange,
   onRelayLogResponseBodyEnabledChange,
+  onRelayLogInputEnabledChange,
+  onRelayLogOutputEnabledChange,
   onRelayLogDebugModeChange,
   onModelListCompatModeEnabledChange,
 }: GatewaySettingsProps) {
@@ -145,6 +159,18 @@ export function GatewaySettings({
             label={titleForLocale(locale, "响应体", "Response body")}
             checked={relayLogResponseBodyEnabled}
             onCheckedChange={onRelayLogResponseBodyEnabledChange}
+          />
+          <LogSwitch
+            label={titleForLocale(locale, "请求输入", "Request input")}
+            checked={relayLogInputEnabled}
+            onCheckedChange={onRelayLogInputEnabledChange}
+            disabled={!relayLogRequestBodyEnabled}
+          />
+          <LogSwitch
+            label={titleForLocale(locale, "响应输出", "Response output")}
+            checked={relayLogOutputEnabled}
+            onCheckedChange={onRelayLogOutputEnabledChange}
+            disabled={!relayLogResponseBodyEnabled}
           />
         </FieldGroup>
       </div>

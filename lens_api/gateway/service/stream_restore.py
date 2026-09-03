@@ -15,7 +15,7 @@ from .usage import _parse_ndjson_payloads, _parse_sse_payloads
 
 
 def _distill_stream_response_content(
-    protocol: ProtocolKind, raw_content: str | None
+    protocol: ProtocolKind, raw_content: str | None, *, log_output: bool = True
 ) -> str | None:
     """Restore a complete upstream stream to one upstream-native JSON object.
 
@@ -29,7 +29,7 @@ def _distill_stream_response_content(
     if protocol == ProtocolKind.OPENAI_CHAT:
         restored = _restore_openai_chat_stream(_parse_sse_payloads(raw_content))
         if restored is not None:
-            return _dump_log_json(restored)
+            return _dump_log_json(restored, log_output=log_output)
         return None
 
     if protocol == ProtocolKind.OPENAI_RESPONSES:
@@ -42,7 +42,7 @@ def _distill_stream_response_content(
                 compact_payload = _compact_openai_response_payload(
                     _restore_openai_response_output(response_payload, payloads)
                 )
-                return _dump_log_json(compact_payload)
+                return _dump_log_json(compact_payload, log_output=log_output)
         return None
     if protocol == ProtocolKind.ANTHROPIC:
         payloads = _parse_sse_payloads(raw_content)
@@ -51,7 +51,7 @@ def _distill_stream_response_content(
         if has_start and has_stop:
             restored_message = _restore_anthropic_stream_message(payloads)
             if restored_message is not None:
-                return _dump_log_json(restored_message)
+                return _dump_log_json(restored_message, log_output=log_output)
         return None
     if protocol == ProtocolKind.GEMINI:
         payloads = _parse_sse_payloads(raw_content) or _parse_ndjson_payloads(
@@ -59,7 +59,7 @@ def _distill_stream_response_content(
         )
         restored = _restore_gemini_stream(payloads)
         if restored is not None:
-            return _dump_log_json(restored)
+            return _dump_log_json(restored, log_output=log_output)
         return None
 
     return None

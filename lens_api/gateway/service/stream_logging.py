@@ -275,6 +275,7 @@ async def _record_stream_request_log(
     result: UpstreamResult,
     attempts: list[dict[str, Any]],
     log_debug_enabled: bool = False,
+    log_output: bool = True,
 ) -> None:
     capture = result.stream_capture
     _release_stream_concurrency(capture)
@@ -295,20 +296,22 @@ async def _record_stream_request_log(
         else None
     )
     upstream_response_content = (
-        _sanitize_log_content_text(raw_content)
-        if raw_content and log_debug_enabled
+        _sanitize_log_content_text(raw_content, log_output=log_output)
+        if raw_content and log_debug_enabled and log_output
         else None
     )
     upstream_response_distilled = None
     if raw_content:
         try:
             upstream_response_distilled = _distill_stream_response_content(
-                channel.protocol, raw_content
+                channel.protocol, raw_content, log_output=log_output
             )
         except ValueError:
             upstream_response_distilled = None
         if upstream_response_distilled is None:
-            upstream_response_distilled = _sanitize_log_content_text(raw_content)
+            upstream_response_distilled = _sanitize_log_content_text(
+                raw_content, log_output=log_output
+            )
     store_body = capture is not None and capture.capture_body
     if not store_body:
         upstream_response_content = None
@@ -320,8 +323,8 @@ async def _record_stream_request_log(
         else None
     )
     client_response_raw_content = (
-        _sanitize_log_content_text(client_response_content)
-        if client_response_content and log_debug_enabled
+        _sanitize_log_content_text(client_response_content, log_output=log_output)
+        if client_response_content and log_debug_enabled and log_output
         else None
     )
     if capture is not None:
@@ -347,7 +350,7 @@ async def _record_stream_request_log(
         parsed = _stream_capture_usage(capture)
     try:
         distilled_content = _distill_stream_response_content(
-            response_protocol, response_raw_content
+            response_protocol, response_raw_content, log_output=log_output
         )
     except ValueError as exc:
         if capture is not None:
@@ -435,7 +438,9 @@ async def _record_stream_request_log(
         client_request_content=client_request_content,
         upstream_request_content=result.request_content,
         response_content=(
-            _sanitize_log_content_text(distilled_content) if store_body else None
+            _sanitize_log_content_text(distilled_content, log_output=log_output)
+            if store_body
+            else None
         ),
         upstream_response_headers=upstream_response_headers,
         upstream_response_content=upstream_response_content,
@@ -463,6 +468,7 @@ async def _record_stream_request_log_and_release_probe(
     result: UpstreamResult,
     attempts: list[dict[str, Any]],
     log_debug_enabled: bool = False,
+    log_output: bool = True,
 ) -> None:
     try:
         await _record_stream_request_log(
@@ -478,6 +484,7 @@ async def _record_stream_request_log_and_release_probe(
             result=result,
             attempts=attempts,
             log_debug_enabled=log_debug_enabled,
+            log_output=log_output,
         )
     finally:
         capture = result.stream_capture

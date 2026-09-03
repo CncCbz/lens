@@ -88,6 +88,7 @@ async def _build_sse_to_json_result(
     log_body_enabled: bool,
     log_debug_enabled: bool = False,
     log_response_headers_enabled: bool = True,
+    log_output: bool = True,
 ) -> UpstreamResult:
     content = await response.aread()
     raw_content = _decode_content_bytes(content)
@@ -135,7 +136,11 @@ async def _build_sse_to_json_result(
         parsed["cache_read_input_tokens"],
         parsed["cache_write_input_tokens"],
     )
-    response_content = _sanitize_log_content_text(_decode_log_content_bytes(content))
+    response_content = (
+        _decode_log_content_bytes(content, log_output=log_output)
+        if log_body_enabled
+        else None
+    )
     return UpstreamResult(
         response=Response(
             content=content,
@@ -155,15 +160,15 @@ async def _build_sse_to_json_result(
         output_cost_usd=cost[1],
         total_cost_usd=cost[2],
         request_content=request_content,
-        response_content=response_content if log_body_enabled else None,
+        response_content=response_content,
         upstream_response_headers=(
             _dump_log_json(upstream_response_headers)
             if log_response_headers_enabled
             else None
         ),
         upstream_response_content=(
-            _sanitize_log_content_text(raw_content)
-            if log_body_enabled and log_debug_enabled
+            _sanitize_log_content_text(raw_content, log_output=log_output)
+            if log_body_enabled and log_debug_enabled and log_output
             else None
         ),
         client_response_headers=(
@@ -335,6 +340,7 @@ async def _build_json_result(
     log_body_enabled: bool,
     log_debug_enabled: bool = False,
     log_response_headers_enabled: bool = True,
+    log_output: bool = True,
 ) -> UpstreamResult:
     content = await response.aread()
     raw_content = _decode_content_bytes(content)
@@ -384,7 +390,9 @@ async def _build_json_result(
         total_cost_usd=cost[2],
         request_content=request_content,
         response_content=(
-            _decode_log_content_bytes(content) if log_body_enabled else None
+            _decode_log_content_bytes(content, log_output=log_output)
+            if log_body_enabled
+            else None
         ),
         upstream_response_headers=(
             _dump_log_json(upstream_response_headers)
@@ -392,8 +400,8 @@ async def _build_json_result(
             else None
         ),
         upstream_response_content=(
-            _sanitize_log_content_text(raw_content)
-            if log_body_enabled and log_debug_enabled
+            _sanitize_log_content_text(raw_content, log_output=log_output)
+            if log_body_enabled and log_debug_enabled and log_output
             else None
         ),
         client_response_headers=(
@@ -435,7 +443,14 @@ async def _record_target_failure(
     exc: UpstreamRequestError,
 ) -> Response | None:
     message = _format_channel_error(exc.detail)
-    _, _, log_request_body, _ = relay_log_capture_flags(runtime)
+    (
+        _,
+        _,
+        log_request_body,
+        _,
+        log_input,
+        _,
+    ) = relay_log_capture_flags(runtime)
     policy_key, policy = resolve_channel_error_policy(
         runtime,
         channel.router_error_policy_config,
@@ -519,7 +534,11 @@ async def _record_target_failure(
             ),
             request_url=request_url,
             request_headers=request_headers,
-            request_body=(_dump_log_json(upstream_body) if log_request_body else None),
+            request_body=(
+                _dump_log_json(upstream_body, log_input=log_input)
+                if log_request_body
+                else None
+            ),
         )
     )
     await log_ctx.update(
@@ -538,7 +557,11 @@ async def _record_target_failure(
             else (
                 request_content
                 if request_content is not None
-                else (_dump_log_json(upstream_body) if log_request_body else None)
+                else (
+                    _dump_log_json(upstream_body, log_input=log_input)
+                    if log_request_body
+                    else None
+                )
             )
         ),
         error_message=message,
@@ -572,6 +595,7 @@ def _prepare_channel_request(
     forwarded_headers: Mapping[str, str] | None,
     model_group_headers: tuple[Mapping[str, str], ...],
     log_body_enabled: bool,
+    log_input: bool = True,
     path_suffix: str | None = None,
     multipart_files: list[tuple[str, tuple[str, bytes, str]]] | None = None,
     extra_headers: Mapping[str, str] | None = None,
@@ -598,7 +622,11 @@ def _prepare_channel_request(
         upstream.headers["content-type"] = multipart_request.headers["content-type"]
     else:
         body_bytes = _json_body_bytes(upstream.json_body)
-    request_content = _dump_log_json(upstream.json_body) if log_body_enabled else None
+    request_content = (
+        _dump_log_json(upstream.json_body, log_input=log_input)
+        if log_body_enabled
+        else None
+    )
     too_large_message = _request_body_too_large_message(
         len(body_bytes), settings.max_request_body_bytes
     )
@@ -630,6 +658,7 @@ async def _call_channel(
     log_body_enabled: bool = False,
     log_debug_enabled: bool = False,
     log_response_headers_enabled: bool = True,
+    log_output: bool = True,
     global_proxy_url: str | None = None,
 ) -> UpstreamResult:
     proxy_url = resolve_upstream_proxy_url(channel, global_proxy_url)
@@ -675,6 +704,7 @@ async def _call_channel(
                 log_body_enabled,
                 log_debug_enabled,
                 log_response_headers_enabled,
+                log_output=log_output,
             )
         elif is_event_stream:
             result = await _build_stream_result(
@@ -715,6 +745,7 @@ async def _call_channel(
                 log_body_enabled,
                 log_debug_enabled,
                 log_response_headers_enabled,
+                log_output=log_output,
             )
         if not result.is_stream:
             app_state.router.record_success(
