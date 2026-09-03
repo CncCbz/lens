@@ -450,6 +450,7 @@ async def _record_target_failure(
         _,
         log_input,
         _,
+        log_tools,
     ) = relay_log_capture_flags(runtime)
     policy_key, policy = resolve_channel_error_policy(
         runtime,
@@ -535,7 +536,7 @@ async def _record_target_failure(
             request_url=request_url,
             request_headers=request_headers,
             request_body=(
-                _dump_log_json(upstream_body, log_input=log_input)
+                _dump_log_json(upstream_body, log_input=log_input, log_tools=log_tools)
                 if log_request_body
                 else None
             ),
@@ -558,7 +559,9 @@ async def _record_target_failure(
                 request_content
                 if request_content is not None
                 else (
-                    _dump_log_json(upstream_body, log_input=log_input)
+                    _dump_log_json(
+                        upstream_body, log_input=log_input, log_tools=log_tools
+                    )
                     if log_request_body
                     else None
                 )
@@ -596,6 +599,7 @@ def _prepare_channel_request(
     model_group_headers: tuple[Mapping[str, str], ...],
     log_body_enabled: bool,
     log_input: bool = True,
+    log_tools: bool = True,
     path_suffix: str | None = None,
     multipart_files: list[tuple[str, tuple[str, bytes, str]]] | None = None,
     extra_headers: Mapping[str, str] | None = None,
@@ -623,7 +627,7 @@ def _prepare_channel_request(
     else:
         body_bytes = _json_body_bytes(upstream.json_body)
     request_content = (
-        _dump_log_json(upstream.json_body, log_input=log_input)
+        _dump_log_json(upstream.json_body, log_input=log_input, log_tools=log_tools)
         if log_body_enabled
         else None
     )

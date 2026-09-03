@@ -117,9 +117,12 @@ async def _proxy_protocol(
         _,
         log_input,
         _,
+        log_tools,
     ) = relay_log_capture_flags(runtime)
     request_content = (
-        _dump_log_json(body, log_input=log_input) if log_request_body else None
+        _dump_log_json(body, log_input=log_input, log_tools=log_tools)
+        if log_request_body
+        else None
     )
     request_headers_content = (
         _dump_log_json(dict(request_headers))
@@ -725,6 +728,7 @@ async def _try_target(
         log_response_body,
         log_input,
         log_output,
+        log_tools,
     ) = relay_log_capture_flags(runtime)
     log_debug_enabled = bool(runtime["relay_log_debug_mode"])
     reasoning_effort = _extract_request_reasoning_effort(body, upstream_body)
@@ -738,6 +742,7 @@ async def _try_target(
             model_group_headers=(),
             log_body_enabled=log_request_body,
             log_input=log_input,
+            log_tools=log_tools,
             path_suffix=path_suffix,
             multipart_files=multipart_files,
             extra_headers=match_headers,

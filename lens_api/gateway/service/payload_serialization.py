@@ -24,6 +24,9 @@ _INPUT_PAYLOAD_KEYS = frozenset(
         "instructions",
     }
 )
+_TOOLS_PAYLOAD_KEYS = frozenset(
+    {"tools", "tool_choice", "toolConfig", "functions", "function_call"}
+)
 
 
 def _json_body_bytes(value: Any) -> bytes:
@@ -38,13 +41,22 @@ def _dump_json(value: Any) -> str | None:
 
 
 def _filter_payload_content(
-    value: Any, *, log_input: bool = True, log_output: bool = True
+    value: Any,
+    *,
+    log_input: bool = True,
+    log_output: bool = True,
+    log_tools: bool = True,
 ) -> Any:
     if not isinstance(value, dict):
         return value
     filtered = dict(value)
     if not log_input:
         for k in _INPUT_PAYLOAD_KEYS:
+            if k in filtered:
+                filtered[k] = _OMITTED_PLACEHOLDER
+
+    if not log_tools:
+        for k in _TOOLS_PAYLOAD_KEYS:
             if k in filtered:
                 filtered[k] = _OMITTED_PLACEHOLDER
 
@@ -106,11 +118,15 @@ def _filter_payload_content(
 
 
 def _dump_log_json(
-    value: Any, *, log_input: bool = True, log_output: bool = True
+    value: Any,
+    *,
+    log_input: bool = True,
+    log_output: bool = True,
+    log_tools: bool = True,
 ) -> str | None:
-    if not log_input or not log_output:
+    if not log_input or not log_output or not log_tools:
         value = _filter_payload_content(
-            value, log_input=log_input, log_output=log_output
+            value, log_input=log_input, log_output=log_output, log_tools=log_tools
         )
     sanitized, changed = _sanitize_log_payload(value)
     return _dump_json(sanitized if changed else value)
@@ -126,15 +142,26 @@ def _decode_content_bytes(content: bytes | None) -> str | None:
 
 
 def _decode_log_content_bytes(
-    content: bytes | None, *, log_input: bool = True, log_output: bool = True
+    content: bytes | None,
+    *,
+    log_input: bool = True,
+    log_output: bool = True,
+    log_tools: bool = True,
 ) -> str | None:
     return _sanitize_log_content_text(
-        _decode_content_bytes(content), log_input=log_input, log_output=log_output
+        _decode_content_bytes(content),
+        log_input=log_input,
+        log_output=log_output,
+        log_tools=log_tools,
     )
 
 
 def _sanitize_log_content_text(
-    value: str | None, *, log_input: bool = True, log_output: bool = True
+    value: str | None,
+    *,
+    log_input: bool = True,
+    log_output: bool = True,
+    log_tools: bool = True,
 ) -> str | None:
     if not value:
         return None
@@ -142,13 +169,22 @@ def _sanitize_log_content_text(
         payload = json.loads(value)
     except (TypeError, ValueError):
         return _sanitize_sse_log_content(
-            value, log_input=log_input, log_output=log_output
+            value,
+            log_input=log_input,
+            log_output=log_output,
+            log_tools=log_tools,
         )
-    return _dump_log_json(payload, log_input=log_input, log_output=log_output)
+    return _dump_log_json(
+        payload, log_input=log_input, log_output=log_output, log_tools=log_tools
+    )
 
 
 def _sanitize_sse_log_content(
-    value: str, *, log_input: bool = True, log_output: bool = True
+    value: str,
+    *,
+    log_input: bool = True,
+    log_output: bool = True,
+    log_tools: bool = True,
 ) -> str:
     lines = value.splitlines(keepends=True)
     data_lines: list[tuple[int, str]] = []
@@ -161,7 +197,9 @@ def _sanitize_sse_log_content(
         except (TypeError, ValueError):
             data_lines.clear()
             return
-        sanitized = _dump_log_json(payload, log_input=log_input, log_output=log_output)
+        sanitized = _dump_log_json(
+            payload, log_input=log_input, log_output=log_output, log_tools=log_tools
+        )
         if sanitized is None:
             data_lines.clear()
             return

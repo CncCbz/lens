@@ -145,6 +145,7 @@ from ...persistence.shared import (
     SETTING_RELAY_LOG_RESPONSE_BODY_ENABLED,
     SETTING_RELAY_LOG_INPUT_ENABLED,
     SETTING_RELAY_LOG_OUTPUT_ENABLED,
+    SETTING_RELAY_LOG_TOOLS_ENABLED,
     SETTING_RELAY_LOG_KEEP_PERIOD,
     SETTING_ROUTER_CIRCUIT_FAILURE_RATE_THRESHOLD,
     SETTING_ROUTER_CIRCUIT_MINIMUM_REQUESTS,
@@ -275,13 +276,14 @@ BOOLEAN_SETTING_KEYS = {
     SETTING_RELAY_LOG_RESPONSE_BODY_ENABLED,
     SETTING_RELAY_LOG_INPUT_ENABLED,
     SETTING_RELAY_LOG_OUTPUT_ENABLED,
+    SETTING_RELAY_LOG_TOOLS_ENABLED,
     SETTING_MULTIMODAL_RELAY_ENABLED,
 }
 
 
 def relay_log_capture_flags(
     runtime: dict[str, Any],
-) -> tuple[bool, bool, bool, bool, bool, bool]:
+) -> tuple[bool, bool, bool, bool, bool, bool, bool]:
     old_body = bool(runtime.get("relay_log_body_enabled", False))
     log_request_body = bool(runtime.get("relay_log_request_body_enabled", old_body))
     log_response_body = bool(runtime.get("relay_log_response_body_enabled", old_body))
@@ -298,6 +300,11 @@ def relay_log_capture_flags(
         (
             bool(runtime.get("relay_log_output_enabled", False))
             if log_response_body
+            else False
+        ),
+        (
+            bool(runtime.get("relay_log_tools_enabled", False))
+            if log_request_body
             else False
         ),
     )

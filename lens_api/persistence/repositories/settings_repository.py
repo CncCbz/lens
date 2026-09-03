@@ -32,6 +32,7 @@ from ..shared import (
     SETTING_RELAY_LOG_RESPONSE_BODY_ENABLED,
     SETTING_RELAY_LOG_INPUT_ENABLED,
     SETTING_RELAY_LOG_OUTPUT_ENABLED,
+    SETTING_RELAY_LOG_TOOLS_ENABLED,
     SETTING_RELAY_LOG_DEBUG_MODE,
     SETTING_RELAY_LOG_KEEP_ENABLED,
     SETTING_RELAY_LOG_KEEP_PERIOD,
@@ -177,6 +178,9 @@ class SettingsRepository:
             ),
             "relay_log_output_enabled": self._parse_bool(
                 mapping.get(SETTING_RELAY_LOG_OUTPUT_ENABLED), default=False
+            ),
+            "relay_log_tools_enabled": self._parse_bool(
+                mapping.get(SETTING_RELAY_LOG_TOOLS_ENABLED), default=False
             ),
             "relay_log_debug_mode": self._parse_bool(
                 mapping.get(SETTING_RELAY_LOG_DEBUG_MODE), default=False

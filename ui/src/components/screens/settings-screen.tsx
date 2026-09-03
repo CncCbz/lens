@@ -75,6 +75,7 @@ const RELAY_LOG_REQUEST_BODY_ENABLED = "relay_log_request_body_enabled";
 const RELAY_LOG_RESPONSE_BODY_ENABLED = "relay_log_response_body_enabled";
 const RELAY_LOG_INPUT_ENABLED = "relay_log_input_enabled";
 const RELAY_LOG_OUTPUT_ENABLED = "relay_log_output_enabled";
+const RELAY_LOG_TOOLS_ENABLED = "relay_log_tools_enabled";
 const RELAY_LOG_DEBUG_MODE = "relay_log_debug_mode";
 const MODEL_LIST_COMPAT_MODE_ENABLED = "model_list_compat_mode_enabled";
 const ROUTER_ERROR_POLICY_CONFIG = "router_error_policy_config";
@@ -109,6 +110,7 @@ type DraftState = {
   relayLogResponseBodyEnabled: boolean;
   relayLogInputEnabled: boolean;
   relayLogOutputEnabled: boolean;
+  relayLogToolsEnabled: boolean;
   relayLogDebugMode: boolean;
   modelListCompatModeEnabled: boolean;
   siteName: string;
@@ -137,6 +139,7 @@ const EMPTY_DRAFT: DraftState = {
   relayLogResponseBodyEnabled: false,
   relayLogInputEnabled: false,
   relayLogOutputEnabled: false,
+  relayLogToolsEnabled: false,
   relayLogDebugMode: false,
   modelListCompatModeEnabled: false,
   siteName: "Lens",
@@ -202,6 +205,11 @@ function parseSettings(items: SettingItem[] | undefined) {
     relayLogOutputEnabled: parseBoolFlag(
       mapping,
       RELAY_LOG_OUTPUT_ENABLED,
+      false,
+    ),
+    relayLogToolsEnabled: parseBoolFlag(
+      mapping,
+      RELAY_LOG_TOOLS_ENABLED,
       false,
     ),
     relayLogDebugMode:
@@ -443,6 +451,10 @@ export function SettingsScreen() {
         {
           key: RELAY_LOG_OUTPUT_ENABLED,
           value: draft.relayLogOutputEnabled ? "true" : "false",
+        },
+        {
+          key: RELAY_LOG_TOOLS_ENABLED,
+          value: draft.relayLogToolsEnabled ? "true" : "false",
         },
         {
           key: RELAY_LOG_BODY_ENABLED,
@@ -782,6 +794,7 @@ export function SettingsScreen() {
                   }
                   relayLogInputEnabled={draft.relayLogInputEnabled}
                   relayLogOutputEnabled={draft.relayLogOutputEnabled}
+                  relayLogToolsEnabled={draft.relayLogToolsEnabled}
                   relayLogDebugMode={draft.relayLogDebugMode}
                   modelListCompatModeEnabled={draft.modelListCompatModeEnabled}
                   onProxyUrlChange={(value) => setDraftValue("proxyUrl", value)}
@@ -805,6 +818,9 @@ export function SettingsScreen() {
                   }
                   onRelayLogOutputEnabledChange={(checked) =>
                     setDraftValue("relayLogOutputEnabled", checked)
+                  }
+                  onRelayLogToolsEnabledChange={(checked) =>
+                    setDraftValue("relayLogToolsEnabled", checked)
                   }
                   onRelayLogDebugModeChange={(checked) =>
                     setDraftValue("relayLogDebugMode", checked)

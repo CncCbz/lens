@@ -21,6 +21,7 @@ interface GatewaySettingsProps {
   relayLogResponseBodyEnabled: boolean;
   relayLogInputEnabled: boolean;
   relayLogOutputEnabled: boolean;
+  relayLogToolsEnabled: boolean;
   relayLogDebugMode: boolean;
   modelListCompatModeEnabled: boolean;
   onProxyUrlChange: (value: string) => void;
@@ -31,6 +32,7 @@ interface GatewaySettingsProps {
   onRelayLogResponseBodyEnabledChange: (checked: boolean) => void;
   onRelayLogInputEnabledChange: (checked: boolean) => void;
   onRelayLogOutputEnabledChange: (checked: boolean) => void;
+  onRelayLogToolsEnabledChange: (checked: boolean) => void;
   onRelayLogDebugModeChange: (checked: boolean) => void;
   onModelListCompatModeEnabledChange: (checked: boolean) => void;
 }
@@ -72,6 +74,7 @@ export function GatewaySettings({
   relayLogResponseBodyEnabled,
   relayLogInputEnabled,
   relayLogOutputEnabled,
+  relayLogToolsEnabled,
   relayLogDebugMode,
   modelListCompatModeEnabled,
   onProxyUrlChange,
@@ -82,6 +85,7 @@ export function GatewaySettings({
   onRelayLogResponseBodyEnabledChange,
   onRelayLogInputEnabledChange,
   onRelayLogOutputEnabledChange,
+  onRelayLogToolsEnabledChange,
   onRelayLogDebugModeChange,
   onModelListCompatModeEnabledChange,
 }: GatewaySettingsProps) {
@@ -171,6 +175,12 @@ export function GatewaySettings({
             checked={relayLogOutputEnabled}
             onCheckedChange={onRelayLogOutputEnabledChange}
             disabled={!relayLogResponseBodyEnabled}
+          />
+          <LogSwitch
+            label={titleForLocale(locale, "工具定义", "Tool definitions")}
+            checked={relayLogToolsEnabled}
+            onCheckedChange={onRelayLogToolsEnabledChange}
+            disabled={!relayLogRequestBodyEnabled}
           />
         </FieldGroup>
       </div>

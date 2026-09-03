@@ -37,12 +37,21 @@ from lens_api.persistence.shared import (
 
 
 def test_relay_log_capture_flags_defaults() -> None:
-    assert relay_log_capture_flags({}) == (True, True, False, False, False, False)
+    assert relay_log_capture_flags({}) == (
+        True,
+        True,
+        False,
+        False,
+        False,
+        False,
+        False,
+    )
     assert relay_log_capture_flags({"relay_log_body_enabled": True}) == (
         True,
         True,
         True,
         True,
+        False,
         False,
         False,
     )
@@ -55,8 +64,18 @@ def test_relay_log_capture_flags_defaults() -> None:
             "relay_log_body_enabled": True,
             "relay_log_input_enabled": True,
             "relay_log_output_enabled": True,
+            "relay_log_tools_enabled": True,
         }
-    ) == (False, True, True, False, True, False)
+    ) == (False, True, True, False, True, False, True)
+    assert relay_log_capture_flags(
+        {
+            "relay_log_request_body_enabled": True,
+            "relay_log_response_body_enabled": True,
+            "relay_log_input_enabled": True,
+            "relay_log_output_enabled": True,
+            "relay_log_tools_enabled": True,
+        }
+    ) == (True, True, True, True, True, True, True)
     assert relay_log_capture_flags(
         {
             "relay_log_request_body_enabled": True,
@@ -64,7 +83,7 @@ def test_relay_log_capture_flags_defaults() -> None:
             "relay_log_input_enabled": True,
             "relay_log_output_enabled": True,
         }
-    ) == (True, True, True, True, True, True)
+    ) == (True, True, True, True, True, True, False)
 
 
 def test_legacy_body_setting_fills_missing_body_flags() -> None:
@@ -93,6 +112,71 @@ def test_dump_log_json_input_filtering() -> None:
     dumped_with_input = _dump_log_json(payload, log_input=True)
     assert dumped_with_input is not None
     assert "hello world" in dumped_with_input
+
+
+def test_dump_log_json_tools_filtering() -> None:
+    payload = {
+        "model": "gpt-4o",
+        "messages": [{"role": "user", "content": "hello"}],
+        "tools": [
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_weather",
+                    "description": "weather schema",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            }
+        ],
+        "tool_choice": "auto",
+    }
+    dumped_without_tools = _dump_log_json(payload, log_tools=False)
+    assert dumped_without_tools is not None
+    assert '"tools":"<omitted>"' in dumped_without_tools
+    assert '"tool_choice":"<omitted>"' in dumped_without_tools
+    assert "get_weather" not in dumped_without_tools
+    assert "hello" in dumped_without_tools
+
+    dumped_with_tools = _dump_log_json(payload, log_tools=True)
+    assert dumped_with_tools is not None
+    assert "get_weather" in dumped_with_tools
+
+    gemini_payload = {
+        "contents": [{"text": "q"}],
+        "tools": [{"functionDeclarations": []}],
+        "toolConfig": {"functionCallingConfig": {"mode": "AUTO"}},
+    }
+    dumped_gemini = _dump_log_json(gemini_payload, log_tools=False)
+    assert dumped_gemini is not None
+    assert '"tools":"<omitted>"' in dumped_gemini
+    assert '"toolConfig":"<omitted>"' in dumped_gemini
+
+    legacy_payload = {
+        "messages": [{"role": "user", "content": "q"}],
+        "functions": [],
+        "function_call": "auto",
+    }
+    dumped_legacy = _dump_log_json(legacy_payload, log_tools=False)
+    assert dumped_legacy is not None
+    assert '"functions":"<omitted>"' in dumped_legacy
+    assert '"function_call":"<omitted>"' in dumped_legacy
+
+
+def test_dump_log_json_tools_independent_of_input() -> None:
+    payload = {
+        "model": "gpt-4o",
+        "messages": [{"role": "user", "content": "hi"}],
+        "tools": [{"type": "function", "function": {"name": "f1"}}],
+    }
+    dumped_only_tools = _dump_log_json(payload, log_input=False, log_tools=True)
+    assert dumped_only_tools is not None
+    assert "hi" not in dumped_only_tools
+    assert "f1" in dumped_only_tools
+
+    dumped_only_input = _dump_log_json(payload, log_input=True, log_tools=False)
+    assert dumped_only_input is not None
+    assert "hi" in dumped_only_input
+    assert "f1" not in dumped_only_input
 
 
 def test_dump_log_json_output_filtering() -> None:
