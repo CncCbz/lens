@@ -3,7 +3,16 @@
 import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import dynamic from "next/dynamic";
-import { Check, Copy, Eye, EyeOff, Pencil, Plus, Trash2 } from "lucide-react";
+import {
+  Check,
+  Code,
+  Copy,
+  Eye,
+  EyeOff,
+  Pencil,
+  Plus,
+  Trash2,
+} from "lucide-react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
@@ -47,6 +56,12 @@ const GatewayApiKeyDialog = dynamic(() =>
   ),
 );
 
+const GatewayApiKeyConfigDialog = dynamic(() =>
+  import("./gateway-api-key-manager/config-dialog").then(
+    (module) => module.GatewayApiKeyConfigDialog,
+  ),
+);
+
 export function GatewayApiKeyManager({ locale }: { locale: Locale }) {
   const queryClient = useQueryClient();
   const timeZone = useAppTimeZone();
@@ -66,6 +81,7 @@ export function GatewayApiKeyManager({ locale }: { locale: Locale }) {
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingKey, setEditingKey] = useState<GatewayApiKey | null>(null);
+  const [configKey, setConfigKey] = useState<GatewayApiKey | null>(null);
   const dialogModelGroupOptions = useMemo(
     () =>
       buildGatewayModelGroupOptions(
@@ -236,7 +252,7 @@ export function GatewayApiKeyManager({ locale }: { locale: Locale }) {
           </div>
 
           <div className="min-w-0 rounded-lg border">
-            <Table className="min-w-[1120px] table-fixed">
+            <Table className="min-w-[1160px] table-fixed">
               <TableHeader>
                 <TableRow>
                   <TableHead className="w-40">
@@ -254,7 +270,7 @@ export function GatewayApiKeyManager({ locale }: { locale: Locale }) {
                   <TableHead className="w-56">
                     {titleForLocale(locale, "权限", "Permissions")}
                   </TableHead>
-                  <TableHead className="w-36 text-right">
+                  <TableHead className="w-48 text-right">
                     {titleForLocale(locale, "操作", "Actions")}
                   </TableHead>
                 </TableRow>
@@ -280,9 +296,16 @@ export function GatewayApiKeyManager({ locale }: { locale: Locale }) {
                       <TableRow key={item.id}>
                         <TableCell className="min-w-0">
                           <div className="flex min-w-36 flex-col gap-2">
-                            <div className="truncate text-sm text-foreground">
-                              {item.remark ||
-                                titleForLocale(locale, "未命名", "Unnamed")}
+                            <div className="flex min-w-0 items-center gap-1.5">
+                              <div className="truncate text-sm text-foreground">
+                                {item.remark ||
+                                  titleForLocale(locale, "未命名", "Unnamed")}
+                              </div>
+                              {item.has_custom_models_config ? (
+                                <Badge variant="outline" className="font-mono">
+                                  custom=1
+                                </Badge>
+                              ) : null}
                             </div>
                             {expired || outOfBalance ? (
                               <div className="flex flex-wrap gap-1">
@@ -444,6 +467,20 @@ export function GatewayApiKeyManager({ locale }: { locale: Locale }) {
                               type="button"
                               variant="ghost"
                               size="icon-sm"
+                              onClick={() => setConfigKey(item)}
+                              title={titleForLocale(
+                                locale,
+                                "模型配置",
+                                "Model config",
+                              )}
+                              disabled={isBusy}
+                            >
+                              <Code />
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon-sm"
                               onClick={() => openEditDialog(item)}
                               title={titleForLocale(locale, "编辑", "Edit")}
                               disabled={isBusy}
@@ -494,6 +531,15 @@ export function GatewayApiKeyManager({ locale }: { locale: Locale }) {
           modelGroupOptions={dialogModelGroupOptions}
           timeZone={timeZone}
           onClose={() => setDialogOpen(false)}
+          onSaved={refreshKeys}
+        />
+      ) : null}
+
+      {configKey ? (
+        <GatewayApiKeyConfigDialog
+          locale={locale}
+          gatewayKey={configKey}
+          onClose={() => setConfigKey(null)}
           onSaved={refreshKeys}
         />
       ) : null}

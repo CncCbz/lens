@@ -288,14 +288,9 @@ async def list_gateway_models(
     return _build_openai_models_payload(groups, gateway_key)
 
 
-async def export_gateway_models_config(
-    type: str = "pi",
-    gateway_key: GatewayApiKey = Depends(get_current_gateway_key),
-) -> PiConfigExportResponse:
+async def build_gateway_pi_config(gateway_key: GatewayApiKey) -> PiConfigExportResponse:
     from ...core.pi_catalog import collect_group_models
 
-    if type != "pi":
-        raise ValueError(f"Unsupported config type: {type}")
     groups = await app_state.group_repo.list_groups()
     entries = await app_state.pi_catalog_repo.list_all()
     runtime = await app_state.settings_repo.get_runtime_settings()
@@ -305,7 +300,7 @@ async def export_gateway_models_config(
         else ""
     )
     return PiConfigExportResponse(
-        type=type,
+        type="pi",
         models=collect_group_models(
             groups,
             entries,
@@ -313,6 +308,23 @@ async def export_gateway_models_config(
             relay_image_group_id=relay_image_group_id,
         ),
     )
+
+
+async def export_gateway_models_config(
+    type: str = "pi",
+    custom: bool = False,
+    gateway_key: GatewayApiKey = Depends(get_current_gateway_key),
+) -> PiConfigExportResponse:
+    if type != "pi":
+        raise ValueError(f"Unsupported config type: {type}")
+    if custom:
+        stored = await app_state.gateway_api_key_repo.get_custom_models_config(
+            gateway_key.id
+        )
+        if stored is None:
+            raise LookupError("Custom models config not found")
+        return stored
+    return await build_gateway_pi_config(gateway_key)
 
 
 async def list_gemini_models(

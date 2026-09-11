@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 
+from ...models import PiConfigExportResponse
 from .shared import (
     AsyncSession,
     ConfigBackupCronjob,
@@ -515,6 +516,9 @@ class BackupLoadersMixin:
                 excluded_models=load_excluded_models(row.excluded_models_json),
                 max_cost_usd=max(row.max_cost_usd, 0.0),
                 spent_cost_usd=max(row.spent_cost_usd, 0.0),
+                custom_models_config=PiConfigExportResponse.from_json(
+                    row.custom_models_config_json
+                ),
                 expires_at=format_optional_datetime(row.expires_at),
                 created_at=format_optional_datetime(row.created_at),
                 updated_at=format_optional_datetime(row.updated_at),

@@ -4,6 +4,7 @@ from sqlalchemy import case
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from ...models import PiConfigExportResponse
 from ..shared import (
     AsyncSession,
     GATEWAY_API_KEY_CHARS,
@@ -40,6 +41,34 @@ class GatewayApiKeyRepository:
                 .all()
             )
             return [self._to_gateway_api_key(row) for row in rows]
+
+    async def get_gateway_api_key(self, key_id: str) -> GatewayApiKey:
+        async with self._session_factory() as session:
+            entity = await session.get(GatewayApiKeyEntity, key_id)
+            if entity is None:
+                raise KeyError(key_id)
+            return self._to_gateway_api_key(entity)
+
+    async def get_custom_models_config(
+        self, key_id: str
+    ) -> PiConfigExportResponse | None:
+        async with self._session_factory() as session:
+            entity = await session.get(GatewayApiKeyEntity, key_id)
+            if entity is None:
+                raise KeyError(key_id)
+            return PiConfigExportResponse.from_json(entity.custom_models_config_json)
+
+    async def set_custom_models_config(
+        self, key_id: str, payload: PiConfigExportResponse
+    ) -> PiConfigExportResponse:
+        async with self._session_factory() as session:
+            entity = await session.get(GatewayApiKeyEntity, key_id)
+            if entity is None:
+                raise KeyError(key_id)
+            entity.custom_models_config_json = payload.model_dump_json()
+            entity.updated_at = datetime.now(UTC).replace(tzinfo=None)
+            await session.commit()
+            return payload
 
     async def get_gateway_api_key_by_secret(self, secret: str) -> GatewayApiKey | None:
         normalized = secret.strip()
@@ -216,6 +245,9 @@ class GatewayApiKeyRepository:
             excluded_models=cls._load_gateway_key_models(entity.excluded_models_json),
             max_cost_usd=max(float(entity.max_cost_usd), 0.0),
             spent_cost_usd=max(float(entity.spent_cost_usd), 0.0),
+            has_custom_models_config=bool(
+                (entity.custom_models_config_json or "").strip()
+            ),
             expires_at=cls._format_datetime(entity.expires_at),
             created_at=cls._format_datetime(entity.created_at),
             updated_at=cls._format_datetime(entity.updated_at),

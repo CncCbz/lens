@@ -670,6 +670,11 @@ class BackupReplacersMixin:
                     ),
                     max_cost_usd=max(item.max_cost_usd, 0.0),
                     spent_cost_usd=max(item.spent_cost_usd, 0.0),
+                    custom_models_config_json=(
+                        item.custom_models_config.model_dump_json()
+                        if item.custom_models_config is not None
+                        else None
+                    ),
                     expires_at=parse_optional_datetime(item.expires_at),
                     created_at=parse_optional_datetime(item.created_at) or now,
                     updated_at=parse_optional_datetime(item.updated_at) or now,

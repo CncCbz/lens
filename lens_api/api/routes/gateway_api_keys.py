@@ -28,3 +28,15 @@ def register(app: FastAPI, service_module: ModuleType) -> None:
         methods=["DELETE"],
         status_code=204,
     )
+    app.add_api_route(
+        "/api/admin/gateway-api-keys/{key_id}/models/config",
+        service_module.export_gateway_key_models_config,
+        methods=["GET"],
+        response_model=service_module.PiConfigExportResponse,
+    )
+    app.add_api_route(
+        "/api/admin/gateway-api-keys/{key_id}/models/config",
+        service_module.update_gateway_key_models_config,
+        methods=["PUT"],
+        response_model=service_module.PiConfigExportResponse,
+    )

@@ -9,6 +9,7 @@ from pydantic import (
     ConfigDict,
     Field,
     HttpUrl,
+    ValidationError,
     computed_field,
     field_validator,
     model_serializer,
@@ -1157,6 +1158,22 @@ class PiConfigExportResponse(StrictBaseModel):
     type: str
     models: list[dict[str, Any]] = Field(default_factory=list)
 
+    @classmethod
+    def from_json(cls, raw: str | None) -> "PiConfigExportResponse | None":
+        text = (raw or "").strip()
+        if not text:
+            return None
+        try:
+            payload = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise ValueError("Invalid custom models config JSON") from exc
+        if not isinstance(payload, dict):
+            raise ValueError("Invalid custom models config JSON")
+        try:
+            return cls.model_validate(payload)
+        except ValidationError as exc:
+            raise ValueError("Invalid custom models config JSON") from exc
+
 
 class CronjobItem(StrictBaseModel):
     id: str
@@ -1252,6 +1269,7 @@ class GatewayApiKey(GatewayApiKeyBase):
     id: str
     api_key: str
     spent_cost_usd: float = 0.0
+    has_custom_models_config: bool = False
     created_at: str
     updated_at: str
 
@@ -1485,6 +1503,7 @@ class ConfigBackupGatewayApiKey(GatewayApiKeyBase):
     id: str
     api_key: str
     spent_cost_usd: float = 0.0
+    custom_models_config: PiConfigExportResponse | None = None
     created_at: str | None = None
     updated_at: str | None = None
 

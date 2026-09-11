@@ -580,6 +580,7 @@ export type GatewayApiKey = {
   excluded_models: string[];
   max_cost_usd: number;
   spent_cost_usd: number;
+  has_custom_models_config: boolean;
   expires_at?: string | null;
   created_at: string;
   updated_at: string;
@@ -686,6 +687,7 @@ export type ConfigBackupGatewayApiKey = {
   excluded_models: string[];
   max_cost_usd: number;
   spent_cost_usd: number;
+  custom_models_config?: PiConfigExportResponse | null;
   expires_at?: string | null;
   created_at?: string | null;
   updated_at?: string | null;

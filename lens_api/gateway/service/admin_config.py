@@ -61,6 +61,7 @@ from .runtime_context import (
 )
 from .tasks import _sync_group_prices
 from .auth import get_current_admin
+from .proxy_routes import build_gateway_pi_config
 
 
 async def list_model_groups(_: Any = Depends(get_current_admin)) -> list[ModelGroup]:
@@ -429,6 +430,41 @@ async def delete_gateway_api_key(
     await app_state.group_repo.detach_gateway_key(key_id)
     await app_state.gateway_api_key_repo.delete_gateway_api_key(key_id)
     return Response(status_code=204)
+
+
+async def export_gateway_key_models_config(
+    key_id: str,
+    type: str = "pi",
+    custom: bool = False,
+    _: Any = Depends(get_current_admin),
+) -> PiConfigExportResponse:
+    if type != "pi":
+        raise ValueError(f"Unsupported config type: {type}")
+    if custom:
+        stored = await app_state.gateway_api_key_repo.get_custom_models_config(key_id)
+        if stored is None:
+            raise LookupError("Custom models config not found")
+        return stored
+    key = await app_state.gateway_api_key_repo.get_gateway_api_key(key_id)
+    return await build_gateway_pi_config(key)
+
+
+async def update_gateway_key_models_config(
+    key_id: str,
+    payload: PiConfigExportResponse,
+    type: str = "pi",
+    custom: bool = False,
+    _: Any = Depends(get_current_admin),
+) -> PiConfigExportResponse:
+    if type != "pi":
+        raise ValueError(f"Unsupported config type: {type}")
+    if not custom:
+        raise ValueError("Only custom models config can be saved")
+    if payload.type != "pi":
+        raise ValueError(f"Unsupported config type: {payload.type}")
+    return await app_state.gateway_api_key_repo.set_custom_models_config(
+        key_id, payload
+    )
 
 
 async def export_settings_bundle(

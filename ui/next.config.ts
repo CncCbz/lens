@@ -5,6 +5,7 @@ const backendBaseUrl =
 const staticExportEnabled = process.env.LENS_UI_STATIC_EXPORT === "1";
 
 const nextConfig: NextConfig = {
+  allowedDevOrigins: ["127.0.0.1", "localhost"],
   ...(staticExportEnabled
     ? {
         output: "export" as const,
