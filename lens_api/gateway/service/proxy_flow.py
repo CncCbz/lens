@@ -291,30 +291,6 @@ async def _proxy_protocol(
         capacity_reasons: set[str] = set()
         unavailable_rejected = False
         for target in candidates:
-            if deadline.expired():
-                timeout_message = deadline.message()
-                await log_ctx.update(
-                    requested_group_name=plan.requested_group_name,
-                    resolved_group_name=plan.resolved_group_name,
-                    upstream_model_name=None,
-                    channel=None,
-                    user_agent=upstream_user_agent,
-                    lifecycle_status=RequestLogLifecycleStatus.FAILED,
-                    status_code=504,
-                    success=False,
-                    is_stream=is_stream_body,
-                    error_message=timeout_message,
-                )
-                return _protocol_error_response(
-                    protocol=protocol,
-                    status_code=504,
-                    error_type="gateway_timeout",
-                    message=timeout_message,
-                    headers=_response_headers_for_log(log_ctx),
-                    request_id=log_ctx.request_id,
-                    attempt_count=len(log_ctx.attempts),
-                    retryable=False,
-                )
             target_attempts = 0
             same_target_budget = 1
             while target_attempts < same_target_budget:
@@ -340,7 +316,7 @@ async def _proxy_protocol(
                         log_ctx=log_ctx,
                         errors=errors,
                         failure_status_codes=failure_status_codes,
-                        deadline=deadline,
+                        deadline=deadline.for_attempt(),
                         route_release=release_target,
                         path_suffix=path_suffix,
                         multipart_files=multipart_files,

@@ -520,3 +520,62 @@ def test_client_disconnect_does_not_become_502() -> None:
     issue = _describe_stream_capture_issue(ProtocolKind.OPENAI_CHAT, capture, None)
     result = UpstreamResult(response=Response(), status_code=200)
     assert _stream_log_status_code(result, capture, issue) == 200
+
+
+def test_call_channel_retries_wait_full_first_token_timeout() -> None:
+    channel = _channel(ProtocolKind.OPENAI_CHAT)
+    body = {
+        "model": "m",
+        "messages": [{"role": "user", "content": "hi"}],
+        "stream": False,
+    }
+    upstream = build_upstream_request(channel, body, Settings(auth_secret_key="s"))
+    timeout_s = 0.15
+
+    async def _hang(*_args, **_kwargs):
+        await asyncio.sleep(30)
+        raise AssertionError("upstream hang should be cancelled")
+
+    async def _run(*, reset: bool) -> list[float]:
+        deadline = _RequestDeadline(
+            started_at=time.perf_counter(),
+            first_token_timeout_seconds=timeout_s,
+            stream_idle_timeout_seconds=1,
+        )
+        elapsed: list[float] = []
+        with (
+            patch(
+                "lens_api.gateway.service.proxy_upstream._resolve_http_client",
+                return_value=(object(), False),
+            ),
+            patch(
+                "lens_api.gateway.service.proxy_upstream._send_upstream",
+                new=_hang,
+            ),
+        ):
+            for _ in range(3):
+                scoped = deadline.for_attempt() if reset else deadline
+                started = time.perf_counter()
+                try:
+                    await _call_channel(
+                        channel,
+                        body,
+                        upstream,
+                        b"{}",
+                        None,
+                        scoped,
+                        credential_id=None,
+                        probe_owner=None,
+                        client_protocol=ProtocolKind.OPENAI_CHAT,
+                    )
+                except Exception as exc:
+                    assert getattr(exc, "status_code", None) == 504
+                    elapsed.append(time.perf_counter() - started)
+        return elapsed
+
+    reused = asyncio.run(_run(reset=False))
+    reset = asyncio.run(_run(reset=True))
+    assert len(reused) == 3 and len(reset) == 3
+    assert reused[0] >= timeout_s * 0.7
+    assert all(t < 0.05 for t in reused[1:])
+    assert all(timeout_s * 0.7 <= t < timeout_s + 0.25 for t in reset)

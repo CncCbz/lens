@@ -524,6 +524,13 @@ class _RequestDeadline:
             0.0,
         )
 
+    def for_attempt(self) -> _RequestDeadline:
+        return _RequestDeadline(
+            started_at=perf_counter(),
+            first_token_timeout_seconds=self.first_token_timeout_seconds,
+            stream_idle_timeout_seconds=self.stream_idle_timeout_seconds,
+        )
+
     def expired(self) -> bool:
         remaining = self.first_token_remaining_seconds()
         return remaining is not None and remaining <= 0

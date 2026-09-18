@@ -173,3 +173,15 @@ def test_request_deadline_switches_to_idle_after_first_chunk() -> None:
     assert idle == 5
     assert "first-token" in deadline.timeout_message(kind="first_token")
     assert "idle" in deadline.timeout_message(kind="stream_idle")
+
+
+def test_request_deadline_for_attempt_resets_first_token_window() -> None:
+    expired = _RequestDeadline(
+        started_at=perf_counter() - 10,
+        first_token_timeout_seconds=1,
+        stream_idle_timeout_seconds=5,
+    )
+    assert expired.expired()
+    assert expired.first_token_remaining_seconds() == 0.0
+    remaining = expired.for_attempt().first_token_remaining_seconds()
+    assert remaining is not None and remaining > 0.5
