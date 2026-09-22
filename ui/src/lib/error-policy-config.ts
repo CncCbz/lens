@@ -378,10 +378,10 @@ export function validateErrorPolicyDraft(
         : `Duplicate policy key: ${row.key}`;
     }
     seen.add(row.key);
-    if (row.same_target_retries < 0 || row.same_target_retries > 5) {
+    if (row.same_target_retries < 0) {
       return locale === "zh-CN"
-        ? `${row.key}: 同目标重试次数须在 0..5`
-        : `${row.key}: same-target retries must be 0..5`;
+        ? `${row.key}: 同目标重试次数不能为负`
+        : `${row.key}: same-target retries cannot be negative`;
     }
     if (row.failure_threshold < 1 || row.failure_threshold > 100) {
       return locale === "zh-CN"

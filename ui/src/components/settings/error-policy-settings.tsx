@@ -162,9 +162,11 @@ export function ErrorPolicySettings({
             </tr>
           </thead>
           <tbody>
-            {draft.rows.map((row) => (
+            {draft.rows.map((row, rowIndex) => (
               <tr
-                key={row.key}
+                // stable per position: keying by row.key would remount the
+                // row (and blur its inputs) on every status-code keystroke
+                key={rowIndex}
                 className="border-b last:border-b-0 hover:bg-muted/20"
               >
                 <td className="px-3 py-2 align-middle">
@@ -206,7 +208,6 @@ export function ErrorPolicySettings({
                   <Input
                     type="number"
                     min={0}
-                    max={5}
                     value={row.same_target_retries}
                     onChange={(event) =>
                       onChange(

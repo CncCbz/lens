@@ -922,7 +922,6 @@ def normalize_model_group_sync_filter(
 RouterErrorCooldownScope = Literal["none", "credential", "target", "channel"]
 ROUTER_ERROR_POLICY_CATEGORY_KEYS = frozenset({"4xx", "5xx"})
 ROUTER_ERROR_POLICY_VIRTUAL_KEYS = frozenset({"timeout", "transport_error"})
-ROUTER_ERROR_POLICY_MAX_SAME_TARGET_RETRIES = 5
 ROUTER_ERROR_POLICY_MAX_FAILURE_THRESHOLD = 100
 ROUTER_ERROR_POLICY_MAX_COOLDOWN_SECONDS = 604800
 
@@ -954,9 +953,7 @@ def _sort_router_error_policy_key(key: str) -> tuple[int, str]:
 
 
 class RouterErrorPolicy(StrictBaseModel):
-    same_target_retries: int = Field(
-        default=3, ge=0, le=ROUTER_ERROR_POLICY_MAX_SAME_TARGET_RETRIES
-    )
+    same_target_retries: int = Field(default=3, ge=0)
     fallback: bool = True
     cooldown_scope: RouterErrorCooldownScope = "none"
     failure_threshold: int = Field(
@@ -979,9 +976,7 @@ class RouterErrorPolicy(StrictBaseModel):
 
 
 class RouterErrorPolicyOverride(StrictBaseModel):
-    same_target_retries: int | None = Field(
-        default=None, ge=0, le=ROUTER_ERROR_POLICY_MAX_SAME_TARGET_RETRIES
-    )
+    same_target_retries: int | None = Field(default=None, ge=0)
     fallback: bool | None = None
     cooldown_scope: RouterErrorCooldownScope | None = None
     failure_threshold: int | None = Field(
