@@ -1,4 +1,5 @@
 import type {
+  RequestLogAttempt,
   RequestLogFilterOption,
   RequestLogItem,
   SettingItem,
@@ -367,6 +368,26 @@ export function getModelChain(
     return `${requested} -> ${resolved}`;
   }
   return resolved || requested || item.upstream_model_name || "n/a";
+}
+
+export function isModelMismatch(
+  modelName: string | null | undefined,
+  resolvedGroupName: string | null | undefined,
+) {
+  const actual = modelName?.trim();
+  const resolved = resolvedGroupName?.trim();
+  if (!actual || !resolved) return false;
+  return actual !== resolved;
+}
+
+// Relay attempts target a helper group, so the parent record's resolved group
+// name is not a valid baseline for them.
+export function isAttemptModelMismatch(
+  attempt: Pick<RequestLogAttempt, "model_name" | "relay_kind">,
+  resolvedGroupName: string | null | undefined,
+) {
+  if (attempt.relay_kind) return false;
+  return isModelMismatch(attempt.model_name, resolvedGroupName);
 }
 
 export function getSecondaryModelName(

@@ -12,6 +12,7 @@ import {
 	Gauge,
 	KeyRound,
 	ServerCog,
+	TriangleAlert,
 	Upload,
 	Waypoints,
 	Zap,
@@ -41,6 +42,8 @@ import {
 	getModelChain,
 	getResolvedGroupName,
 	getSecondaryModelName,
+	isAttemptModelMismatch,
+	isModelMismatch,
 	titleForLocale,
 } from "./shared";
 
@@ -75,6 +78,10 @@ export function AttemptChain({
 		<div className="overflow-hidden rounded-xl bg-muted/20">
 			{attempts.map((attempt, index) => {
 				const errorDisplay = formatErrorDisplay(attempt.error_message);
+				const modelMismatch = isAttemptModelMismatch(
+					attempt,
+					detail.resolved_group_name,
+				);
 				return (
 					<div
 						key={`${attempt.channel_id}-${index}`}
@@ -102,8 +109,21 @@ export function AttemptChain({
 									</Badge>
 								) : null}
 								{attempt.model_name ? (
-									<span className="max-w-[220px] truncate text-xs text-muted-foreground">
-										{attempt.model_name}
+									<span
+										className={cn(
+											"flex max-w-[220px] items-center gap-1 truncate text-xs",
+											modelMismatch
+												? "text-amber-700 dark:text-amber-300"
+												: "text-muted-foreground",
+										)}
+										title={attempt.model_name}
+									>
+										{modelMismatch ? (
+											<TriangleAlert size={12} className="shrink-0" />
+										) : null}
+										<span className="min-w-0 truncate">
+											{attempt.model_name}
+										</span>
 									</span>
 								) : null}
 								<RequestOutcomeBadge
@@ -175,6 +195,12 @@ export function RequestCard({
 		? `${modelChain} ${item.reasoning_effort}`
 		: modelChain;
 	const secondaryModelName = getSecondaryModelName(item);
+	// guard the empty-baseline case: the chip renders whenever upstream differs
+	// from resolved, but amber only means "compared and different".
+	const secondaryModelMismatch = isModelMismatch(
+		item.upstream_model_name,
+		item.resolved_group_name,
+	);
 	const attemptCount = Number.isFinite(item.attempt_count)
 		? item.attempt_count
 		: 0;
@@ -319,8 +345,19 @@ export function RequestCard({
 							) : null}
 							{secondaryModelName ? (
 								<RequestMeta
-									icon={<ServerCog size={13} />}
+									icon={
+										secondaryModelMismatch ? (
+											<TriangleAlert size={13} />
+										) : (
+											<ServerCog size={13} />
+										)
+									}
 									value={secondaryModelName}
+									className={
+										secondaryModelMismatch
+											? "text-amber-700 dark:text-amber-300"
+											: undefined
+									}
 								/>
 							) : null}
 						</div>

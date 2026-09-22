@@ -148,7 +148,7 @@ export function RequestMeta({
 				className,
 			)}
 		>
-			<span className="shrink-0 text-muted-foreground/90">{icon}</span>
+			<span className="shrink-0 text-current opacity-90">{icon}</span>
 			<span className="truncate leading-none">{value}</span>
 		</div>
 	);

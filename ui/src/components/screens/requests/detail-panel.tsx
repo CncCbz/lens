@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, type CSSProperties } from "react";
+import { TriangleAlert } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import type {
   RequestLogAttempt,
@@ -17,6 +18,8 @@ import {
   formatTps,
   getModelChain,
   getResolvedGroupName,
+  isAttemptModelMismatch,
+  isModelMismatch,
   titleForLocale,
 } from "./shared";
 import { JsonViewer } from "./viewer";
@@ -26,11 +29,29 @@ function shortRequestId(value: string) {
   return `${value.slice(0, 8)}...${value.slice(-4)}`;
 }
 
-function SummaryStat({ label, value }: { label: string; value: string }) {
+function SummaryStat({
+  label,
+  value,
+  mismatch,
+}: {
+  label: string;
+  value: string;
+  mismatch?: boolean;
+}) {
   return (
     <span className="text-xs text-muted-foreground">
       {label}
-      <span className="ml-1 font-semibold text-foreground">{value}</span>
+      <span
+        className={cn(
+          "ml-1 font-semibold",
+          mismatch
+            ? "inline-flex items-center gap-1 text-amber-700 dark:text-amber-300"
+            : "text-foreground",
+        )}
+      >
+        {mismatch ? <TriangleAlert size={12} className="shrink-0" /> : null}
+        {value}
+      </span>
     </span>
   );
 }
@@ -398,6 +419,9 @@ function TraceDetail({
   const isAttempt = isRequestNode || isResponseNode;
   const attemptIndex = isAttempt ? Number(trace.key.split("-")[1]) : -1;
   const attempt = isAttempt ? detail.attempts[attemptIndex] : undefined;
+  const attemptModelMismatch = attempt
+    ? isAttemptModelMismatch(attempt, detail.resolved_group_name)
+    : false;
   const isFinalAttempt = attemptIndex === detail.attempts.length - 1;
   const isRelayAttempt = Boolean(attempt?.relay_kind);
   const headers = isInboundRequest
@@ -544,7 +568,17 @@ function TraceDetail({
           {attempt.model_name ? (
             <span>
               {titleForLocale(locale, "模型：", "Model: ")}
-              <strong className="font-semibold text-foreground">
+              <strong
+                className={cn(
+                  "inline-flex items-center gap-1 font-semibold",
+                  attemptModelMismatch
+                    ? "text-amber-700 dark:text-amber-300"
+                    : "text-foreground",
+                )}
+              >
+                {attemptModelMismatch ? (
+                  <TriangleAlert size={12} className="shrink-0" />
+                ) : null}
                 {attempt.model_name}
               </strong>
             </span>
@@ -708,6 +742,16 @@ export function RequestLogDetailPanel({
           label={titleForLocale(locale, "模型", "Model")}
           value={modelName || getResolvedGroupName(detail)}
         />
+        {isModelMismatch(
+          detail.upstream_model_name,
+          detail.resolved_group_name,
+        ) ? (
+          <SummaryStat
+            label={titleForLocale(locale, "实际", "Actual")}
+            value={detail.upstream_model_name ?? ""}
+            mismatch
+          />
+        ) : null}
         <SummaryStat
           label={titleForLocale(locale, "渠道", "Channel")}
           value={formatChannelCredentialLabel(detail)}
