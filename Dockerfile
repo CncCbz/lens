@@ -6,9 +6,11 @@ FROM --platform=$BUILDPLATFORM ${NODE_IMAGE} AS ui-base
 WORKDIR /app/ui
 
 ARG PNPM_VERSION
-ENV PNPM_HOME=/pnpm
-ENV PATH=$PNPM_HOME:$PATH
 ARG NPM_CONFIG_REGISTRY=https://registry.npmmirror.com
+ARG COREPACK_NPM_REGISTRY=${NPM_CONFIG_REGISTRY}
+ENV COREPACK_NPM_REGISTRY=${COREPACK_NPM_REGISTRY} \
+    PNPM_HOME=/pnpm
+ENV PATH=$PNPM_HOME:$PATH
 
 RUN corepack enable pnpm \
     && corepack prepare pnpm@${PNPM_VERSION} --activate
