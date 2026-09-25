@@ -1632,6 +1632,7 @@ export function ChannelsScreen() {
         {
           method: "POST",
           body: JSON.stringify(payload),
+          signal: AbortSignal.timeout(60_000),
         },
       );
       setModelTestResult(result);
@@ -1646,9 +1647,13 @@ export function ChannelsScreen() {
       const message =
         e instanceof ApiError
           ? e.message
-          : locale === "zh-CN"
-            ? "模型测试失败"
-            : "Model test failed";
+          : e instanceof Error && e.name === "TimeoutError"
+            ? locale === "zh-CN"
+              ? "测试请求超时"
+              : "Test request timed out"
+            : locale === "zh-CN"
+              ? "模型测试失败"
+              : "Model test failed";
       setModelTestResult({
         success: false,
         status_code: null,
@@ -1741,6 +1746,7 @@ export function ChannelsScreen() {
                 {
                   method: "POST",
                   body: JSON.stringify(entry.payload),
+                  signal: AbortSignal.timeout(60_000),
                 },
               );
               const success = result.success;
@@ -1763,11 +1769,15 @@ export function ChannelsScreen() {
               }
             } catch (error) {
               const message =
-                error instanceof Error
-                  ? error.message
-                  : locale === "zh-CN"
-                    ? "测试请求失败"
-                    : "Test request failed";
+                error instanceof Error && error.name === "TimeoutError"
+                  ? locale === "zh-CN"
+                    ? "测试请求超时"
+                    : "Test request timed out"
+                  : error instanceof Error
+                    ? error.message
+                    : locale === "zh-CN"
+                      ? "测试请求失败"
+                      : "Test request failed";
               updateBatchTestRow(entry.key, {
                 status: "failed",
                 statusCode: null,

@@ -1120,6 +1120,7 @@ export function GroupsScreen() {
         {
           method: "POST",
           body: JSON.stringify(payload),
+          signal: AbortSignal.timeout(60_000),
         },
       );
       setModelTestResult(result);
@@ -1134,9 +1135,13 @@ export function GroupsScreen() {
       const message =
         e instanceof ApiError
           ? e.message
-          : locale === "zh-CN"
-            ? "模型测试失败"
-            : "Model test failed";
+          : e instanceof Error && e.name === "TimeoutError"
+            ? locale === "zh-CN"
+              ? "测试请求超时"
+              : "Test request timed out"
+            : locale === "zh-CN"
+              ? "模型测试失败"
+              : "Model test failed";
       setModelTestResult({
         success: false,
         status_code: null,
