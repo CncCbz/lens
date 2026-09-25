@@ -8,6 +8,7 @@ WORKDIR /app/ui
 ARG PNPM_VERSION
 ENV PNPM_HOME=/pnpm
 ENV PATH=$PNPM_HOME:$PATH
+ARG NPM_CONFIG_REGISTRY=https://registry.npmmirror.com
 
 RUN corepack enable pnpm \
     && corepack prepare pnpm@${PNPM_VERSION} --activate
@@ -33,11 +34,13 @@ RUN pnpm build
 FROM python:3.14-slim AS runner
 
 ARG PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
+ARG NPM_CONFIG_REGISTRY=https://registry.npmmirror.com
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DEFAULT_TIMEOUT=120 \
     PIP_INDEX_URL=${PIP_INDEX_URL} \
+    NPM_CONFIG_REGISTRY=${NPM_CONFIG_REGISTRY} \
     LENS_HOST=0.0.0.0 \
     LENS_PORT=3000 \
     LENS_UI_STATIC_DIR=/app/ui
@@ -54,7 +57,7 @@ COPY migrations ./migrations
 COPY scripts/docker/app-entrypoint.sh /usr/local/bin/app-entrypoint
 COPY --from=ui-builder /app/ui/out /app/ui
 
-RUN python -m pip install --retries 10 . \
+RUN python -m pip install --retries 10 'sqlalchemy[asyncio]' . \
     && chmod +x /usr/local/bin/app-entrypoint
 
 EXPOSE 3000
