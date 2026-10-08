@@ -1,7 +1,7 @@
 from datetime import datetime
 import uuid
 
-from sqlalchemy import CheckConstraint, Float, Index, Integer, String, Text
+from sqlalchemy import BigInteger, CheckConstraint, Float, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ..core.db import Base
@@ -93,7 +93,7 @@ class SiteProtocolConfigEntity(Base):
     rpm_limit: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     token_limit: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     cost_limit_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
-    spent_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    spent_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     spent_cost_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     param_override: Mapped[str] = mapped_column(Text, nullable=False, default="")
     match_regex: Mapped[str] = mapped_column(Text, nullable=False, default="")
