@@ -4,6 +4,7 @@ import json
 
 
 from ...models import PiConfigExportResponse
+from ..balance_store import load_balance_params, load_script_parameters
 from .shared import (
     AsyncSession,
     BalanceScript,
@@ -112,6 +113,7 @@ class BackupLoadersMixin:
                 "sort_order": row.sort_order,
                 "base_url_id": row.base_url_id,
                 "balance_script_id": row.balance_script_id or "",
+                "balance_params": load_balance_params(row.balance_params_json),
             }
             credentials_by_site.setdefault(row.site_id, []).append(item)
             credentials_by_id[row.id] = item
@@ -568,6 +570,7 @@ class BackupLoadersMixin:
                 name=row.name,
                 code=row.code,
                 timeout_seconds=row.timeout_seconds,
+                parameters=load_script_parameters(row.parameters_json),
             )
             for row in rows
         ]

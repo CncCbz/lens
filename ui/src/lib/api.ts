@@ -266,6 +266,7 @@ export type SiteCredential = {
   sort_order: number;
   base_url_id: string;
   balance_script_id: string;
+  balance_params: Record<string, string>;
 };
 
 export type SiteCredentialInput = {
@@ -276,6 +277,12 @@ export type SiteCredentialInput = {
   cost_multiplier: number;
   base_url_id: string;
   balance_script_id?: string;
+  balance_params?: Record<string, string>;
+};
+
+export type BalanceScriptParameter = {
+  key: string;
+  label: string;
 };
 
 export type BalanceScript = {
@@ -283,6 +290,7 @@ export type BalanceScript = {
   name: string;
   code: string;
   timeout_seconds: number;
+  parameters: BalanceScriptParameter[];
 };
 
 export type CredentialBalance = {

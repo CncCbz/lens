@@ -404,6 +404,7 @@ export const emptyForm = (locale: Locale = "zh-CN"): FormState => {
         cost_multiplier: 1,
         base_url_id: baseUrlId,
         balance_script_id: "",
+        balance_params: {},
       },
     ],
     protocolConfigs: [
@@ -631,6 +632,7 @@ export function toForm(site: Site, locale: Locale = "zh-CN"): FormState {
     cost_multiplier: item.cost_multiplier,
     base_url_id: item.base_url_id || baseUrls[0]?.id || "",
     balance_script_id: item.balance_script_id || "",
+    balance_params: item.balance_params ?? {},
   }));
   return {
     name: site.name,
@@ -752,6 +754,7 @@ export function toPayload(form: FormState): SitePayload {
           : 1,
         base_url_id: item.base_url_id,
         balance_script_id: item.balance_script_id || "",
+        balance_params: item.balance_params ?? {},
       }))
       .filter((item) => item.api_key),
     protocols: form.protocolConfigs.flatMap((protocolConfig) => {

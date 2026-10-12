@@ -391,6 +391,11 @@ class AppState:
                 base_url=str(target["base_url"]),
                 proxy=proxy,
                 timeout_seconds=int(target["timeout_seconds"]),
+                params=(
+                    target.get("params")
+                    if isinstance(target.get("params"), dict)
+                    else {}
+                ),
             )
             await self.balance_store.save_outcome(
                 str(target["credential_id"]),

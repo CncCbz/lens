@@ -1,12 +1,13 @@
 "use client";
 
-import type {
-  Dispatch,
-  FormEvent,
-  FormEventHandler,
-  SetStateAction,
+import {
+  useState,
+  type Dispatch,
+  type FormEvent,
+  type FormEventHandler,
+  type SetStateAction,
 } from "react";
-import { FolderPlus, Plus, RefreshCcw, X } from "lucide-react";
+import { FolderPlus, Plus, RefreshCcw, Settings, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { AppDialogContent, Dialog } from "@/components/ui/dialog";
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
@@ -136,6 +137,15 @@ export function ChannelEditorDialog({
   refreshingCredentialId: string | null;
   onRefreshBalance: (credentialId: string) => void;
 }) {
+  const [paramsCredentialId, setParamsCredentialId] = useState<string | null>(
+    null,
+  );
+  const paramsCredential = form.credentials.find(
+    (item) => item.id === paramsCredentialId,
+  );
+  const paramsScript = balanceScripts.find(
+    (item) => item.id === paramsCredential?.balance_script_id,
+  );
   return (
     <>
       <Dialog
@@ -374,34 +384,64 @@ export function ChannelEditorDialog({
                                           ? "余额查询方案"
                                           : "Balance script"}
                                       </FieldLabel>
-                                      <Select
-                                        value={
-                                          credential.balance_script_id || "none"
-                                        }
-                                        onValueChange={(value) =>
-                                          updateCredential(credentialIndex, {
-                                            balance_script_id:
-                                              value === "none" ? "" : value,
-                                          })
-                                        }
-                                      >
-                                        <SelectTrigger className="w-full">
-                                          <SelectValue />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                          <SelectItem value="none">
-                                            {locale === "zh-CN" ? "无" : "None"}
-                                          </SelectItem>
-                                          {balanceScripts.map((script) => (
-                                            <SelectItem
-                                              key={script.id}
-                                              value={script.id}
-                                            >
-                                              {script.name}
+                                      <div className="flex items-center gap-1">
+                                        <Select
+                                          value={
+                                            credential.balance_script_id ||
+                                            "none"
+                                          }
+                                          onValueChange={(value) =>
+                                            updateCredential(credentialIndex, {
+                                              balance_script_id:
+                                                value === "none" ? "" : value,
+                                            })
+                                          }
+                                        >
+                                          <SelectTrigger className="w-full">
+                                            <SelectValue />
+                                          </SelectTrigger>
+                                          <SelectContent>
+                                            <SelectItem value="none">
+                                              {locale === "zh-CN"
+                                                ? "无"
+                                                : "None"}
                                             </SelectItem>
-                                          ))}
-                                        </SelectContent>
-                                      </Select>
+                                            {balanceScripts.map((script) => (
+                                              <SelectItem
+                                                key={script.id}
+                                                value={script.id}
+                                              >
+                                                {script.name}
+                                              </SelectItem>
+                                            ))}
+                                          </SelectContent>
+                                        </Select>
+                                        {balanceScripts.some(
+                                          (script) =>
+                                            script.id ===
+                                              credential.balance_script_id &&
+                                            script.parameters.length > 0,
+                                        ) ? (
+                                          <Button
+                                            type="button"
+                                            variant="outline"
+                                            size="icon"
+                                            className="shrink-0 text-muted-foreground"
+                                            aria-label={
+                                              locale === "zh-CN"
+                                                ? "配置参数"
+                                                : "Configure parameters"
+                                            }
+                                            onClick={() =>
+                                              setParamsCredentialId(
+                                                credential.id,
+                                              )
+                                            }
+                                          >
+                                            <Settings size={16} />
+                                          </Button>
+                                        ) : null}
+                                      </div>
                                     </Field>
                                     <Field>
                                       <FieldLabel>
@@ -483,6 +523,7 @@ export function ChannelEditorDialog({
                                       cost_multiplier: 1,
                                       base_url_id: baseUrl.id,
                                       balance_script_id: "",
+                                      balance_params: {},
                                     },
                                   ],
                                 }))
@@ -654,6 +695,48 @@ export function ChannelEditorDialog({
               />
             </Field>
           </form>
+        </AppDialogContent>
+      </Dialog>
+      <Dialog
+        open={paramsCredentialId !== null}
+        onOpenChange={(open) => {
+          if (!open) setParamsCredentialId(null);
+        }}
+      >
+        <AppDialogContent
+          className="max-w-md"
+          title={paramsScript?.name || ""}
+          footer={
+            <Button type="button" onClick={() => setParamsCredentialId(null)}>
+              {locale === "zh-CN" ? "完成" : "Done"}
+            </Button>
+          }
+        >
+          <FieldGroup>
+            {(paramsScript?.parameters ?? []).map((parameter) => (
+              <Field key={parameter.key}>
+                <FieldLabel>{parameter.label}</FieldLabel>
+                <Input
+                  value={
+                    paramsCredential?.balance_params?.[parameter.key] ?? ""
+                  }
+                  onChange={(event) => {
+                    if (!paramsCredential) return;
+                    const index = form.credentials.findIndex(
+                      (item) => item.id === paramsCredential.id,
+                    );
+                    if (index < 0) return;
+                    updateCredential(index, {
+                      balance_params: {
+                        ...(paramsCredential.balance_params ?? {}),
+                        [parameter.key]: event.target.value,
+                      },
+                    });
+                  }}
+                />
+              </Field>
+            ))}
+          </FieldGroup>
         </AppDialogContent>
       </Dialog>
     </>

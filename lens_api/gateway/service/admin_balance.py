@@ -24,6 +24,7 @@ async def _proxy_url() -> str:
 async def list_balance_scripts(
     _: Any = Depends(get_current_admin),
 ) -> list[BalanceScript]:
+    await app_state.balance_store.ensure_builtin_scripts()
     return await app_state.balance_store.list_scripts()
 
 
@@ -69,6 +70,7 @@ async def refresh_credential_balance(
         base_url=str(target["base_url"]),
         proxy=await _proxy_url(),
         timeout_seconds=int(target["timeout_seconds"]),
+        params=target.get("params") if isinstance(target.get("params"), dict) else {},
     )
     return await app_state.balance_store.save_outcome(
         credential_id,
@@ -91,6 +93,7 @@ async def test_balance_script(
         base_url=payload.base_url,
         proxy=proxy,
         timeout_seconds=payload.timeout_seconds,
+        params=payload.params,
     )
     return BalanceScriptTestResult(
         ok=outcome.ok,

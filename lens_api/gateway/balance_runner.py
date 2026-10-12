@@ -27,6 +27,7 @@ def run_balance_script(
     base_url: str,
     proxy: str,
     timeout_seconds: int,
+    params: dict[str, str] | None = None,
 ) -> BalanceScriptOutcome:
     timeout = clamp_balance_timeout(timeout_seconds)
     env = {
@@ -45,6 +46,7 @@ def run_balance_script(
                     "api_key": api_key,
                     "base_url": base_url,
                     "proxy": proxy,
+                    "params": params or {},
                 }
             ),
             capture_output=True,

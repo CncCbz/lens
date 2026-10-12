@@ -273,14 +273,16 @@ function SettingCard({
   return (
     <section
       className={cn(
-        "min-w-0 rounded-2xl border bg-card px-4 py-4 shadow-sm sm:px-6 sm:py-5",
+        "flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border bg-card px-4 py-4 shadow-sm sm:px-6 sm:py-5",
         className,
       )}
     >
-      <header className="border-b pb-4">
+      <header className="shrink-0 border-b pb-4">
         <h2 className="text-base font-semibold text-foreground">{title}</h2>
       </header>
-      <div className="flex max-w-2xl flex-col gap-4 pt-5">{children}</div>
+      <div className="hide-scrollbar min-h-0 flex-1 overflow-y-auto pt-5">
+        <div className="flex w-full flex-col gap-4">{children}</div>
+      </div>
     </section>
   );
 }
@@ -684,11 +686,11 @@ export function SettingsScreen() {
         </div>
       </DashboardHeaderActions>
 
-      <section className="min-w-0">
+      <section className="flex h-[calc(100dvh-7.5rem)] min-h-0 min-w-0 flex-col">
         <Tabs
           defaultValue="appearance"
           orientation="vertical"
-          className="grid min-w-0 gap-6 lg:grid-cols-[220px_minmax(0,760px)] lg:items-start"
+          className="grid h-full min-h-0 min-w-0 gap-6 lg:grid-cols-[220px_minmax(0,1fr)]"
         >
           <TabsList className="flex h-auto w-full flex-row justify-start gap-1 overflow-x-auto rounded-none bg-transparent p-0 text-foreground lg:sticky lg:top-4 lg:flex-col lg:items-start lg:overflow-visible">
             {settingsTabs.map((item) => {
@@ -706,8 +708,11 @@ export function SettingsScreen() {
             })}
           </TabsList>
 
-          <div className="min-w-0">
-            <TabsContent value="appearance" className="mt-0">
+          <div className="h-full min-h-0 min-w-0">
+            <TabsContent
+              value="appearance"
+              className="mt-0 flex h-full min-h-0 flex-col"
+            >
               <SettingCard
                 title={titleForLocale(locale, "站点外观", "Appearance")}
               >
@@ -722,7 +727,10 @@ export function SettingsScreen() {
               </SettingCard>
             </TabsContent>
 
-            <TabsContent value="account" className="mt-0">
+            <TabsContent
+              value="account"
+              className="mt-0 flex h-full min-h-0 flex-col"
+            >
               <SettingCard title={titleForLocale(locale, "账号", "Account")}>
                 <AccountSettings
                   username={accountForm.username}
@@ -759,7 +767,10 @@ export function SettingsScreen() {
               </SettingCard>
             </TabsContent>
 
-            <TabsContent value="time" className="mt-0">
+            <TabsContent
+              value="time"
+              className="mt-0 flex h-full min-h-0 flex-col"
+            >
               <SettingCard title={titleForLocale(locale, "时间", "Time")}>
                 <FieldGroup>
                   <Field>
@@ -784,7 +795,10 @@ export function SettingsScreen() {
               </SettingCard>
             </TabsContent>
 
-            <TabsContent value="gateway" className="mt-0">
+            <TabsContent
+              value="gateway"
+              className="mt-0 flex h-full min-h-0 flex-col"
+            >
               <SettingCard title={titleForLocale(locale, "网关", "Gateway")}>
                 <GatewaySettings
                   proxyUrl={draft.proxyUrl}
@@ -839,7 +853,10 @@ export function SettingsScreen() {
               </SettingCard>
             </TabsContent>
 
-            <TabsContent value="model-test" className="mt-0">
+            <TabsContent
+              value="model-test"
+              className="mt-0 flex h-full min-h-0 flex-col"
+            >
               <SettingCard
                 title={titleForLocale(locale, "模型测试", "Model test")}
               >
@@ -861,7 +878,10 @@ export function SettingsScreen() {
               </SettingCard>
             </TabsContent>
 
-            <TabsContent value="circuit-breaker" className="mt-0">
+            <TabsContent
+              value="circuit-breaker"
+              className="mt-0 flex h-full min-h-0 flex-col"
+            >
               <SettingCard title={titleForLocale(locale, "路由", "Routing")}>
                 <div className="space-y-6">
                   <div>
@@ -1001,7 +1021,10 @@ export function SettingsScreen() {
               </SettingCard>
             </TabsContent>
 
-            <TabsContent value="balance-scripts" className="mt-0">
+            <TabsContent
+              value="balance-scripts"
+              className="mt-0 flex h-full min-h-0 flex-col"
+            >
               <BalanceScriptsPanel />
             </TabsContent>
           </div>

@@ -3,6 +3,7 @@ from __future__ import annotations
 from sqlalchemy import update
 
 from ...core.runtime_channel_ids import compose_runtime_channel_id
+from ..balance_store import dump_balance_params
 from .shared import (
     AsyncSession,
     BalanceScriptEntity,
@@ -200,6 +201,7 @@ class ChannelUpsertsMixin:
                         sort_order=index,
                         base_url_id=item.base_url_id,
                         balance_script_id=script_id,
+                        balance_params_json=dump_balance_params(item.balance_params),
                     )
                 )
                 continue
@@ -211,6 +213,7 @@ class ChannelUpsertsMixin:
             entity.sort_order = index
             entity.base_url_id = item.base_url_id
             entity.balance_script_id = script_id
+            entity.balance_params_json = dump_balance_params(item.balance_params)
 
     async def _upsert_protocol_configs(
         self,

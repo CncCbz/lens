@@ -286,6 +286,7 @@ class SiteCredential(StrictBaseModel):
     sort_order: int = Field(default=0, ge=0)
     base_url_id: str = Field(min_length=1)
     balance_script_id: str = ""
+    balance_params: dict[str, str] = Field(default_factory=dict)
 
 
 class SiteCredentialInput(StrictBaseModel):
@@ -296,6 +297,12 @@ class SiteCredentialInput(StrictBaseModel):
     cost_multiplier: float = Field(default=1.0, ge=0.0)
     base_url_id: str = Field(min_length=1)
     balance_script_id: str = ""
+    balance_params: dict[str, str] = Field(default_factory=dict)
+
+
+class BalanceScriptParameter(StrictBaseModel):
+    key: str = Field(min_length=1)
+    label: str = Field(min_length=1)
 
 
 class BalanceScript(StrictBaseModel):
@@ -303,12 +310,26 @@ class BalanceScript(StrictBaseModel):
     name: str
     code: str
     timeout_seconds: int = Field(default=10, ge=1, le=15)
+    parameters: list[BalanceScriptParameter] = Field(default_factory=list)
 
 
 class BalanceScriptInput(StrictBaseModel):
     name: str = Field(min_length=1)
     code: str = Field(min_length=1)
     timeout_seconds: int = Field(default=10, ge=1, le=15)
+    parameters: list[BalanceScriptParameter] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def unique_parameter_keys(self) -> "BalanceScriptInput":
+        seen: set[str] = set()
+        for item in self.parameters:
+            key = item.key.strip()
+            if key in seen:
+                raise ValueError(f"Duplicate balance script parameter: {key}")
+            seen.add(key)
+            item.key = key
+            item.label = item.label.strip()
+        return self
 
 
 class CredentialBalance(StrictBaseModel):
@@ -327,6 +348,7 @@ class BalanceScriptTestRequest(StrictBaseModel):
     api_key: str = Field(min_length=1)
     base_url: str = Field(min_length=1)
     proxy: str = ""
+    params: dict[str, str] = Field(default_factory=dict)
 
 
 class BalanceScriptTestResult(StrictBaseModel):

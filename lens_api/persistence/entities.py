@@ -75,6 +75,9 @@ class SiteCredentialEntity(Base):
     balance_script_id: Mapped[str | None] = mapped_column(
         String(80), nullable=True, index=True
     )
+    balance_params_json: Mapped[str] = mapped_column(
+        Text, nullable=False, default="{}", server_default="{}"
+    )
 
 
 class BalanceScriptEntity(Base):
@@ -84,6 +87,9 @@ class BalanceScriptEntity(Base):
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     code: Mapped[str] = mapped_column(Text, nullable=False)
     timeout_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=10)
+    parameters_json: Mapped[str] = mapped_column(
+        Text, nullable=False, default="[]", server_default="[]"
+    )
 
 
 class CredentialBalanceEntity(Base):

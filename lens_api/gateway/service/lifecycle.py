@@ -22,6 +22,7 @@ async def _startup_app_state(state: AppState) -> None:
     await state.request_log_store.fail_running_request_logs(
         interrupted_latency_cap_ms=_running_request_latency_cap_ms()
     )
+    await state.balance_store.ensure_builtin_scripts()
 
 
 async def _close_app_state(state: AppState) -> None:

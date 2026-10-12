@@ -5,6 +5,7 @@ import uuid
 from ..repositories.request_log_channel_resolution_mixin import (
     RequestLogChannelResolutionMixin,
 )
+from ..balance_store import dump_balance_params, dump_script_parameters
 from .shared import (
     AsyncSession,
     BalanceScript,
@@ -150,6 +151,9 @@ class BackupReplacersMixin:
                         sort_order=credential.sort_order,
                         base_url_id=credential.base_url_id,
                         balance_script_id=credential.balance_script_id or None,
+                        balance_params_json=dump_balance_params(
+                            credential.balance_params
+                        ),
                     )
                 )
 
@@ -666,6 +670,7 @@ class BackupReplacersMixin:
                     name=item.name.strip(),
                     code=item.code,
                     timeout_seconds=item.timeout_seconds,
+                    parameters_json=dump_script_parameters(item.parameters),
                 )
             )
 

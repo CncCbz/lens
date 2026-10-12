@@ -1157,6 +1157,7 @@ export function ChannelsScreen() {
             cost_multiplier: item.cost_multiplier,
             base_url_id: item.base_url_id,
             balance_script_id: item.balance_script_id || "",
+            balance_params: item.balance_params ?? {},
           })),
           protocols: site.protocols.map((protocolConfig) => ({
             id: protocolConfig.id,
@@ -1405,6 +1406,7 @@ export function ChannelsScreen() {
               cost_multiplier: 1,
               base_url_id: baseUrls[0]?.id ?? "",
               balance_script_id: "",
+              balance_params: {},
             },
           ];
       return {
@@ -1659,6 +1661,7 @@ export function ChannelsScreen() {
               : 1,
             base_url_id: item.base_url_id,
             balance_script_id: item.balance_script_id || "",
+            balance_params: item.balance_params ?? {},
           }))
           .filter((item) => item.api_key),
         credential_id: selectedCredentialId,

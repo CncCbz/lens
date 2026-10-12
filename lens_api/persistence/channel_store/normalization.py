@@ -28,6 +28,7 @@ from .shared import (
     select,
     uuid,
 )
+from ..balance_store import load_balance_params
 from ..shared import _parse_supported_protocols_json
 
 
@@ -176,6 +177,7 @@ class ChannelNormalizationMixin:
                     sort_order=index,
                     base_url_id=base_url_id,
                     balance_script_id=item.balance_script_id.strip(),
+                    balance_params=dict(item.balance_params),
                 )
             )
         if not normalized:
@@ -275,6 +277,7 @@ class ChannelNormalizationMixin:
                 sort_order=row.sort_order,
                 base_url_id=row.base_url_id,
                 balance_script_id=row.balance_script_id or "",
+                balance_params=load_balance_params(row.balance_params_json),
             )
             by_site[row.site_id].append(item)
             by_id[row.id] = item

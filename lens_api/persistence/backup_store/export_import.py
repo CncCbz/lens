@@ -44,6 +44,11 @@ def _normalize_dump_credential_owners(data: object) -> object:
     if not isinstance(data, dict):
         return data
     data.setdefault("balance_scripts", [])
+    scripts = data.get("balance_scripts")
+    if isinstance(scripts, list):
+        for script in scripts:
+            if isinstance(script, dict):
+                script.setdefault("parameters", [])
     sites = data.get("sites")
     if not isinstance(sites, list):
         return data
@@ -65,6 +70,7 @@ def _normalize_dump_credential_owners(data: object) -> object:
             for item in credentials:
                 if isinstance(item, dict):
                     item.setdefault("balance_script_id", "")
+                    item.setdefault("balance_params", {})
             continue
         assigned, protocol_credentials = assign_credential_base_urls(
             [item for item in credentials if isinstance(item, dict)],
@@ -73,6 +79,7 @@ def _normalize_dump_credential_owners(data: object) -> object:
         )
         for item in assigned:
             item.setdefault("balance_script_id", "")
+            item.setdefault("balance_params", {})
         site["credentials"] = assigned
         for protocol in protocols:
             if not isinstance(protocol, dict):
