@@ -342,6 +342,13 @@ class CredentialBalance(StrictBaseModel):
     checked_at: str | None = None
 
 
+class CredentialBalanceRefreshRequest(StrictBaseModel):
+    balance_script_id: str = ""
+    balance_params: dict[str, str] = Field(default_factory=dict)
+    api_key: str = ""
+    base_url: str = ""
+
+
 class BalanceScriptTestRequest(StrictBaseModel):
     code: str = Field(min_length=1)
     timeout_seconds: int = Field(default=10, ge=1, le=15)

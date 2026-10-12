@@ -1108,11 +1108,32 @@ export function ChannelsScreen() {
 
   async function refreshCredentialBalance(credentialId: string) {
     if (!editingSiteId) return;
+    const credential = form.credentials.find(
+      (item) => item.id === credentialId,
+    );
+    const baseUrl = form.base_urls.find(
+      (item) => item.id === credential?.base_url_id,
+    );
+    if (
+      !credential?.balance_script_id ||
+      !credential.api_key.trim() ||
+      !baseUrl?.url.trim()
+    ) {
+      return;
+    }
     setRefreshingCredentialId(credentialId);
     try {
       const updated = await apiRequest<CredentialBalance>(
         `/admin/sites/${editingSiteId}/credentials/${credentialId}/balance`,
-        { method: "POST" },
+        {
+          method: "POST",
+          body: JSON.stringify({
+            balance_script_id: credential.balance_script_id,
+            balance_params: credential.balance_params ?? {},
+            api_key: credential.api_key,
+            base_url: baseUrl.url,
+          }),
+        },
       );
       queryClient.setQueryData<CredentialBalance[]>(
         ["credential-balances"],

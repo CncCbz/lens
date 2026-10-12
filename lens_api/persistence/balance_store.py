@@ -252,6 +252,23 @@ class BalanceStore:
                 for credential, base_url, script in rows
             ]
 
+    async def credential_balance_source(
+        self, site_id: str, credential_id: str
+    ) -> dict[str, str] | None:
+        async with self._session_factory() as session:
+            credential = await session.get(SiteCredentialEntity, credential_id)
+            if credential is None or credential.site_id != site_id:
+                return None
+            base_url = await session.get(SiteBaseUrlEntity, credential.base_url_id)
+            if base_url is None or base_url.site_id != site_id:
+                raise ValueError("Credential base URL not found")
+            return {
+                "api_key": credential.api_key,
+                "base_url": base_url.url,
+                "balance_script_id": credential.balance_script_id or "",
+                "balance_params_json": credential.balance_params_json,
+            }
+
     async def credential_refresh_target(
         self, site_id: str, credential_id: str
     ) -> dict[str, str | int | dict[str, str]]:

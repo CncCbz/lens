@@ -177,40 +177,79 @@ export function ChannelsOverview({
                       />
                     </div>
 
+                    {(() => {
+                      const readyBalances = site.credentials
+                        .filter((item) => item.enabled)
+                        .map((cred) => ({
+                          credential: cred,
+                          balance: balancesByCredentialId.get(cred.id),
+                        }))
+                        .filter(
+                          (
+                            item,
+                          ): item is {
+                            credential: (typeof site.credentials)[number];
+                            balance: CredentialBalance;
+                          } => item.balance?.status === "ok",
+                        );
+                      if (!readyBalances.length) return null;
+                      const shown = readyBalances.slice(0, 2);
+                      const remaining = readyBalances.length - shown.length;
+                      const tooltip = readyBalances
+                        .map(
+                          (item) =>
+                            `${item.credential.name.trim() || (locale === "zh-CN" ? "密钥" : "Key")}: ${item.balance.balance} ${item.balance.currency}`,
+                        )
+                        .join("\n");
+
+                      return (
+                        <div
+                          className="flex min-w-0 flex-wrap items-center gap-1.5"
+                          title={tooltip}
+                        >
+                          {shown.map(({ credential, balance }) => {
+                            const keyName =
+                              credential.name.trim() ||
+                              (locale === "zh-CN" ? "密钥" : "Key");
+                            return (
+                              <div
+                                key={credential.id}
+                                className="inline-flex max-w-full min-w-0 items-center gap-1 rounded-md border border-border/70 bg-background/80 px-1.5 py-0.5 text-[11px] shadow-2xs"
+                                title={`${keyName}: ${balance.balance} ${balance.currency}`}
+                              >
+                                <span className="max-w-[76px] truncate text-muted-foreground">
+                                  {keyName}
+                                </span>
+                                <span className="font-mono font-medium text-foreground">
+                                  {balance.balance}
+                                </span>
+                                <span className="text-[10px] text-muted-foreground">
+                                  {balance.currency}
+                                </span>
+                              </div>
+                            );
+                          })}
+                          {remaining > 0 ? (
+                            <span
+                              className="rounded-md border border-border/60 bg-muted/40 px-1.5 py-0.5 text-[10px] font-mono text-muted-foreground"
+                              title={tooltip}
+                            >
+                              +{remaining}
+                            </span>
+                          ) : null}
+                        </div>
+                      );
+                    })()}
+
                     <div
                       className="mt-auto flex items-center justify-between gap-2 border-t border-border/60 pt-2"
                       onClick={(event) => event.stopPropagation()}
                       onKeyDown={(event) => event.stopPropagation()}
                     >
-                      <span className="flex min-w-0 items-center gap-2 truncate text-[11px] text-muted-foreground">
-                        <span className="truncate">
-                          {locale === "zh-CN"
-                            ? `${site.model_count} 模型 · ${credentialCount} 密钥 · ${requestCount} 请求`
-                            : `${site.model_count} models · ${credentialCount} keys · ${requestCount} req`}
-                        </span>
-                        {(() => {
-                          const ready = site.credentials
-                            .filter((item) => item.enabled)
-                            .map((item) => balancesByCredentialId.get(item.id))
-                            .filter(
-                              (item): item is CredentialBalance =>
-                                item?.status === "ok",
-                            );
-                          const shown = ready.slice(0, 2);
-                          if (!shown.length) return null;
-                          return (
-                            <span className="shrink-0 font-mono text-foreground">
-                              {shown
-                                .map(
-                                  (item) => `${item.balance} ${item.currency}`,
-                                )
-                                .join(" · ")}
-                              {ready.length > shown.length
-                                ? ` +${ready.length - shown.length}`
-                                : ""}
-                            </span>
-                          );
-                        })()}
+                      <span className="truncate text-[11px] text-muted-foreground">
+                        {locale === "zh-CN"
+                          ? `${site.model_count} 模型 · ${credentialCount} 密钥 · ${requestCount} 请求`
+                          : `${site.model_count} models · ${credentialCount} keys · ${requestCount} req`}
                       </span>
                       <Button
                         type="button"

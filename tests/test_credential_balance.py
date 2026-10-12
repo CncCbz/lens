@@ -5,8 +5,11 @@ from alembic import command
 from alembic.config import Config
 from lens_api.core.db import Base, create_engine, create_session_factory
 from lens_api.gateway.balance_runner import run_balance_script
+from lens_api.gateway.service.admin_balance import refresh_credential_balance
+from lens_api.gateway.service.runtime_context import app_state
 from lens_api.models import (
     BalanceScriptInput,
+    CredentialBalanceRefreshRequest,
     ChannelProxyMode,
     ProtocolKind,
     SiteBaseUrlInput,
@@ -504,6 +507,68 @@ async def test_manual_refresh_updates_only_the_selected_key(postgres_url: str) -
     async with factory() as session:
         rows = (await session.execute(select(CredentialBalanceEntity))).scalars().all()
     assert [row.credential_id for row in rows] == ["cred-1"]
+    await engine.dispose()
+
+
+@pytest.mark.postgres
+@pytest.mark.asyncio
+async def test_refresh_uses_unsaved_script_selection(postgres_url: str) -> None:
+    engine = create_engine(postgres_url)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+        await conn.run_sync(Base.metadata.create_all)
+    factory = create_session_factory(engine)
+    channel_store = ChannelStore(factory)
+    balance_store = BalanceStore(factory)
+    script = await balance_store.create_script(
+        BalanceScriptInput(
+            name="static",
+            code='import json; print(json.dumps({"total":"8","balance":"5","currency":"USD"}))',
+            timeout_seconds=10,
+        )
+    )
+    site = await channel_store.create_site(
+        SiteCreate(
+            name="Alpha",
+            base_urls=[SiteBaseUrlInput(id="base-1", url="https://example.com")],
+            credentials=[
+                SiteCredentialInput(
+                    id="cred-1",
+                    name="one",
+                    api_key="sk-1",
+                    base_url_id="base-1",
+                )
+            ],
+            protocols=[],
+        )
+    )
+
+    class _Settings:
+        async def get_runtime_settings(self) -> dict[str, str]:
+            return {"proxy_url": ""}
+
+    original_store = app_state.balance_store
+    original_settings = app_state.settings_repo
+    app_state.balance_store = balance_store
+    app_state.settings_repo = _Settings()  # type: ignore[assignment]
+    try:
+        saved = await refresh_credential_balance(
+            site.id,
+            "cred-1",
+            CredentialBalanceRefreshRequest(
+                balance_script_id=script.id,
+                api_key="sk-draft",
+                base_url="https://draft.example",
+                balance_params={"access_token": "draft-token"},
+            ),
+        )
+    finally:
+        app_state.balance_store = original_store
+        app_state.settings_repo = original_settings
+    assert saved.status == "ok"
+    assert saved.balance == "5"
+    stored = await channel_store.list_sites()
+    assert stored[0].credentials[0].balance_script_id == ""
     await engine.dispose()
 
 

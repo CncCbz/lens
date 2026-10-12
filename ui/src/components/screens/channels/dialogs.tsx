@@ -461,6 +461,9 @@ export function ChannelEditorDialog({
                                           size="icon-sm"
                                           disabled={
                                             !editingSiteId ||
+                                            !credential.balance_script_id ||
+                                            !credential.api_key.trim() ||
+                                            !baseUrl.url.trim() ||
                                             refreshingCredentialId ===
                                               credential.id
                                           }
