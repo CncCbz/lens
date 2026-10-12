@@ -402,6 +402,8 @@ export const emptyForm = (locale: Locale = "zh-CN"): FormState => {
         api_key: "",
         enabled: true,
         cost_multiplier: 1,
+        base_url_id: baseUrlId,
+        balance_script_id: "",
       },
     ],
     protocolConfigs: [
@@ -627,6 +629,8 @@ export function toForm(site: Site, locale: Locale = "zh-CN"): FormState {
     api_key: item.api_key,
     enabled: item.enabled,
     cost_multiplier: item.cost_multiplier,
+    base_url_id: item.base_url_id || baseUrls[0]?.id || "",
+    balance_script_id: item.balance_script_id || "",
   }));
   return {
     name: site.name,
@@ -746,6 +750,8 @@ export function toPayload(form: FormState): SitePayload {
         cost_multiplier: Number.isFinite(item.cost_multiplier)
           ? Math.max(item.cost_multiplier, 0)
           : 1,
+        base_url_id: item.base_url_id,
+        balance_script_id: item.balance_script_id || "",
       }))
       .filter((item) => item.api_key),
     protocols: form.protocolConfigs.flatMap((protocolConfig) => {

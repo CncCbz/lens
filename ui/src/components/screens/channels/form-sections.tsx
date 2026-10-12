@@ -13,7 +13,11 @@ import {
   FieldLabel,
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { Combobox, ComboboxOption } from "@/components/ui/combobox";
+import {
+  Combobox,
+  ComboboxOptGroup,
+  ComboboxOption,
+} from "@/components/ui/combobox";
 import { ProtocolMultiSelect } from "@/components/ui/protocol-multi-select";
 import {
   Select,
@@ -31,7 +35,7 @@ import {
   validateErrorPolicyDraft,
 } from "@/lib/error-policy-config";
 import type { RouterErrorPolicyDraft } from "@/lib/settings-types";
-import type { ProtocolKind } from "@/lib/api";
+import type { CredentialBalance, ProtocolKind } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import {
   activeBaseUrlValue,
@@ -50,7 +54,6 @@ import {
   protocolConfigCredentialKeys,
   protocolConfigEffectiveProtocols,
   protocolLabel,
-  resolveBaseUrlId,
 } from "./shared";
 
 export function ProtocolConfigItem({
@@ -69,6 +72,7 @@ export function ProtocolConfigItem({
   onOpenModelTest,
   canTestModel,
   testingDisabled,
+  credentialBalance,
 }: {
   form: FormState;
   protocolConfig: FormProtocolConfig;
@@ -92,6 +96,7 @@ export function ProtocolConfigItem({
   onOpenModelTest: (protocolConfigIndex: number, modelIndex: number) => void;
   canTestModel: (protocolConfigIndex: number, modelIndex: number) => boolean;
   testingDisabled?: boolean;
+  credentialBalance?: CredentialBalance;
 }) {
   const submittedBaseUrls = formBaseUrlsForPayload(form);
   const submittedBaseUrlIds = new Set(submittedBaseUrls.map((item) => item.id));
@@ -266,6 +271,11 @@ export function ProtocolConfigItem({
           >
             {summaryCredential}
           </Badge>
+          {credentialBalance?.status === "ok" ? (
+            <Badge variant="outline" className="font-mono font-normal">
+              {`${credentialBalance.balance} ${credentialBalance.currency}`}
+            </Badge>
+          ) : null}
           <Badge
             variant="outline"
             className={cn(
@@ -363,36 +373,20 @@ export function ProtocolConfigItem({
             </Field>
             <Field>
               <FieldLabel>
-                {locale === "zh-CN" ? "地址来源" : "Base URL"}
+                {locale === "zh-CN" ? "目标节点与密钥" : "Address and key"}
               </FieldLabel>
-              <Combobox
-                className="w-full"
-                value={resolveBaseUrlId(
-                  form.base_urls,
-                  protocolConfig.base_url_id,
-                )}
-                onChange={(event) =>
-                  onUpdateProtocolConfig(protocolConfigIndex, {
-                    base_url_id: event.target.value,
-                  })
-                }
-              >
-                {form.base_urls.map((item, baseUrlIndex) => (
-                  <ComboboxOption key={item.id} value={item.id}>
-                    {baseUrlLabel(item, baseUrlIndex, locale)}
-                  </ComboboxOption>
-                ))}
-              </Combobox>
-            </Field>
-            <Field>
-              <FieldLabel>{locale === "zh-CN" ? "密钥" : "Key"}</FieldLabel>
               <Combobox
                 className="w-full"
                 value={selectedCredentialId}
                 onChange={(event) => {
                   const credentialId = event.target.value;
+                  const credential = form.credentials.find(
+                    (item) => item.id === credentialId,
+                  );
                   onUpdateProtocolConfig(protocolConfigIndex, {
                     credential_id: credentialId,
+                    base_url_id:
+                      credential?.base_url_id || protocolConfig.base_url_id,
                     models: protocolConfig.models.filter(
                       (model) => model.credential_id === credentialId,
                     ),
@@ -406,17 +400,24 @@ export function ProtocolConfigItem({
                       : `Invalid key: ${selectedCredentialId}`}
                   </ComboboxOption>
                 ) : null}
-                {credentialOptions.length ? (
-                  credentialOptions.map((item) => (
-                    <ComboboxOption key={item.id} value={item.id}>
-                      {item.display_name}
-                    </ComboboxOption>
-                  ))
-                ) : (
-                  <ComboboxOption value="" disabled>
-                    {locale === "zh-CN" ? "暂无可用密钥" : "No available key"}
-                  </ComboboxOption>
-                )}
+                {form.base_urls.map((baseUrl, baseUrlIndex) => {
+                  const options = credentialOptions.filter(
+                    (item) => item.base_url_id === baseUrl.id,
+                  );
+                  if (!options.length) return null;
+                  return (
+                    <ComboboxOptGroup
+                      key={baseUrl.id}
+                      label={baseUrlLabel(baseUrl, baseUrlIndex, locale)}
+                    >
+                      {options.map((item) => (
+                        <ComboboxOption key={item.id} value={item.id}>
+                          {item.display_name}
+                        </ComboboxOption>
+                      ))}
+                    </ComboboxOptGroup>
+                  );
+                })}
               </Combobox>
             </Field>
             <div className="mt-auto flex gap-2 pt-1">

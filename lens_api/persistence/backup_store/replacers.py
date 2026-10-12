@@ -7,6 +7,8 @@ from ..repositories.request_log_channel_resolution_mixin import (
 )
 from .shared import (
     AsyncSession,
+    BalanceScript,
+    BalanceScriptEntity,
     ConfigBackupCronjob,
     ConfigBackupGatewayApiKey,
     ConfigBackupRequestLog,
@@ -102,6 +104,7 @@ class BackupReplacersMixin:
             session.add(SiteEntity(id=site.id, name=site.name))
             site_base_url_ids: set[str] = set()
             site_credential_ids: set[str] = set()
+            site_credentials_by_id: dict[str, object] = {}
 
             for base_url in site.base_urls:
                 if base_url.id in base_url_ids:
@@ -130,6 +133,12 @@ class BackupReplacersMixin:
                     )
                 credential_ids.add(credential.id)
                 site_credential_ids.add(credential.id)
+                site_credentials_by_id[credential.id] = credential
+                if credential.base_url_id not in site_base_url_ids:
+                    raise ValueError(
+                        "Credential base URL not found in backup: "
+                        f"{credential.id}: {credential.base_url_id}"
+                    )
                 session.add(
                     SiteCredentialEntity(
                         id=credential.id,
@@ -139,6 +148,8 @@ class BackupReplacersMixin:
                         enabled=1 if credential.enabled else 0,
                         cost_multiplier=float(credential.cost_multiplier),
                         sort_order=credential.sort_order,
+                        base_url_id=credential.base_url_id,
+                        balance_script_id=credential.balance_script_id or None,
                     )
                 )
 
@@ -162,6 +173,13 @@ class BackupReplacersMixin:
                         "Protocol config credential not found in backup site "
                         f"{site.name}: {protocol_config.credential_id}"
                     )
+                if protocol_config.credential_id:
+                    owner = site_credentials_by_id[protocol_config.credential_id]
+                    if owner.base_url_id != protocol_config.base_url_id:
+                        raise ValueError(
+                            "Credential does not belong to the protocol base URL "
+                            f"{protocol_config.id}: {protocol_config.credential_id}"
+                        )
                 protocol_kinds = list(protocol_config.protocols)
                 if not protocol_kinds:
                     raise ValueError(
@@ -629,6 +647,27 @@ class BackupReplacersMixin:
             if not entity.lease_owner:
                 entity.status = "idle" if item.enabled else "disabled"
             entity.updated_at = now
+
+    async def _replace_balance_scripts(
+        self, session: AsyncSession, scripts: list[BalanceScript]
+    ) -> None:
+        await session.execute(delete(BalanceScriptEntity))
+        seen_ids: set[str] = set()
+        for item in scripts:
+            script_id = item.id.strip()
+            if not script_id:
+                raise ValueError("Balance script id is required")
+            if script_id in seen_ids:
+                raise ValueError(f"Duplicate balance script id in backup: {script_id}")
+            seen_ids.add(script_id)
+            session.add(
+                BalanceScriptEntity(
+                    id=script_id,
+                    name=item.name.strip(),
+                    code=item.code,
+                    timeout_seconds=item.timeout_seconds,
+                )
+            )
 
     async def _replace_gateway_api_keys(
         self, session: AsyncSession, gateway_api_keys: list[ConfigBackupGatewayApiKey]

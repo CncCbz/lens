@@ -123,6 +123,7 @@ from ...models import (
 )
 from ...persistence.admin_repository import AdminRepository
 from ...persistence.backup_store import BackupStore
+from ...persistence.balance_store import BalanceStore
 from ...persistence.channel_store import ChannelStore
 from ...persistence.shared import (
     SETTING_CIRCUIT_BREAKER_COOLDOWN,
@@ -194,6 +195,7 @@ TASK_REQUEST_LOG_PRUNE = "request_log_prune"
 TASK_MODEL_PRICE_SYNC = "model_price_sync"
 TASK_PI_CATALOG_SYNC = "pi_catalog_sync"
 TASK_REQUEST_LOG_STATS_PERSIST = "request_log_stats_persist"
+TASK_CREDENTIAL_BALANCE_SYNC = "credential_balance_sync"
 
 GENERIC_USER_AGENT_TOKENS = (
     "python-httpx",
@@ -247,6 +249,12 @@ CRONJOB_SPECS = (
         name="请求日志统计落库",
         description="归档请求日志统计数据",
         default_interval_hours=1,
+    ),
+    CronjobSpec(
+        id=TASK_CREDENTIAL_BALANCE_SYNC,
+        name="密钥余额同步",
+        description="按密钥所属地址查询上游余额",
+        default_interval_hours=6,
     ),
 )
 
@@ -336,6 +344,7 @@ class AppState:
 
         self.cronjob_store = CronjobStore(self.session_factory)
         self.channel_store = ChannelStore(self.session_factory)
+        self.balance_store = BalanceStore(self.session_factory)
         self.backup_store = BackupStore(self.session_factory)
         self.router = GatewayRouter()
         self.cronjob_runner = CronjobRunner(
@@ -346,6 +355,7 @@ class AppState:
                 TASK_MODEL_PRICE_SYNC: self._sync_model_prices,
                 TASK_PI_CATALOG_SYNC: self._sync_pi_catalog,
                 TASK_REQUEST_LOG_STATS_PERSIST: self.request_log_store.persist_request_log_stats,
+                TASK_CREDENTIAL_BALANCE_SYNC: self._sync_credential_balances,
             },
             time_zone_provider=self._runtime_time_zone,
             logger=logger,
@@ -366,6 +376,30 @@ class AppState:
     async def _runtime_time_zone(self) -> ZoneInfo:
         runtime = await self.settings_repo.get_runtime_settings()
         return resolve_time_zone(str(runtime["time_zone"]))
+
+    async def _sync_credential_balances(self) -> None:
+        from ..balance_runner import run_balance_script
+
+        runtime = await self.settings_repo.get_runtime_settings()
+        proxy = str(runtime.get("proxy_url") or "")
+        targets = await self.balance_store.list_sync_targets()
+        for target in targets:
+            outcome = await asyncio.to_thread(
+                run_balance_script,
+                str(target["code"]),
+                api_key=str(target["api_key"]),
+                base_url=str(target["base_url"]),
+                proxy=proxy,
+                timeout_seconds=int(target["timeout_seconds"]),
+            )
+            await self.balance_store.save_outcome(
+                str(target["credential_id"]),
+                ok=outcome.ok,
+                total=outcome.total,
+                balance=outcome.balance,
+                currency=outcome.currency,
+                error_message=outcome.error_message,
+            )
 
     async def _sync_model_prices(self) -> None:
         from .tasks import _sync_group_prices

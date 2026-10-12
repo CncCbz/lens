@@ -48,6 +48,7 @@ async def test_update_site_preserves_model_ids(postgres_url: str) -> None:
                     name="key",
                     api_key="sk-test",
                     enabled=True,
+                    base_url_id="base-1",
                 )
             ],
             protocols=[
@@ -105,6 +106,7 @@ async def test_update_site_preserves_model_ids(postgres_url: str) -> None:
                     name="key",
                     api_key="sk-test",
                     enabled=True,
+                    base_url_id="base-1",
                 )
             ],
             protocols=[

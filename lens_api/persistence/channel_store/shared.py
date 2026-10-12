@@ -33,6 +33,8 @@ from ...models import (
     SiteUpdate,
 )
 from ..entities import (
+    BalanceScriptEntity,
+    CredentialBalanceEntity,
     ModelGroupItemEntity,
     SiteBaseUrlEntity,
     SiteCredentialEntity,

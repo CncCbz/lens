@@ -6,6 +6,8 @@ import json
 from ...models import PiConfigExportResponse
 from .shared import (
     AsyncSession,
+    BalanceScript,
+    BalanceScriptEntity,
     ConfigBackupCronjob,
     ConfigBackupGatewayApiKey,
     ConfigBackupImportedStatsDaily,
@@ -108,6 +110,8 @@ class BackupLoadersMixin:
                 "enabled": bool(row.enabled),
                 "cost_multiplier": float(row.cost_multiplier),
                 "sort_order": row.sort_order,
+                "base_url_id": row.base_url_id,
+                "balance_script_id": row.balance_script_id or "",
             }
             credentials_by_site.setdefault(row.site_id, []).append(item)
             credentials_by_id[row.id] = item
@@ -544,6 +548,26 @@ class BackupLoadersMixin:
                 interval_hours=max(row.interval_hours, 1),
                 run_at_time=row.run_at_time,
                 weekdays=load_weekdays(row.weekdays_json),
+            )
+            for row in rows
+        ]
+
+    async def _load_balance_scripts(self, session: AsyncSession) -> list[BalanceScript]:
+        rows = (
+            (
+                await session.execute(
+                    select(BalanceScriptEntity).order_by(BalanceScriptEntity.name.asc())
+                )
+            )
+            .scalars()
+            .all()
+        )
+        return [
+            BalanceScript(
+                id=row.id,
+                name=row.name,
+                code=row.code,
+                timeout_seconds=row.timeout_seconds,
             )
             for row in rows
         ]

@@ -118,6 +118,7 @@ async def main(export_path: str) -> None:
         if protocol is None or not base_url or not key_infos:
             continue
 
+        base_url_id = str(uuid.uuid4())
         credentials: list[SiteCredentialInput] = []
         for index, key_info in enumerate(key_infos):
             credential_id = str(uuid.uuid4())
@@ -129,6 +130,7 @@ async def main(export_path: str) -> None:
                     api_key=api_key,
                     enabled=bool(key_info.get("enabled", True)),
                     cost_multiplier=1.0,
+                    base_url_id=base_url_id,
                 )
             )
 
@@ -136,7 +138,6 @@ async def main(export_path: str) -> None:
         direct_models = normalize_model_names(channel.get("model"))
         custom_models = normalize_model_names(channel.get("custom_model"))
         all_models = list(dict.fromkeys([*direct_models, *custom_models]))
-        base_url_id = str(uuid.uuid4())
         protocol_id = str(uuid.uuid4())
 
         site = await channel_store.create_site(

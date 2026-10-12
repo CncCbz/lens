@@ -154,12 +154,15 @@ class ChannelNormalizationMixin:
         self, items: list[SiteCredentialInput]
     ) -> list[SiteCredential]:
         normalized: list[SiteCredential] = []
-        seen_names: set[str] = set()
+        seen_names: set[tuple[str, str]] = set()
         for index, item in enumerate(items):
             name = item.name.strip()
             if not name:
                 raise ValueError("Credential name is required")
-            name_key = name.lower()
+            base_url_id = item.base_url_id.strip()
+            if not base_url_id:
+                raise ValueError("Credential base URL is required")
+            name_key = (base_url_id, name.lower())
             if name_key in seen_names:
                 raise ValueError(f"Duplicate credential name: {name}")
             seen_names.add(name_key)
@@ -171,6 +174,8 @@ class ChannelNormalizationMixin:
                     enabled=item.enabled,
                     cost_multiplier=float(item.cost_multiplier),
                     sort_order=index,
+                    base_url_id=base_url_id,
+                    balance_script_id=item.balance_script_id.strip(),
                 )
             )
         if not normalized:
@@ -268,6 +273,8 @@ class ChannelNormalizationMixin:
                 enabled=bool(row.enabled),
                 cost_multiplier=float(row.cost_multiplier),
                 sort_order=row.sort_order,
+                base_url_id=row.base_url_id,
+                balance_script_id=row.balance_script_id or "",
             )
             by_site[row.site_id].append(item)
             by_id[row.id] = item

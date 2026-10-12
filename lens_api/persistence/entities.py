@@ -71,6 +71,31 @@ class SiteCredentialEntity(Base):
     enabled: Mapped[int] = enabled_column()
     cost_multiplier: Mapped[float] = mapped_column(Float, nullable=False, default=1.0)
     sort_order: Mapped[int] = sort_order_column()
+    base_url_id: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    balance_script_id: Mapped[str | None] = mapped_column(
+        String(80), nullable=True, index=True
+    )
+
+
+class BalanceScriptEntity(Base):
+    __tablename__ = "balance_scripts"
+
+    id: Mapped[str] = mapped_column(String(80), primary_key=True)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    code: Mapped[str] = mapped_column(Text, nullable=False)
+    timeout_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=10)
+
+
+class CredentialBalanceEntity(Base):
+    __tablename__ = "credential_balances"
+
+    credential_id: Mapped[str] = mapped_column(String(80), primary_key=True)
+    total: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    balance: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    currency: Mapped[str] = mapped_column(String(16), nullable=False, default="")
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="")
+    error_message: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    checked_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
 
 class SiteProtocolConfigEntity(Base):

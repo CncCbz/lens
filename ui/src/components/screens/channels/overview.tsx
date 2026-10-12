@@ -5,7 +5,12 @@ import { Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import type { ProtocolKind, Site, SiteRuntimeSummary } from "@/lib/api";
+import type {
+  CredentialBalance,
+  ProtocolKind,
+  Site,
+  SiteRuntimeSummary,
+} from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { Switch } from "@/components/ui/switch";
 import { ChannelFiltersPanel } from "./filters";
@@ -47,6 +52,7 @@ export function ChannelsOverview({
   onOpenEdit,
   onToggleSiteEnabled,
   setDeleteTarget,
+  balancesByCredentialId,
 }: {
   locale: Locale;
   visibleSites: SiteRow[];
@@ -68,6 +74,7 @@ export function ChannelsOverview({
   onOpenEdit: (site: Site) => void;
   onToggleSiteEnabled: (site: Site, enabled: boolean) => void;
   setDeleteTarget: Dispatch<SetStateAction<Site | null>>;
+  balancesByCredentialId: Map<string, CredentialBalance>;
 }) {
   return (
     <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
@@ -175,10 +182,35 @@ export function ChannelsOverview({
                       onClick={(event) => event.stopPropagation()}
                       onKeyDown={(event) => event.stopPropagation()}
                     >
-                      <span className="truncate text-[11px] text-muted-foreground">
-                        {locale === "zh-CN"
-                          ? `${site.model_count} 模型 · ${credentialCount} 密钥 · ${requestCount} 请求`
-                          : `${site.model_count} models · ${credentialCount} keys · ${requestCount} req`}
+                      <span className="flex min-w-0 items-center gap-2 truncate text-[11px] text-muted-foreground">
+                        <span className="truncate">
+                          {locale === "zh-CN"
+                            ? `${site.model_count} 模型 · ${credentialCount} 密钥 · ${requestCount} 请求`
+                            : `${site.model_count} models · ${credentialCount} keys · ${requestCount} req`}
+                        </span>
+                        {(() => {
+                          const ready = site.credentials
+                            .filter((item) => item.enabled)
+                            .map((item) => balancesByCredentialId.get(item.id))
+                            .filter(
+                              (item): item is CredentialBalance =>
+                                item?.status === "ok",
+                            );
+                          const shown = ready.slice(0, 2);
+                          if (!shown.length) return null;
+                          return (
+                            <span className="shrink-0 font-mono text-foreground">
+                              {shown
+                                .map(
+                                  (item) => `${item.balance} ${item.currency}`,
+                                )
+                                .join(" · ")}
+                              {ready.length > shown.length
+                                ? ` +${ready.length - shown.length}`
+                                : ""}
+                            </span>
+                          );
+                        })()}
                       </span>
                       <Button
                         type="button"

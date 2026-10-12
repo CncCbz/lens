@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from ..credential_ownership import assign_credential_base_urls
 from .shared import (
     BACKUP_DUMP_VERSION,
+    BalanceScript,
+    BalanceScriptEntity,
     ConfigBackupDump,
     ConfigImportResult,
     EXPORTABLE_SETTING_KEYS,
@@ -24,6 +27,7 @@ def _normalize_dump_group_items(data: object) -> object:
     for group in groups:
         if not isinstance(group, dict):
             continue
+        group.pop("effective_modalities", None)
         items = group.get("items")
         if not isinstance(items, list):
             continue
@@ -36,6 +40,61 @@ def _normalize_dump_group_items(data: object) -> object:
     return data
 
 
+def _normalize_dump_credential_owners(data: object) -> object:
+    if not isinstance(data, dict):
+        return data
+    data.setdefault("balance_scripts", [])
+    sites = data.get("sites")
+    if not isinstance(sites, list):
+        return data
+    for site in sites:
+        if not isinstance(site, dict):
+            continue
+        credentials = site.get("credentials")
+        base_urls = site.get("base_urls")
+        protocols = site.get("protocols")
+        if not isinstance(credentials, list) or not isinstance(base_urls, list):
+            continue
+        if not isinstance(protocols, list):
+            protocols = []
+        needs_owner = any(
+            isinstance(item, dict) and not str(item.get("base_url_id") or "")
+            for item in credentials
+        )
+        if not needs_owner:
+            for item in credentials:
+                if isinstance(item, dict):
+                    item.setdefault("balance_script_id", "")
+            continue
+        assigned, protocol_credentials = assign_credential_base_urls(
+            [item for item in credentials if isinstance(item, dict)],
+            [item for item in base_urls if isinstance(item, dict)],
+            [item for item in protocols if isinstance(item, dict)],
+        )
+        for item in assigned:
+            item.setdefault("balance_script_id", "")
+        site["credentials"] = assigned
+        for protocol in protocols:
+            if not isinstance(protocol, dict):
+                continue
+            protocol_id = str(protocol.get("id") or "")
+            next_credential_id = protocol_credentials.get(protocol_id)
+            if not next_credential_id:
+                continue
+            previous = str(protocol.get("credential_id") or "")
+            protocol["credential_id"] = next_credential_id
+            models = protocol.get("models")
+            if previous == next_credential_id or not isinstance(models, list):
+                continue
+            for model in models:
+                if (
+                    isinstance(model, dict)
+                    and str(model.get("credential_id") or "") == previous
+                ):
+                    model["credential_id"] = next_credential_id
+    return data
+
+
 class BackupExportImportMixin:
     @staticmethod
     def parse_dump(payload: bytes) -> "ConfigBackupDump":
@@ -44,6 +103,7 @@ class BackupExportImportMixin:
         except json.JSONDecodeError as exc:
             raise ValueError("Invalid backup file") from exc
         data = _normalize_dump_group_items(data)
+        data = _normalize_dump_credential_owners(data)
         try:
             return ConfigBackupDump.model_validate(data)
         except ValueError as exc:
@@ -71,6 +131,7 @@ class BackupExportImportMixin:
             groups = await self._load_groups(session)
             model_prices = await self._load_model_prices(session)
             cronjobs = await self._load_cronjobs(session)
+            balance_scripts = await self._load_balance_scripts(session)
             stats = await self._load_stats(session)
             gateway_api_keys = (
                 await self._load_gateway_api_keys(session)
@@ -91,13 +152,14 @@ class BackupExportImportMixin:
             groups=groups,
             model_prices=model_prices,
             cronjobs=cronjobs,
+            balance_scripts=balance_scripts,
             stats=stats,
             gateway_api_keys=gateway_api_keys,
             request_logs=[],
         )
 
     async def import_dump(self, dump: ConfigBackupDump) -> ConfigImportResult:
-        if dump.version not in (2, 3, 4, 5, 6, 7):
+        if dump.version not in (2, 3, 4, 5, 6, 7, 8):
             raise ValueError(f"Unsupported backup version: {dump.version}")
 
         async with self._session_factory() as session:
@@ -142,6 +204,9 @@ class BackupExportImportMixin:
 
             await self._replace_cronjobs(session, dump.cronjobs)
             rows_affected["cronjobs"] = len(dump.cronjobs)
+
+            await self._replace_balance_scripts(session, dump.balance_scripts)
+            rows_affected["balance_scripts"] = len(dump.balance_scripts)
 
             await self._replace_stats(session, dump.stats)
             rows_affected["imported_stats_total"] = (

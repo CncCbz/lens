@@ -42,7 +42,9 @@ class ChannelSiteImportNormalizationMixin:
         errors: list[SiteBatchImportError] = []
 
         base_urls, base_url_refs = self._import_base_urls(index, item, errors)
-        credentials, credential_refs = self._import_credentials(index, item, errors)
+        credentials, credential_refs = self._import_credentials(
+            index, item, base_url_refs, errors
+        )
         protocols = self._import_protocols(
             index,
             item,
@@ -109,11 +111,15 @@ class ChannelSiteImportNormalizationMixin:
         self,
         index: int,
         item: SiteImportItem,
+        base_url_refs: dict[str, str],
         errors: list[SiteBatchImportError],
     ) -> tuple[list[SiteCredentialInput], dict[str, str]]:
         credentials: list[SiteCredentialInput] = []
         refs: dict[str, str] = {}
-        names: set[str] = set()
+        names: set[tuple[str, str]] = set()
+        only_base_url_id = (
+            next(iter(base_url_refs.values())) if len(base_url_refs) == 1 else ""
+        )
         if not item.credentials:
             errors.append(
                 SiteBatchImportError(
@@ -148,7 +154,30 @@ class ChannelSiteImportNormalizationMixin:
                 continue
 
             name = credential.name.strip() or f"Key {credential_index + 1}"
-            name_key = name.lower()
+            base_url_ref = credential.base_url_ref.strip()
+            if base_url_ref:
+                base_url_id = base_url_refs.get(base_url_ref, "")
+                if not base_url_id:
+                    errors.append(
+                        SiteBatchImportError(
+                            index=index,
+                            field=f"credentials.{credential_index}.base_url_ref",
+                            message=f"Unknown base URL ref: {base_url_ref}",
+                        )
+                    )
+                    continue
+            elif only_base_url_id:
+                base_url_id = only_base_url_id
+            else:
+                errors.append(
+                    SiteBatchImportError(
+                        index=index,
+                        field=f"credentials.{credential_index}.base_url_ref",
+                        message="Credential base URL ref is required",
+                    )
+                )
+                continue
+            name_key = (base_url_id, name.lower())
             if name_key in names:
                 errors.append(
                     SiteBatchImportError(
@@ -169,6 +198,8 @@ class ChannelSiteImportNormalizationMixin:
                     api_key=api_key,
                     enabled=credential.enabled,
                     cost_multiplier=float(credential.cost_multiplier),
+                    base_url_id=base_url_id,
+                    balance_script_id=credential.balance_script_id.strip(),
                 )
             )
         return credentials, refs

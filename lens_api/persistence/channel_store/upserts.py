@@ -5,6 +5,8 @@ from sqlalchemy import update
 from ...core.runtime_channel_ids import compose_runtime_channel_id
 from .shared import (
     AsyncSession,
+    BalanceScriptEntity,
+    CredentialBalanceEntity,
     ModelGroupItemEntity,
     ProtocolKind,
     SiteBaseUrl,
@@ -48,7 +50,35 @@ class ChannelUpsertsMixin:
         normalized_base_urls = self._normalize_base_urls(base_urls)
         normalized_credentials = self._normalize_credentials(credentials)
         credential_ids = {item.id for item in normalized_credentials}
+        credentials_by_id = {item.id: item for item in normalized_credentials}
         base_url_ids = {item.id for item in normalized_base_urls}
+        for credential in normalized_credentials:
+            if credential.base_url_id not in base_url_ids:
+                raise ValueError(
+                    "Credential base URL not found: "
+                    f"{credential.id}: {credential.base_url_id}"
+                )
+        script_ids = {
+            item.balance_script_id
+            for item in normalized_credentials
+            if item.balance_script_id
+        }
+        if script_ids:
+            found_script_ids = set(
+                (
+                    await session.execute(
+                        select(BalanceScriptEntity.id).where(
+                            BalanceScriptEntity.id.in_(script_ids)
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            missing_script_ids = script_ids - found_script_ids
+            if missing_script_ids:
+                missing = sorted(missing_script_ids)[0]
+                raise ValueError(f"Balance script not found: {missing}")
         disabled_base_url_ids = {
             item.id for item in normalized_base_urls if not item.enabled
         }
@@ -74,6 +104,7 @@ class ChannelUpsertsMixin:
             site_id,
             protocols,
             credential_ids,
+            credentials_by_id,
             base_url_ids,
             disabled_base_url_ids,
             disabled_credential_ids,
@@ -155,6 +186,7 @@ class ChannelUpsertsMixin:
                 )
             )
         for index, item in enumerate(items):
+            script_id = item.balance_script_id or None
             entity = existing.get(item.id)
             if entity is None:
                 session.add(
@@ -166,6 +198,8 @@ class ChannelUpsertsMixin:
                         enabled=int(item.enabled),
                         cost_multiplier=float(item.cost_multiplier),
                         sort_order=index,
+                        base_url_id=item.base_url_id,
+                        balance_script_id=script_id,
                     )
                 )
                 continue
@@ -175,6 +209,8 @@ class ChannelUpsertsMixin:
             entity.enabled = int(item.enabled)
             entity.cost_multiplier = float(item.cost_multiplier)
             entity.sort_order = index
+            entity.base_url_id = item.base_url_id
+            entity.balance_script_id = script_id
 
     async def _upsert_protocol_configs(
         self,
@@ -182,6 +218,7 @@ class ChannelUpsertsMixin:
         site_id: str,
         protocol_configs: list[SiteProtocolConfigInput],
         credential_ids: set[str],
+        credentials_by_id: dict[str, SiteCredential],
         base_url_ids: set[str],
         disabled_base_url_ids: set[str],
         disabled_credential_ids: set[str],
@@ -236,6 +273,13 @@ class ChannelUpsertsMixin:
                     "Credential not found for protocol config "
                     f"{protocol_config_id}: {protocol_config.credential_id}"
                 )
+            if protocol_config.credential_id:
+                credential = credentials_by_id[protocol_config.credential_id]
+                if credential.base_url_id != protocol_config.base_url_id:
+                    raise ValueError(
+                        "Credential does not belong to the protocol base URL "
+                        f"{protocol_config_id}: {protocol_config.credential_id}"
+                    )
             input_protocols = _deduplicate_protocols(protocol_config.protocols)
             if not input_protocols:
                 raise ValueError(
@@ -283,6 +327,7 @@ class ChannelUpsertsMixin:
                 protocol_config_id,
                 protocol_config,
                 credential_ids,
+                credentials_by_id,
                 existing_models_by_config.get(protocol_config_id, {}),
             )
             if (
@@ -347,6 +392,7 @@ class ChannelUpsertsMixin:
         protocol_config_id: str,
         protocol_config: SiteProtocolConfigInput,
         credential_ids: set[str],
+        credentials_by_id: dict[str, SiteCredential],
         existing_models: dict[str, SiteDiscoveredModelEntity] | None = None,
     ) -> None:
         existing = dict(existing_models or {})
@@ -365,6 +411,12 @@ class ChannelUpsertsMixin:
             if model.credential_id not in credential_ids:
                 raise ValueError(
                     "Model credential not found in protocol config "
+                    f"{protocol_config_id}: {model.credential_id}"
+                )
+            model_credential = credentials_by_id[model.credential_id]
+            if model_credential.base_url_id != protocol_config.base_url_id:
+                raise ValueError(
+                    "Model credential does not belong to the protocol base URL "
                     f"{protocol_config_id}: {model.credential_id}"
                 )
             if model.protocol is None:
@@ -454,6 +506,11 @@ class ChannelUpsertsMixin:
     ) -> None:
         if not credential_ids:
             return
+        await session.execute(
+            delete(CredentialBalanceEntity).where(
+                CredentialBalanceEntity.credential_id.in_(credential_ids)
+            )
+        )
         await session.execute(
             delete(SiteCredentialEntity).where(
                 SiteCredentialEntity.id.in_(credential_ids)

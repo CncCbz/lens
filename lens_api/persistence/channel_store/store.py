@@ -3,6 +3,7 @@ from __future__ import annotations
 from .shared import (
     AsyncSession,
     ChannelConfig,
+    CredentialBalanceEntity,
     ModelGroupItemEntity,
     SiteBaseUrlEntity,
     SiteBatchImportError,
@@ -226,6 +227,11 @@ class ChannelStore(
                 )
             if credential_ids:
                 await session.execute(
+                    delete(CredentialBalanceEntity).where(
+                        CredentialBalanceEntity.credential_id.in_(credential_ids)
+                    )
+                )
+                await session.execute(
                     delete(SiteCredentialEntity).where(
                         SiteCredentialEntity.id.in_(credential_ids)
                     )
@@ -247,6 +253,8 @@ class ChannelStore(
                 enabled=item.enabled,
                 cost_multiplier=float(item.cost_multiplier),
                 sort_order=index,
+                base_url_id=item.base_url_id,
+                balance_script_id=item.balance_script_id,
             )
             for index, item in enumerate(payload.credentials)
             if item.name.strip() and item.api_key.strip()

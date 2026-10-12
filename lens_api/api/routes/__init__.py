@@ -4,6 +4,7 @@ from fastapi import FastAPI
 
 from . import (
     admin_auth,
+    balance_scripts,
     backups,
     cronjobs,
     gateway_api_keys,
@@ -27,6 +28,7 @@ def include_routes(app: FastAPI, service_module: ModuleType) -> None:
         public,
         admin_auth,
         sites,
+        balance_scripts,
         routing,
         overview,
         request_logs,

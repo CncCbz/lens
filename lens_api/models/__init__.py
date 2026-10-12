@@ -284,6 +284,8 @@ class SiteCredential(StrictBaseModel):
     enabled: bool = True
     cost_multiplier: float = Field(default=1.0, ge=0.0)
     sort_order: int = Field(default=0, ge=0)
+    base_url_id: str = Field(min_length=1)
+    balance_script_id: str = ""
 
 
 class SiteCredentialInput(StrictBaseModel):
@@ -292,6 +294,47 @@ class SiteCredentialInput(StrictBaseModel):
     api_key: str = Field(min_length=1)
     enabled: bool = True
     cost_multiplier: float = Field(default=1.0, ge=0.0)
+    base_url_id: str = Field(min_length=1)
+    balance_script_id: str = ""
+
+
+class BalanceScript(StrictBaseModel):
+    id: str
+    name: str
+    code: str
+    timeout_seconds: int = Field(default=10, ge=1, le=15)
+
+
+class BalanceScriptInput(StrictBaseModel):
+    name: str = Field(min_length=1)
+    code: str = Field(min_length=1)
+    timeout_seconds: int = Field(default=10, ge=1, le=15)
+
+
+class CredentialBalance(StrictBaseModel):
+    credential_id: str
+    total: str = ""
+    balance: str = ""
+    currency: str = ""
+    status: str = ""
+    error_message: str = ""
+    checked_at: str | None = None
+
+
+class BalanceScriptTestRequest(StrictBaseModel):
+    code: str = Field(min_length=1)
+    timeout_seconds: int = Field(default=10, ge=1, le=15)
+    api_key: str = Field(min_length=1)
+    base_url: str = Field(min_length=1)
+    proxy: str = ""
+
+
+class BalanceScriptTestResult(StrictBaseModel):
+    ok: bool
+    total: str = ""
+    balance: str = ""
+    currency: str = ""
+    error_message: str = ""
 
 
 class SiteModel(StrictBaseModel):
@@ -421,6 +464,8 @@ class SiteImportCredentialInput(StrictBaseModel):
     api_key: str = Field(min_length=1)
     enabled: bool = True
     cost_multiplier: float = Field(default=1.0, ge=0.0)
+    base_url_ref: str = ""
+    balance_script_id: str = ""
 
 
 class SiteImportModelInput(StrictBaseModel):
@@ -1590,6 +1635,7 @@ class ConfigBackupDump(StrictBaseModel):
     stats: ConfigBackupStatsSnapshot = Field(default_factory=ConfigBackupStatsSnapshot)
     gateway_api_keys: list[ConfigBackupGatewayApiKey] = Field(default_factory=list)
     request_logs: list[ConfigBackupRequestLog] = Field(default_factory=list)
+    balance_scripts: list[BalanceScript] = Field(default_factory=list)
 
 
 class ConfigImportResult(StrictBaseModel):

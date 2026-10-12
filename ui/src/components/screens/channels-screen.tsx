@@ -20,6 +20,8 @@ import {
   ModelGroupEnsureModelInput,
   ModelGroupEnsureResultItem,
   ProtocolKind,
+  BalanceScript,
+  CredentialBalance,
   Site,
   SiteBatchImportPayload,
   SiteBatchImportResult,
@@ -228,6 +230,9 @@ export function ChannelsScreen() {
   const [savingSite, setSavingSite] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Site | null>(null);
   const [editingSiteId, setEditingSiteId] = useState<string | null>(null);
+  const [refreshingCredentialId, setRefreshingCredentialId] = useState<
+    string | null
+  >(null);
   const [form, setForm] = useState<FormState>(() => emptyForm(locale));
   const [newProtocolConfigName, setNewProtocolConfigName] = useState("");
   const [protocolConfigNameDialogOpen, setProtocolConfigNameDialogOpen] =
@@ -304,6 +309,22 @@ export function ChannelsScreen() {
     staleTime: 5 * 60_000,
     refetchOnMount: "always",
   });
+  const { data: balanceScripts = [] } = useQuery({
+    queryKey: ["balance-scripts"],
+    queryFn: () => apiRequest<BalanceScript[]>("/admin/balance-scripts"),
+    staleTime: 60_000,
+  });
+  const { data: credentialBalances = [] } = useQuery({
+    queryKey: ["credential-balances"],
+    queryFn: () =>
+      apiRequest<CredentialBalance[]>("/admin/credential-balances"),
+    staleTime: 30_000,
+  });
+  const balancesByCredentialId = useMemo(() => {
+    const map = new Map<string, CredentialBalance>();
+    for (const item of credentialBalances) map.set(item.credential_id, item);
+    return map;
+  }, [credentialBalances]);
 
   const siteRuntimeById = useMemo(
     () =>
@@ -1085,6 +1106,35 @@ export function ChannelsScreen() {
     }
   }
 
+  async function refreshCredentialBalance(credentialId: string) {
+    if (!editingSiteId) return;
+    setRefreshingCredentialId(credentialId);
+    try {
+      const updated = await apiRequest<CredentialBalance>(
+        `/admin/sites/${editingSiteId}/credentials/${credentialId}/balance`,
+        { method: "POST" },
+      );
+      queryClient.setQueryData<CredentialBalance[]>(
+        ["credential-balances"],
+        (current) => [
+          ...(current ?? []).filter(
+            (item) => item.credential_id !== credentialId,
+          ),
+          updated,
+        ],
+      );
+      if (updated.status !== "ok") {
+        toast.error(updated.error_message || "Balance query failed");
+      }
+    } catch (error) {
+      const message =
+        error instanceof ApiError ? error.message : "Balance query failed";
+      toast.error(message);
+    } finally {
+      setRefreshingCredentialId(null);
+    }
+  }
+
   async function toggleSiteEnabled(site: Site, enabled: boolean) {
     setBusyId(site.id);
     try {
@@ -1105,6 +1155,8 @@ export function ChannelsScreen() {
             api_key: item.api_key,
             enabled: item.enabled,
             cost_multiplier: item.cost_multiplier,
+            base_url_id: item.base_url_id,
+            balance_script_id: item.balance_script_id || "",
           })),
           protocols: site.protocols.map((protocolConfig) => ({
             id: protocolConfig.id,
@@ -1339,13 +1391,45 @@ export function ChannelsScreen() {
       const baseUrls = current.base_urls.filter(
         (_, itemIndex) => itemIndex !== index,
       );
+      const credentials = current.credentials.filter(
+        (item) => item.base_url_id !== target.id,
+      );
+      const nextCredentials = credentials.length
+        ? credentials
+        : [
+            {
+              id: createLocalId("credential"),
+              name: "",
+              api_key: "",
+              enabled: true,
+              cost_multiplier: 1,
+              base_url_id: baseUrls[0]?.id ?? "",
+              balance_script_id: "",
+            },
+          ];
       return {
         ...current,
         base_urls: baseUrls,
-        protocolConfigs: current.protocolConfigs.map((protocolConfig) => ({
-          ...protocolConfig,
-          base_url_id: resolveBaseUrlId(baseUrls, protocolConfig.base_url_id),
-        })),
+        credentials: nextCredentials,
+        protocolConfigs: current.protocolConfigs.map((protocolConfig) => {
+          const baseUrlId =
+            protocolConfig.base_url_id === target.id
+              ? (baseUrls[0]?.id ?? "")
+              : resolveBaseUrlId(baseUrls, protocolConfig.base_url_id);
+          const credentialStillValid = nextCredentials.some(
+            (item) =>
+              item.id === protocolConfig.credential_id &&
+              item.base_url_id === baseUrlId,
+          );
+          return {
+            ...protocolConfig,
+            base_url_id: baseUrlId,
+            credential_id: credentialStillValid
+              ? protocolConfig.credential_id
+              : (nextCredentials.find((item) => item.base_url_id === baseUrlId)
+                  ?.id ?? ""),
+          };
+        }),
       };
     });
   }
@@ -1573,6 +1657,8 @@ export function ChannelsScreen() {
             cost_multiplier: Number.isFinite(item.cost_multiplier)
               ? Math.max(item.cost_multiplier, 0)
               : 1,
+            base_url_id: item.base_url_id,
+            balance_script_id: item.balance_script_id || "",
           }))
           .filter((item) => item.api_key),
         credential_id: selectedCredentialId,
@@ -1858,6 +1944,7 @@ export function ChannelsScreen() {
           onOpenEdit={openEdit}
           onToggleSiteEnabled={toggleSiteEnabled}
           setDeleteTarget={setDeleteTarget}
+          balancesByCredentialId={balancesByCredentialId}
         />
         {dialogOpen ? (
           <ChannelEditorDialog
@@ -1876,6 +1963,12 @@ export function ChannelsScreen() {
             testingModel={testingModel}
             ensuringModelGroups={ensuringModelGroups}
             hasModels={hasModels}
+            balanceScripts={balanceScripts}
+            balancesByCredentialId={balancesByCredentialId}
+            refreshingCredentialId={refreshingCredentialId}
+            onRefreshBalance={(credentialId) =>
+              void refreshCredentialBalance(credentialId)
+            }
             setDialogOpen={setDialogOpen}
             setEditingSiteId={setEditingSiteId}
             setForm={setForm}

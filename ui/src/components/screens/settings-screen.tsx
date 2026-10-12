@@ -4,6 +4,7 @@ import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
+  FileCode,
   Palette,
   RotateCcw,
   Save,
@@ -34,6 +35,7 @@ import {
   apiRequest,
 } from "@/lib/api";
 import { setStoredToken } from "@/lib/auth";
+import { BalanceScriptsPanel } from "@/components/settings/balance-scripts-panel";
 import { titleForLocale, useI18n } from "@/lib/i18n";
 import {
   DEFAULT_MODEL_TEST_PROMPTS,
@@ -635,6 +637,11 @@ export function SettingsScreen() {
       label: titleForLocale(locale, "路由", "Routing"),
       icon: ShieldAlert,
     },
+    {
+      value: "balance-scripts",
+      label: titleForLocale(locale, "余额查询脚本", "Balance scripts"),
+      icon: FileCode,
+    },
   ] as const;
 
   return (
@@ -992,6 +999,10 @@ export function SettingsScreen() {
                   </div>
                 </div>
               </SettingCard>
+            </TabsContent>
+
+            <TabsContent value="balance-scripts" className="mt-0">
+              <BalanceScriptsPanel />
             </TabsContent>
           </div>
         </Tabs>

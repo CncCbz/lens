@@ -264,6 +264,8 @@ export type SiteCredential = {
   enabled: boolean;
   cost_multiplier: number;
   sort_order: number;
+  base_url_id: string;
+  balance_script_id: string;
 };
 
 export type SiteCredentialInput = {
@@ -272,6 +274,25 @@ export type SiteCredentialInput = {
   api_key: string;
   enabled: boolean;
   cost_multiplier: number;
+  base_url_id: string;
+  balance_script_id?: string;
+};
+
+export type BalanceScript = {
+  id: string;
+  name: string;
+  code: string;
+  timeout_seconds: number;
+};
+
+export type CredentialBalance = {
+  credential_id: string;
+  total: string;
+  balance: string;
+  currency: string;
+  status: string;
+  error_message: string;
+  checked_at?: string | null;
 };
 
 export type SiteModel = {

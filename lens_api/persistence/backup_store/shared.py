@@ -27,6 +27,7 @@ from ...models import (
     ConfigBackupCronjob,
     ConfigBackupStatsSnapshot,
     ConfigImportResult,
+    BalanceScript,
     ModelGroup,
     ModelPriceItem,
     ProtocolKind,
@@ -57,6 +58,7 @@ from ..shared import (
     SETTING_ROUTER_ERROR_POLICY_CONFIG,
 )
 from ..entities import (
+    BalanceScriptEntity,
     GatewayApiKeyEntity,
     ImportedStatsDailyEntity,
     ImportedStatsTotalEntity,
