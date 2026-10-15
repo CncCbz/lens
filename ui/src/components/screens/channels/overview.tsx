@@ -81,7 +81,7 @@ export function ChannelsOverview({
       <Card className="overflow-hidden py-0 min-h-0 xl:min-h-[calc(100dvh-7.5rem)]">
         <CardContent className="max-h-[calc(100dvh-7.5rem)] overflow-y-auto px-3 py-3">
           {isLoading || sitesIsError ? null : visibleSites.length ? (
-            <div className="grid gap-3 sm:grid-cols-2 2xl:grid-cols-3">
+            <div className="columns-1 gap-3 sm:columns-2 2xl:columns-3">
               {visibleSites.map((site) => {
                 const runtimeSummary = siteRuntimeById.get(site.id);
                 const requestCount = runtimeSummary?.recent_request_count ?? 0;
@@ -96,7 +96,10 @@ export function ChannelsOverview({
                     key={site.id}
                     role="button"
                     tabIndex={0}
-                    className="flex h-full min-h-0 flex-col gap-2.5 overflow-hidden rounded-2xl border border-border/80 bg-gradient-to-b from-background to-muted/[0.18] p-3.5 shadow-sm transition-shadow hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 cursor-pointer"
+                    className={cn(
+                      "mb-3 flex min-h-0 break-inside-avoid flex-col gap-2.5 overflow-hidden rounded-2xl border border-border/80 bg-gradient-to-b from-background to-muted/[0.18] p-3.5 shadow-sm transition-all hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 cursor-pointer",
+                      !isSiteEnabled(site) && "opacity-60",
+                    )}
                     onClick={() => onOpenEdit(site)}
                     onKeyDown={(event) => {
                       if (event.key === "Enter" || event.key === " ") {
@@ -168,15 +171,6 @@ export function ChannelsOverview({
                       )}
                     </div>
 
-                    <div className="min-h-7">
-                      <SiteHealthPreview
-                        site={site}
-                        summary={runtimeSummary}
-                        locale={locale}
-                        timeZone={timeZone}
-                      />
-                    </div>
-
                     {(() => {
                       const readyBalances = site.credentials
                         .filter((item) => item.enabled)
@@ -193,53 +187,59 @@ export function ChannelsOverview({
                           } => item.balance?.status === "ok",
                         );
                       if (!readyBalances.length) return null;
-                      const shown = readyBalances.slice(0, 2);
-                      const remaining = readyBalances.length - shown.length;
-                      const tooltip = readyBalances
-                        .map(
-                          (item) =>
-                            `${item.credential.name.trim() || (locale === "zh-CN" ? "密钥" : "Key")}: ${item.balance.balance} ${item.balance.currency}`,
-                        )
-                        .join("\n");
 
                       return (
                         <div
-                          className="flex min-w-0 flex-wrap items-center gap-1.5"
-                          title={tooltip}
+                          className={cn(
+                            "grid gap-1.5",
+                            readyBalances.length === 1
+                              ? "grid-cols-1"
+                              : "grid-cols-2",
+                          )}
                         >
-                          {shown.map(({ credential, balance }) => {
+                          {readyBalances.map(({ credential, balance }) => {
                             const keyName =
                               credential.name.trim() ||
-                              (locale === "zh-CN" ? "密钥" : "Key");
+                              (locale === "zh-CN" ? "默认密钥" : "Key");
                             return (
                               <div
                                 key={credential.id}
-                                className="inline-flex max-w-full min-w-0 items-center gap-1 rounded-md border border-border/70 bg-background/80 px-1.5 py-0.5 text-[11px] shadow-2xs"
+                                className="flex min-w-0 flex-col gap-0.5 rounded-xl border border-border/70 bg-muted/35 px-2.5 py-1.5 shadow-2xs transition-colors hover:border-border hover:bg-muted/50"
                                 title={`${keyName}: ${balance.balance} ${balance.currency}`}
                               >
-                                <span className="max-w-[76px] truncate text-muted-foreground">
+                                <span className="truncate text-[11px] font-medium text-muted-foreground">
                                   {keyName}
                                 </span>
-                                <span className="font-mono font-medium text-foreground">
-                                  {balance.balance}
-                                </span>
-                                <span className="text-[10px] text-muted-foreground">
-                                  {balance.currency}
-                                </span>
+                                <div className="flex min-w-0 items-baseline gap-1">
+                                  <span className="truncate font-mono text-sm font-bold tracking-tight text-foreground">
+                                    {balance.balance}
+                                  </span>
+                                  <span className="text-[10px] font-semibold uppercase text-muted-foreground">
+                                    {balance.currency}
+                                  </span>
+                                </div>
                               </div>
                             );
                           })}
-                          {remaining > 0 ? (
-                            <span
-                              className="rounded-md border border-border/60 bg-muted/40 px-1.5 py-0.5 text-[10px] font-mono text-muted-foreground"
-                              title={tooltip}
-                            >
-                              +{remaining}
-                            </span>
-                          ) : null}
                         </div>
                       );
                     })()}
+
+                    <div className="flex min-h-6 items-center justify-between gap-2">
+                      <div className="min-w-0 flex-1">
+                        <SiteHealthPreview
+                          site={site}
+                          summary={runtimeSummary}
+                          locale={locale}
+                          timeZone={timeZone}
+                        />
+                      </div>
+                      <span className="shrink-0 text-xs font-medium text-muted-foreground">
+                        {locale === "zh-CN"
+                          ? `${requestCount} 请求`
+                          : `${requestCount} req`}
+                      </span>
+                    </div>
 
                     <div
                       className="mt-auto flex items-center justify-between gap-2 border-t border-border/60 pt-2"
@@ -248,8 +248,8 @@ export function ChannelsOverview({
                     >
                       <span className="truncate text-[11px] text-muted-foreground">
                         {locale === "zh-CN"
-                          ? `${site.model_count} 模型 · ${credentialCount} 密钥 · ${requestCount} 请求`
-                          : `${site.model_count} models · ${credentialCount} keys · ${requestCount} req`}
+                          ? `${site.model_count} 模型 · ${credentialCount} 密钥`
+                          : `${site.model_count} models · ${credentialCount} keys`}
                       </span>
                       <Button
                         type="button"
