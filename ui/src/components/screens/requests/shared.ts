@@ -43,8 +43,10 @@ export const PREFERRED_USER_AGENT_PRODUCTS = [
 ] as const;
 export const USER_AGENT_PRODUCT_PATTERN =
   /\b([A-Za-z][A-Za-z0-9._-]*)\/([^\s;)]+)/g;
+export const USER_AGENT_FALLBACK_PRODUCT_PATTERN =
+  /^\s*([A-Za-z][A-Za-z0-9._+-]*)/;
 export const USER_AGENT_PLATFORM_PATTERN =
-  /\b(Windows(?:\s+NT)?|Macintosh|Mac OS(?:\s+X)?|macOS|Ubuntu|Linux|Android|iPhone|iPad|iPod)\b/i;
+  /\b(Windows(?:\s+NT)?|win32|Macintosh|Mac OS(?:\s+X)?|macOS|darwin|Ubuntu|Linux|Android|iPhone|iPad|iPod)\b/i;
 
 export type UserAgentProduct = {
   name: string;
@@ -120,7 +122,7 @@ export function formatUserAgentProductName(value: string) {
 }
 
 export function parseUserAgentProducts(raw: string) {
-  return Array.from(raw.matchAll(USER_AGENT_PRODUCT_PATTERN))
+  const products = Array.from(raw.matchAll(USER_AGENT_PRODUCT_PATTERN))
     .map<UserAgentProduct>((match) => ({
       name: match[1],
       version: match[2],
@@ -128,6 +130,17 @@ export function parseUserAgentProducts(raw: string) {
     .filter(
       (product) => !HIDDEN_USER_AGENT_PRODUCTS.has(product.name.toLowerCase()),
     );
+  if (products.length > 0) return products;
+
+  const fallback = raw.match(USER_AGENT_FALLBACK_PRODUCT_PATTERN)?.[1];
+  if (
+    !fallback ||
+    HIDDEN_USER_AGENT_PRODUCTS.has(fallback.toLowerCase()) ||
+    formatUserAgentPlatform(fallback) !== null
+  ) {
+    return products;
+  }
+  return [{ name: fallback, version: "" }];
 }
 
 export function selectUserAgentProduct(products: UserAgentProduct[]) {
@@ -145,11 +158,12 @@ export function formatUserAgentPlatform(raw: string) {
   const platform = match?.[1]?.toLowerCase();
 
   if (!platform) return null;
-  if (platform.startsWith("windows")) return "Windows";
+  if (platform.startsWith("win")) return "Windows";
   if (
     platform === "macintosh" ||
     platform.startsWith("mac os") ||
-    platform === "macos"
+    platform === "macos" ||
+    platform === "darwin"
   ) {
     return "macOS";
   }
@@ -170,7 +184,8 @@ export function formatUserAgentDisplay(
   const platform = formatUserAgentPlatform(raw);
 
   if (client) {
-    parts.push(`${formatUserAgentProductName(client.name)}/${client.version}`);
+    const name = formatUserAgentProductName(client.name);
+    parts.push(client.version ? `${name}/${client.version}` : name);
   } else {
     parts.push(titleForLocale(locale, "未知客户端", "Unknown client"));
   }
