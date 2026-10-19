@@ -320,7 +320,9 @@ export function parseErrorPolicyConfig(
       const overridden = Object.keys(overrides[key] ?? {}).length > 0;
       return {
         key,
-        isDefault: (VISIBLE_PRESET_KEYS as readonly string[]).includes(key),
+        isDefault:
+          includePresets &&
+          (VISIBLE_PRESET_KEYS as readonly string[]).includes(key),
         overridden,
         ...merged,
       };
@@ -332,9 +334,11 @@ export function parseErrorPolicyConfig(
 export function serializeErrorPolicyConfig(
   draft: RouterErrorPolicyDraft,
   globals = { threshold: 3, cooldown: 60, maxCooldown: 600 },
+  options?: { explicitKeys?: boolean },
 ): string {
   const overrides: Record<string, Partial<RouterErrorPolicyFields>> = {};
   for (const row of draft.rows) {
+    if (options?.explicitKeys && !isValidKey(row.key)) continue;
     const defaults = builtinFor(row.key, globals);
     const fields: RouterErrorPolicyFields = {
       same_target_retries: row.same_target_retries,
@@ -347,7 +351,13 @@ export function serializeErrorPolicyConfig(
       count_toward_failure_rate: row.count_toward_failure_rate,
     };
     const diff = diffFields(fields, defaults);
-    if (Object.keys(diff).length > 0) {
+    if (options?.explicitKeys) {
+      overrides[row.key] = {
+        ...diff,
+        fallback: fields.fallback,
+        same_target_retries: fields.same_target_retries,
+      };
+    } else if (Object.keys(diff).length > 0) {
       overrides[row.key] = diff;
     }
   }

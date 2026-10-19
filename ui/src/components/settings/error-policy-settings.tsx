@@ -26,6 +26,7 @@ type Props = {
   draft: RouterErrorPolicyDraft;
   globals: { threshold: number; cooldown: number; maxCooldown: number };
   hint?: string;
+  editableKeys?: boolean;
   onChange: (draft: RouterErrorPolicyDraft) => void;
 };
 
@@ -56,14 +57,14 @@ function HeaderCell({
   );
 }
 
-function updateRow(
+function updateRowAt(
   draft: RouterErrorPolicyDraft,
-  key: string,
+  index: number,
   patch: Partial<RouterErrorPolicyRow>,
 ): RouterErrorPolicyDraft {
   return {
-    rows: draft.rows.map((row) =>
-      row.key === key ? { ...row, ...patch, overridden: true } : row,
+    rows: draft.rows.map((row, rowIndex) =>
+      rowIndex === index ? { ...row, ...patch, overridden: true } : row,
     ),
   };
 }
@@ -73,9 +74,23 @@ export function ErrorPolicySettings({
   draft,
   globals,
   hint,
+  editableKeys = false,
   onChange,
 }: Props) {
   function addRow() {
+    if (editableKeys) {
+      onChange({
+        rows: [
+          ...draft.rows,
+          {
+            ...createErrorPolicyRow("", globals),
+            isDefault: false,
+            overridden: false,
+          },
+        ],
+      });
+      return;
+    }
     const used = new Set(draft.rows.map((row) => row.key));
     let key = SUGGESTED_ERROR_POLICY_KEYS.find((item) => !used.has(item)) ?? "";
     if (!key) {
@@ -87,20 +102,30 @@ export function ErrorPolicySettings({
     onChange({
       rows: [
         ...draft.rows,
-        { ...createErrorPolicyRow(key, globals), overridden: true },
+        {
+          ...createErrorPolicyRow(key, globals),
+          isDefault: false,
+          overridden: true,
+        },
       ],
     });
   }
 
-  function resetRow(key: string) {
-    const fresh = createErrorPolicyRow(key, globals);
+  function resetRow(index: number) {
+    const row = draft.rows[index];
+    if (!row) return;
+    const fresh = createErrorPolicyRow(row.key, globals);
     onChange({
-      rows: draft.rows.map((row) => (row.key === key ? fresh : row)),
+      rows: draft.rows.map((item, rowIndex) =>
+        rowIndex === index
+          ? { ...fresh, isDefault: editableKeys ? false : item.isDefault }
+          : item,
+      ),
     });
   }
 
-  function removeRow(key: string) {
-    onChange({ rows: draft.rows.filter((row) => row.key !== key) });
+  function removeRow(index: number) {
+    onChange({ rows: draft.rows.filter((_, rowIndex) => rowIndex !== index) });
   }
 
   const loc = locale === "zh-CN" ? "zh-CN" : "en-US";
@@ -171,7 +196,7 @@ export function ErrorPolicySettings({
               >
                 <td className="px-3 py-2 align-middle">
                   <div className="flex items-center gap-2">
-                    {row.isDefault ? (
+                    {row.isDefault && !editableKeys ? (
                       <span className="font-mono text-xs">
                         {policyKeyLabel(row.key, loc)}
                       </span>
@@ -180,7 +205,7 @@ export function ErrorPolicySettings({
                         value={row.key}
                         onChange={(event) =>
                           onChange(
-                            updateRow(draft, row.key, {
+                            updateRowAt(draft, rowIndex, {
                               key: event.target.value.trim(),
                             }),
                           )
@@ -200,7 +225,9 @@ export function ErrorPolicySettings({
                   <Switch
                     checked={row.fallback}
                     onCheckedChange={(checked) =>
-                      onChange(updateRow(draft, row.key, { fallback: checked }))
+                      onChange(
+                        updateRowAt(draft, rowIndex, { fallback: checked }),
+                      )
                     }
                   />
                 </td>
@@ -211,7 +238,7 @@ export function ErrorPolicySettings({
                     value={row.same_target_retries}
                     onChange={(event) =>
                       onChange(
-                        updateRow(draft, row.key, {
+                        updateRowAt(draft, rowIndex, {
                           same_target_retries: Number(event.target.value || 0),
                         }),
                       )
@@ -227,7 +254,7 @@ export function ErrorPolicySettings({
                           type="button"
                           size="icon-sm"
                           variant="ghost"
-                          onClick={() => resetRow(row.key)}
+                          onClick={() => resetRow(rowIndex)}
                         >
                           <RotateCcw className="size-3.5" />
                         </Button>
@@ -236,14 +263,14 @@ export function ErrorPolicySettings({
                         {titleForLocale(locale, "恢复默认", "Reset")}
                       </TooltipContent>
                     </Tooltip>
-                    {!row.isDefault ? (
+                    {!row.isDefault || editableKeys ? (
                       <Tooltip>
                         <TooltipTrigger asChild>
                           <Button
                             type="button"
                             size="icon-sm"
                             variant="ghost"
-                            onClick={() => removeRow(row.key)}
+                            onClick={() => removeRow(rowIndex)}
                           >
                             <Trash2 className="size-3.5" />
                           </Button>

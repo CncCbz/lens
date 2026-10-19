@@ -788,13 +788,18 @@ export function AdvancedProtocolConfigDialog({
 
   function handleErrorPolicyChange(next: RouterErrorPolicyDraft) {
     setErrorPolicyDraft(next);
+    const filled = {
+      rows: next.rows.filter((row) => row.key.trim()),
+    };
     const error = validateErrorPolicyDraft(
-      next,
+      filled,
       locale === "zh-CN" ? "zh-CN" : "en-US",
     );
     setErrorPolicyInvalid(error);
     if (error) return;
-    const serialized = serializeErrorPolicyConfig(next, globals);
+    const serialized = serializeErrorPolicyConfig(filled, globals, {
+      explicitKeys: true,
+    });
     onUpdateProtocolConfig(protocolConfigIndex as number, {
       router_error_policy_config:
         serialized === '{"overrides":{}}' ? "" : serialized,
@@ -1082,6 +1087,7 @@ export function AdvancedProtocolConfigDialog({
                   locale={locale}
                   draft={errorPolicyDraft}
                   globals={globals}
+                  editableKeys
                   hint={
                     locale === "zh-CN"
                       ? "空配置使用全局策略。添加 502 / 429 / timeout 等即可覆盖；未添加的状态码仍走全局"

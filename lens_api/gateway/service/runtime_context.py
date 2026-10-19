@@ -429,17 +429,36 @@ class RoutingPlan:
     cursor_key: str | None = None
 
 
+def _router_error_policy_config(value: Any) -> RouterErrorPolicyConfig:
+    if isinstance(value, RouterErrorPolicyConfig):
+        return value
+    if isinstance(value, Mapping):
+        try:
+            return RouterErrorPolicyConfig.model_validate(value)
+        except (ValueError, TypeError):
+            return RouterErrorPolicyConfig()
+    return RouterErrorPolicyConfig()
+
+
 def effective_router_error_policy_config(
     runtime: Mapping[str, Any], router_error_policy_config: str
 ) -> Any:
-    """Channel-level error policy config takes precedence over the global one."""
+    """Combination keys override globals; unlisted statuses keep the global policy."""
+    global_config = _router_error_policy_config(
+        runtime.get("router_error_policy_config")
+    )
     raw = router_error_policy_config.strip()
     if not raw:
-        return runtime.get("router_error_policy_config")
+        return global_config
     try:
-        return RouterErrorPolicyConfig.model_validate(json.loads(raw))
+        combo = RouterErrorPolicyConfig.model_validate(json.loads(raw))
     except (ValueError, TypeError):
-        return runtime.get("router_error_policy_config")
+        return global_config
+    if not combo.overrides:
+        return global_config
+    merged = dict(global_config.overrides)
+    merged.update(combo.overrides)
+    return RouterErrorPolicyConfig(overrides=merged)
 
 
 def _combo_override_keys(router_error_policy_config: str) -> set[str]:

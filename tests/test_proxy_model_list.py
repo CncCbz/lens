@@ -590,6 +590,30 @@ def test_router_error_policy_resolver_merge_and_globals() -> None:
     assert p500.failure_threshold == 9
 
 
+def test_channel_error_policy_keeps_global_for_unlisted_status() -> None:
+    from lens_api.gateway.service.runtime_context import resolve_channel_error_policy
+
+    runtime = {
+        "router_error_policy_config": {
+            "overrides": {"429": {"fallback": False, "same_target_retries": 0}}
+        },
+        "circuit_breaker_threshold": 3,
+        "circuit_breaker_cooldown": 60,
+        "circuit_breaker_max_cooldown": 600,
+    }
+    raw = '{"overrides":{"520":{"fallback":false,"same_target_retries":1}}}'
+    key, policy = resolve_channel_error_policy(runtime, raw, status_code=520)
+    assert key == "520"
+    assert policy is not None
+    assert policy.fallback is False
+    assert policy.same_target_retries == 1
+    listed, listed_policy = resolve_channel_error_policy(runtime, raw, status_code=429)
+    assert listed == "429"
+    assert listed_policy is not None
+    assert listed_policy.fallback is False
+    assert listed_policy.same_target_retries == 0
+
+
 def test_channel_error_policy_uses_status_when_policy_key_missing() -> None:
     from lens_api.gateway.router import decision_from_policy, classify_error
     from lens_api.gateway.service.runtime_context import resolve_channel_error_policy
