@@ -261,6 +261,50 @@ async def _close_stream_resources(capture: StreamCapture) -> None:
             await client.aclose()
 
 
+def _logged_stream_content(
+    protocol: ProtocolKind,
+    raw_content: str | None,
+    *,
+    log_output: bool,
+) -> tuple[str | None, str | None]:
+    """Distill a stream for the request log.
+
+    Incomplete streams become one partial JSON object. Raw SSE is kept only
+    when output logging is on and the stream cannot be restored at all.
+    """
+    if not raw_content:
+        return None, None
+    parse_error: str | None = None
+    try:
+        distilled = _distill_stream_response_content(
+            protocol, raw_content, log_output=log_output
+        )
+    except ValueError as exc:
+        parse_error = str(exc)
+        distilled = None
+    if distilled is not None:
+        return distilled, None
+    try:
+        partial = _distill_stream_response_content(
+            protocol,
+            raw_content,
+            log_output=log_output,
+            allow_incomplete=True,
+        )
+    except ValueError as exc:
+        if parse_error is None:
+            parse_error = str(exc)
+        partial = None
+    if partial is not None:
+        return partial, parse_error
+    if not log_output:
+        return None, parse_error
+    return (
+        _sanitize_log_content_text(raw_content, log_output=log_output),
+        parse_error,
+    )
+
+
 async def _record_stream_request_log(
     *,
     request_log_id: int,
@@ -300,18 +344,9 @@ async def _record_stream_request_log(
         if raw_content and log_debug_enabled and log_output
         else None
     )
-    upstream_response_distilled = None
-    if raw_content:
-        try:
-            upstream_response_distilled = _distill_stream_response_content(
-                channel.protocol, raw_content, log_output=log_output
-            )
-        except ValueError:
-            upstream_response_distilled = None
-        if upstream_response_distilled is None:
-            upstream_response_distilled = _sanitize_log_content_text(
-                raw_content, log_output=log_output
-            )
+    upstream_response_distilled, _ = _logged_stream_content(
+        channel.protocol, raw_content, log_output=log_output
+    )
     store_body = capture is not None and capture.capture_body
     if not store_body:
         upstream_response_content = None
@@ -348,18 +383,11 @@ async def _record_stream_request_log(
             parsed = _stream_capture_usage(capture)
     else:
         parsed = _stream_capture_usage(capture)
-    try:
-        distilled_content = _distill_stream_response_content(
-            response_protocol, response_raw_content, log_output=log_output
-        )
-    except ValueError as exc:
-        if capture is not None:
-            capture.parse_errors.append(str(exc))
-        distilled_content = response_raw_content
-    if distilled_content is None:
-        # Logging-only fallback: keep raw SSE in the request log record when
-        # the stream cannot be restored; client delivery never sees this.
-        distilled_content = response_raw_content
+    distilled_content, distilled_parse_error = _logged_stream_content(
+        response_protocol, response_raw_content, log_output=log_output
+    )
+    if capture is not None and distilled_parse_error:
+        capture.parse_errors.append(distilled_parse_error)
     capture_issue = _describe_stream_capture_issue(
         channel.protocol, capture, raw_content
     )

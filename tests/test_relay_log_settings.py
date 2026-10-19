@@ -529,3 +529,123 @@ def test_upstream_stream_logging_filtering() -> None:
         assert "secret chunk output" not in kwargs["response_content"]
         # Raw upstream SSE is omitted
         assert kwargs["upstream_response_content"] is None
+
+
+def test_incomplete_stream_log_omits_output_without_raw_sse() -> None:
+    channel = _mock_channel()
+    gateway_key = GatewayApiKey(
+        id="gk-1",
+        remark="test",
+        api_key="sk-test",
+        enabled=True,
+        allowed_models=[],
+        excluded_models=[],
+        max_cost_usd=0.0,
+        spent_cost_usd=0.0,
+        expires_at=None,
+        created_at="2024-01-01T00:00:00Z",
+        updated_at="2024-01-01T00:00:00Z",
+    )
+
+    def sse(payload: dict[str, object]) -> str:
+        return "data: " + json.dumps(payload, ensure_ascii=False) + "\n\n"
+
+    raw_sse = sse(
+        {
+            "id": "chatcmpl-1",
+            "model": "deepseek-v4",
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {
+                        "role": "assistant",
+                        "content": "secret partial output",
+                        "reasoning_content": "secret reasoning",
+                    },
+                }
+            ],
+        }
+    ) + sse(
+        {
+            "id": "chatcmpl-1",
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "id": "call_1",
+                                "type": "function",
+                                "function": {
+                                    "name": "lookup",
+                                    "arguments": '{"q":"secret-tool-arg"',
+                                },
+                            }
+                        ]
+                    },
+                }
+            ],
+        }
+    )
+    assert _distill_stream_response_content(ProtocolKind.OPENAI_CHAT, raw_sse) is None
+    capture = StreamCapture(
+        capture_body=True,
+        stream_started_at=0.0,
+        first_token_latency_ms=10,
+    )
+    capture.response_content_chunks.append(raw_sse)
+    capture.completed = True
+    result = UpstreamResult(
+        response=Response(),
+        status_code=200,
+        is_stream=True,
+        upstream_model_name="deepseek-v4",
+        stream_capture=capture,
+    )
+
+    with (
+        patch(
+            "lens_api.gateway.service.stream_logging._update_request_log",
+            new=AsyncMock(),
+        ) as mock_update,
+        patch(
+            "lens_api.gateway.service.stream_logging._record_stream_route_health",
+            new=AsyncMock(return_value=True),
+        ),
+        patch(
+            "lens_api.gateway.service.stream_logging._safe_estimate_cost",
+            new=AsyncMock(return_value=(0.0, 0.0, 0.0)),
+        ),
+    ):
+        asyncio.run(
+            _record_stream_request_log(
+                request_log_id=999,
+                protocol=ProtocolKind.OPENAI_CHAT,
+                requested_group_name="deepseek-v4",
+                resolved_group_name="deepseek-v4",
+                client_request_content=None,
+                channel=channel,
+                gateway_key=gateway_key,
+                user_agent="lens-test",
+                started_at=0.0,
+                result=result,
+                attempts=[],
+                log_debug_enabled=True,
+                log_output=False,
+            )
+        )
+
+    kwargs = mock_update.call_args.kwargs
+    for field in ("upstream_response_distilled", "response_content"):
+        body = kwargs[field]
+        assert body is not None
+        assert not body.lstrip().startswith("data:")
+        assert '"content":"<omitted>"' in body
+        assert '"reasoning_content":"<omitted>"' in body
+        assert '"tool_calls":"<omitted>"' in body
+        assert "secret partial output" not in body
+        assert "secret reasoning" not in body
+        assert "secret-tool-arg" not in body
+        assert '"object":"chat.completion"' in body
+    assert kwargs["upstream_response_content"] is None

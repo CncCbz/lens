@@ -15,19 +15,28 @@ from .usage import _parse_ndjson_payloads, _parse_sse_payloads
 
 
 def _distill_stream_response_content(
-    protocol: ProtocolKind, raw_content: str | None, *, log_output: bool = True
+    protocol: ProtocolKind,
+    raw_content: str | None,
+    *,
+    log_output: bool = True,
+    allow_incomplete: bool = False,
 ) -> str | None:
-    """Restore a complete upstream stream to one upstream-native JSON object.
+    """Restore an upstream stream to one upstream-native JSON object.
 
     Returns ``None`` when the stream lacks the protocol's required terminal
-    evidence, and raises ``ValueError`` for malformed content. Callers must
-    never fall back to returning raw SSE as if it were JSON.
+    evidence, and raises ``ValueError`` for malformed content.
+    ``allow_incomplete`` is logging-only: it keeps a partial object when the
+    terminal event is missing and does not reject truncated tool JSON.
+    Client delivery must leave it false. Callers must never fall back to
+    returning raw SSE as if it were JSON.
     """
     if not raw_content:
         return None
 
     if protocol == ProtocolKind.OPENAI_CHAT:
-        restored = _restore_openai_chat_stream(_parse_sse_payloads(raw_content))
+        restored = _restore_openai_chat_stream(
+            _parse_sse_payloads(raw_content), allow_incomplete=allow_incomplete
+        )
         if restored is not None:
             return _dump_log_json(restored, log_output=log_output)
         return None
@@ -43,13 +52,19 @@ def _distill_stream_response_content(
                     _restore_openai_response_output(response_payload, payloads)
                 )
                 return _dump_log_json(compact_payload, log_output=log_output)
+        if allow_incomplete:
+            partial = _restore_incomplete_openai_response(payloads)
+            if partial is not None:
+                return _dump_log_json(partial, log_output=log_output)
         return None
     if protocol == ProtocolKind.ANTHROPIC:
         payloads = _parse_sse_payloads(raw_content)
         has_start = any(p.get("type") == "message_start" for p in payloads)
         has_stop = any(p.get("type") == "message_stop" for p in payloads)
-        if has_start and has_stop:
-            restored_message = _restore_anthropic_stream_message(payloads)
+        if (has_start and has_stop) or (allow_incomplete and has_start):
+            restored_message = _restore_anthropic_stream_message(
+                payloads, allow_incomplete=allow_incomplete
+            )
             if restored_message is not None:
                 return _dump_log_json(restored_message, log_output=log_output)
         return None
@@ -57,7 +72,7 @@ def _distill_stream_response_content(
         payloads = _parse_sse_payloads(raw_content) or _parse_ndjson_payloads(
             raw_content
         )
-        restored = _restore_gemini_stream(payloads)
+        restored = _restore_gemini_stream(payloads, allow_incomplete=allow_incomplete)
         if restored is not None:
             return _dump_log_json(restored, log_output=log_output)
         return None
@@ -67,6 +82,8 @@ def _distill_stream_response_content(
 
 def _restore_openai_chat_stream(
     payloads: list[dict[str, Any]],
+    *,
+    allow_incomplete: bool = False,
 ) -> dict[str, Any] | None:
     if not payloads:
         return None
@@ -135,8 +152,8 @@ def _restore_openai_chat_stream(
                     if isinstance(func.get("arguments"), str):
                         tc_entry["function"]["arguments"] += func["arguments"]
 
-    if not finish_reason_seen:
-        return None
+    if not finish_reason_seen and not (allow_incomplete and choices):
+        return _stream_error_payload(payloads) if allow_incomplete else None
 
     restored_choices: list[dict[str, Any]] = []
     for idx in sorted(choices):
@@ -146,10 +163,11 @@ def _restore_openai_chat_stream(
             ordered_tool_calls: list[dict[str, Any]] = []
             for tci in sorted(tc_map):
                 tc = tc_map[tci]
-                try:
-                    json.loads(tc["function"]["arguments"])
-                except json.JSONDecodeError as exc:
-                    raise ValueError("Invalid tool call arguments JSON") from exc
+                if not allow_incomplete:
+                    try:
+                        json.loads(tc["function"]["arguments"])
+                    except json.JSONDecodeError as exc:
+                        raise ValueError("Invalid tool call arguments JSON") from exc
                 ordered_tool_calls.append(tc)
             entry["message"]["tool_calls"] = ordered_tool_calls
         restored_choices.append(
@@ -170,8 +188,17 @@ def _restore_openai_chat_stream(
     }
 
 
+def _stream_error_payload(payloads: list[dict[str, Any]]) -> dict[str, Any] | None:
+    for payload in payloads:
+        if isinstance(payload.get("error"), dict):
+            return payload
+    return None
+
+
 def _restore_gemini_stream(
     payloads: list[dict[str, Any]],
+    *,
+    allow_incomplete: bool = False,
 ) -> dict[str, Any] | None:
     if not payloads:
         return None
@@ -202,7 +229,7 @@ def _restore_gemini_stream(
                 finish_seen = True
                 entry["finishReason"] = cand["finishReason"]
 
-    if not finish_seen:
+    if not finish_seen and not (allow_incomplete and candidates):
         return None
     return {
         "candidates": [candidates[i] for i in sorted(candidates)],
@@ -213,6 +240,8 @@ def _restore_gemini_stream(
 
 def _restore_anthropic_stream_message(
     payloads: list[dict[str, Any]],
+    *,
+    allow_incomplete: bool = False,
 ) -> dict[str, Any] | None:
     message: dict[str, Any] | None = None
     input_buffers: dict[int, str] = {}
@@ -278,7 +307,9 @@ def _restore_anthropic_stream_message(
             index = _coerce_openai_output_index(payload.get("index"))
             if index is None:
                 continue
-            _finalize_anthropic_tool_use_input(message, index, input_buffers)
+            _finalize_anthropic_tool_use_input(
+                message, index, input_buffers, allow_incomplete=allow_incomplete
+            )
             continue
 
         if payload_type == "message_delta":
@@ -293,7 +324,9 @@ def _restore_anthropic_stream_message(
                 message["usage"] = merged_usage
 
     for index in list(input_buffers):
-        _finalize_anthropic_tool_use_input(message, index, input_buffers)
+        _finalize_anthropic_tool_use_input(
+            message, index, input_buffers, allow_incomplete=allow_incomplete
+        )
 
     if message is None:
         return None
@@ -308,6 +341,8 @@ def _finalize_anthropic_tool_use_input(
     message: dict[str, Any] | None,
     index: int,
     input_buffers: dict[int, str],
+    *,
+    allow_incomplete: bool = False,
 ) -> None:
     if message is None:
         return
@@ -323,15 +358,21 @@ def _finalize_anthropic_tool_use_input(
     buffer = input_buffers.pop(index, "")
     if not buffer:
         current_input = block.get("input")
-        if isinstance(current_input, dict):
+        if isinstance(current_input, dict) or allow_incomplete:
             return
         raise ValueError("Invalid Anthropic tool input")
 
     try:
         parsed_input = json.loads(buffer)
     except json.JSONDecodeError as exc:
+        if allow_incomplete:
+            block["input"] = buffer
+            return
         raise ValueError("Invalid Anthropic tool input JSON") from exc
     if not isinstance(parsed_input, dict):
+        if allow_incomplete:
+            block["input"] = buffer
+            return
         raise ValueError("Invalid Anthropic tool input")
     block["input"] = parsed_input
 
@@ -354,6 +395,29 @@ def _compact_openai_response_payload(payload: dict[str, Any]) -> dict[str, Any]:
         if value is not None:
             compact[key] = value
     return compact
+
+
+def _restore_incomplete_openai_response(
+    payloads: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    response_payload: dict[str, Any] | None = None
+    for payload in payloads:
+        candidate = payload.get("response")
+        if isinstance(candidate, dict):
+            response_payload = candidate
+    rebuilt_output = _rebuild_openai_response_output(payloads)
+    if response_payload is None and not rebuilt_output:
+        return _stream_error_payload(payloads)
+    base = dict(response_payload or {})
+    existing_output = base.get("output")
+    if rebuilt_output and (
+        not isinstance(existing_output, list) or not existing_output
+    ):
+        base["output"] = rebuilt_output
+    elif "output" not in base:
+        base["output"] = []
+    base.setdefault("status", "incomplete")
+    return _compact_openai_response_payload(base)
 
 
 def _restore_openai_response_output(
