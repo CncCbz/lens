@@ -992,6 +992,10 @@ export function GroupsScreen() {
             rpm_limit: protocolConfig.rpm_limit,
             token_limit: protocolConfig.token_limit,
             cost_limit_usd: protocolConfig.cost_limit_usd,
+            first_token_timeout_seconds:
+              protocolConfig.first_token_timeout_seconds,
+            stream_idle_timeout_seconds:
+              protocolConfig.stream_idle_timeout_seconds,
             param_override: protocolConfig.param_override,
             match_regex: protocolConfig.match_regex,
             router_error_policy_config:

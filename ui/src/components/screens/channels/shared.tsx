@@ -63,6 +63,8 @@ export type FormProtocolConfig = {
   rpm_limit: number;
   token_limit: number;
   cost_limit_usd: number;
+  first_token_timeout_seconds: number;
+  stream_idle_timeout_seconds: number;
   param_override: string;
   match_regex: string;
   router_error_policy_config: string;
@@ -201,6 +203,8 @@ export const emptyProtocolConfig = (
   rpm_limit: 0,
   token_limit: 0,
   cost_limit_usd: 0,
+  first_token_timeout_seconds: 0,
+  stream_idle_timeout_seconds: 0,
   param_override: "",
   match_regex: "",
   router_error_policy_config: "",
@@ -253,6 +257,8 @@ export const batchImportTemplate: SiteBatchImportPayload = {
           rpm_limit: 0,
           token_limit: 0,
           cost_limit_usd: 0,
+          first_token_timeout_seconds: 0,
+          stream_idle_timeout_seconds: 0,
           param_override: "",
           match_regex: "",
           router_error_policy_config: "",
@@ -687,6 +693,10 @@ export function toForm(site: Site, locale: Locale = "zh-CN"): FormState {
           rpm_limit: protocolConfig.rpm_limit ?? 0,
           token_limit: protocolConfig.token_limit ?? 0,
           cost_limit_usd: protocolConfig.cost_limit_usd ?? 0,
+          first_token_timeout_seconds:
+            protocolConfig.first_token_timeout_seconds ?? 0,
+          stream_idle_timeout_seconds:
+            protocolConfig.stream_idle_timeout_seconds ?? 0,
           param_override: protocolConfig.param_override,
           match_regex: safeText(protocolConfig.match_regex),
           router_error_policy_config: safeText(
@@ -810,6 +820,16 @@ export function toPayload(form: FormState): SitePayload {
           ),
           cost_limit_usd: Number.isFinite(protocolConfig.cost_limit_usd)
             ? Math.max(protocolConfig.cost_limit_usd, 0)
+            : 0,
+          first_token_timeout_seconds: Number.isFinite(
+            protocolConfig.first_token_timeout_seconds,
+          )
+            ? Math.max(protocolConfig.first_token_timeout_seconds, 0)
+            : 0,
+          stream_idle_timeout_seconds: Number.isFinite(
+            protocolConfig.stream_idle_timeout_seconds,
+          )
+            ? Math.max(protocolConfig.stream_idle_timeout_seconds, 0)
             : 0,
           param_override: protocolConfig.param_override.trim(),
           match_regex: safeText(protocolConfig.match_regex).trim(),

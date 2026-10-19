@@ -7,6 +7,7 @@ from .runtime_context import (
     Any,
     AttemptLog,
     BackgroundTask,
+    ChannelConfig,
     HTTPException,
     Mapping,
     ProtocolKind,
@@ -316,7 +317,7 @@ async def _proxy_protocol(
                         log_ctx=log_ctx,
                         errors=errors,
                         failure_status_codes=failure_status_codes,
-                        deadline=deadline.for_attempt(),
+                        deadline=_attempt_deadline(deadline, target.channel),
                         route_release=release_target,
                         path_suffix=path_suffix,
                         multipart_files=multipart_files,
@@ -602,6 +603,15 @@ def _effective_user_agent_from_headers(
         if name.lower() == "user-agent":
             return _normalize_user_agent(value)
     return fallback
+
+
+def _attempt_deadline(
+    deadline: _RequestDeadline, channel: ChannelConfig
+) -> _RequestDeadline:
+    return deadline.for_attempt(
+        first_token_timeout_seconds=channel.first_token_timeout_seconds or None,
+        stream_idle_timeout_seconds=channel.stream_idle_timeout_seconds or None,
+    )
 
 
 async def _try_target(

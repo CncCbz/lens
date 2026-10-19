@@ -275,6 +275,8 @@ class ChannelSiteImportNormalizationMixin:
                     rpm_limit=protocol.rpm_limit,
                     token_limit=protocol.token_limit,
                     cost_limit_usd=protocol.cost_limit_usd,
+                    first_token_timeout_seconds=protocol.first_token_timeout_seconds,
+                    stream_idle_timeout_seconds=protocol.stream_idle_timeout_seconds,
                     param_override=protocol.param_override.strip(),
                     match_regex=protocol.match_regex.strip(),
                     router_error_policy_config=protocol.router_error_policy_config.strip(),

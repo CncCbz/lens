@@ -209,6 +209,12 @@ class BackupReplacersMixin:
                         rpm_limit=protocol_config.rpm_limit,
                         token_limit=protocol_config.token_limit,
                         cost_limit_usd=protocol_config.cost_limit_usd,
+                        first_token_timeout_seconds=(
+                            protocol_config.first_token_timeout_seconds
+                        ),
+                        stream_idle_timeout_seconds=(
+                            protocol_config.stream_idle_timeout_seconds
+                        ),
                         spent_tokens=protocol_config.spent_tokens,
                         spent_cost_usd=protocol_config.spent_cost_usd,
                         param_override=protocol_config.param_override,

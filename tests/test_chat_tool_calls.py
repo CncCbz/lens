@@ -8,8 +8,10 @@ from lens_api.gateway.converters._chat_stream import (
     ChatToolCalls,
     normalize_chat_stream,
 )
+from lens_api.gateway.service.proxy_flow import _attempt_deadline
 from lens_api.gateway.service.runtime_context import _RequestDeadline
 from lens_api.gateway.service.stream_restore import _restore_openai_chat_stream
+from lens_api.models import ChannelConfig, ProtocolKind
 
 
 def test_chat_tool_calls_splits_reused_index() -> None:
@@ -185,3 +187,39 @@ def test_request_deadline_for_attempt_resets_first_token_window() -> None:
     assert expired.first_token_remaining_seconds() == 0.0
     remaining = expired.for_attempt().first_token_remaining_seconds()
     assert remaining is not None and remaining > 0.5
+
+
+def _channel(**overrides: float) -> ChannelConfig:
+    return ChannelConfig(
+        id="c1",
+        name="c1",
+        protocol=ProtocolKind.OPENAI_CHAT,
+        base_url="https://example.com/v1",
+        api_key="sk-test",
+        **overrides,
+    )
+
+
+def test_attempt_deadline_applies_channel_timeout_overrides() -> None:
+    deadline = _RequestDeadline(
+        started_at=perf_counter(),
+        first_token_timeout_seconds=180,
+        stream_idle_timeout_seconds=180,
+    )
+
+    inherited = _attempt_deadline(deadline, _channel())
+    assert inherited.first_token_timeout_seconds == 180
+    assert inherited.stream_idle_timeout_seconds == 180
+
+    overridden = _attempt_deadline(
+        deadline,
+        _channel(first_token_timeout_seconds=5, stream_idle_timeout_seconds=30),
+    )
+    assert overridden.first_token_timeout_seconds == 5
+    assert overridden.stream_idle_timeout_seconds == 30
+    assert overridden.stream_chunk_wait_seconds(has_seen_first_chunk=False) is not None
+    assert overridden.stream_chunk_wait_seconds(has_seen_first_chunk=True) == 30
+
+    partial = _attempt_deadline(deadline, _channel(first_token_timeout_seconds=5))
+    assert partial.first_token_timeout_seconds == 5
+    assert partial.stream_idle_timeout_seconds == 180

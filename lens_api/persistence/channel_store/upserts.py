@@ -317,6 +317,12 @@ class ChannelUpsertsMixin:
             entity.rpm_limit = protocol_config.rpm_limit
             entity.token_limit = protocol_config.token_limit
             entity.cost_limit_usd = protocol_config.cost_limit_usd
+            entity.first_token_timeout_seconds = (
+                protocol_config.first_token_timeout_seconds
+            )
+            entity.stream_idle_timeout_seconds = (
+                protocol_config.stream_idle_timeout_seconds
+            )
             entity.param_override = protocol_config.param_override
             entity.match_regex = protocol_config.match_regex
             entity.router_error_policy_config = (

@@ -692,7 +692,7 @@ function parseIntLimit(raw: string): number {
     : 0;
 }
 
-function parseCostLimit(raw: string): number {
+function parseNumberLimit(raw: string): number {
   const value = Number.parseFloat(raw);
   return Number.isFinite(value) ? Math.max(value, 0) : 0;
 }
@@ -862,59 +862,87 @@ export function AdvancedProtocolConfigDialog({
             </div>
 
             {tab === "limits" ? (
-              <div className="grid gap-4 sm:grid-cols-2">
-                {(
-                  [
-                    {
-                      key: "concurrency_limit",
-                      id: "protocol-concurrency-limit",
-                      label:
-                        locale === "zh-CN" ? "并发上限" : "Concurrency limit",
-                      integer: true,
-                    },
-                    {
-                      key: "rpm_limit",
-                      id: "protocol-rpm-limit",
-                      label: locale === "zh-CN" ? "RPM 上限" : "RPM limit",
-                      integer: true,
-                    },
-                    {
-                      key: "token_limit",
-                      id: "protocol-token-limit",
-                      label: locale === "zh-CN" ? "Token 上限" : "Token limit",
-                      integer: true,
-                    },
-                    {
-                      key: "cost_limit_usd",
-                      id: "protocol-cost-limit",
-                      label:
-                        locale === "zh-CN"
-                          ? "费用上限 (USD)"
-                          : "Cost limit (USD)",
-                      integer: false,
-                    },
-                  ] as const
-                ).map((field) => (
-                  <Field key={field.key}>
-                    <FieldLabel htmlFor={field.id}>{field.label}</FieldLabel>
-                    <Input
-                      id={field.id}
-                      type="number"
-                      min={0}
-                      max={field.integer ? MAX_CHANNEL_CONCURRENCY : undefined}
-                      step={field.integer ? 1 : 0.0001}
-                      value={protocolConfig[field.key]}
-                      onChange={(event) => {
-                        onUpdateProtocolConfig(protocolConfigIndex, {
-                          [field.key]: field.integer
-                            ? parseIntLimit(event.target.value)
-                            : parseCostLimit(event.target.value),
-                        });
-                      }}
-                    />
-                  </Field>
-                ))}
-              </div>
+              <>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  {(
+                    [
+                      {
+                        key: "concurrency_limit",
+                        id: "protocol-concurrency-limit",
+                        label:
+                          locale === "zh-CN" ? "并发上限" : "Concurrency limit",
+                        integer: true,
+                      },
+                      {
+                        key: "rpm_limit",
+                        id: "protocol-rpm-limit",
+                        label: locale === "zh-CN" ? "RPM 上限" : "RPM limit",
+                        integer: true,
+                      },
+                      {
+                        key: "token_limit",
+                        id: "protocol-token-limit",
+                        label:
+                          locale === "zh-CN" ? "Token 上限" : "Token limit",
+                        integer: true,
+                      },
+                      {
+                        key: "cost_limit_usd",
+                        id: "protocol-cost-limit",
+                        label:
+                          locale === "zh-CN"
+                            ? "费用上限 (USD)"
+                            : "Cost limit (USD)",
+                        integer: false,
+                      },
+                      {
+                        key: "first_token_timeout_seconds",
+                        id: "protocol-first-token-timeout",
+                        label:
+                          locale === "zh-CN"
+                            ? "首字超时 (秒)"
+                            : "First token timeout (s)",
+                        integer: false,
+                      },
+                      {
+                        key: "stream_idle_timeout_seconds",
+                        id: "protocol-stream-idle-timeout",
+                        label:
+                          locale === "zh-CN"
+                            ? "空闲超时 (秒)"
+                            : "Idle timeout (s)",
+                        integer: false,
+                      },
+                    ] as const
+                  ).map((field) => (
+                    <Field key={field.key}>
+                      <FieldLabel htmlFor={field.id}>{field.label}</FieldLabel>
+                      <Input
+                        id={field.id}
+                        type="number"
+                        min={0}
+                        max={
+                          field.integer ? MAX_CHANNEL_CONCURRENCY : undefined
+                        }
+                        step={field.integer ? 1 : 0.0001}
+                        value={protocolConfig[field.key]}
+                        onChange={(event) => {
+                          onUpdateProtocolConfig(protocolConfigIndex, {
+                            [field.key]: field.integer
+                              ? parseIntLimit(event.target.value)
+                              : parseNumberLimit(event.target.value),
+                          });
+                        }}
+                      />
+                    </Field>
+                  ))}
+                </div>
+                <FieldDescription>
+                  {locale === "zh-CN"
+                    ? "超时为 0 时使用全局设置"
+                    : "0 uses the global timeout"}
+                </FieldDescription>
+              </>
             ) : null}
 
             {tab === "proxy" ? (

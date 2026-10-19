@@ -333,6 +333,8 @@ export type SiteProtocolConfig = {
   rpm_limit: number;
   token_limit: number;
   cost_limit_usd: number;
+  first_token_timeout_seconds: number;
+  stream_idle_timeout_seconds: number;
   spent_tokens: number;
   spent_cost_usd: number;
   param_override: string;
@@ -355,6 +357,8 @@ export type SiteProtocolConfigInput = {
   rpm_limit: number;
   token_limit: number;
   cost_limit_usd: number;
+  first_token_timeout_seconds: number;
+  stream_idle_timeout_seconds: number;
   param_override: string;
   match_regex: string;
   router_error_policy_config: string;
@@ -434,6 +438,8 @@ export type SiteBatchImportProtocolInput = {
   rpm_limit?: number;
   token_limit?: number;
   cost_limit_usd?: number;
+  first_token_timeout_seconds?: number;
+  stream_idle_timeout_seconds?: number;
   param_override?: string;
   match_regex?: string;
   router_error_policy_config?: string;

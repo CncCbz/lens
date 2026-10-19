@@ -161,6 +161,8 @@ class BackupLoadersMixin:
                     "rpm_limit": row.rpm_limit,
                     "token_limit": row.token_limit,
                     "cost_limit_usd": row.cost_limit_usd,
+                    "first_token_timeout_seconds": row.first_token_timeout_seconds,
+                    "stream_idle_timeout_seconds": row.stream_idle_timeout_seconds,
                     "spent_tokens": row.spent_tokens,
                     "spent_cost_usd": row.spent_cost_usd,
                     "param_override": row.param_override,
