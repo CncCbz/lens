@@ -31,6 +31,7 @@ import {
 	RequestOutcomeBadge,
 } from "./components";
 import {
+	formatCacheRead,
 	formatChannelCredentialLabel,
 	formatErrorDisplay,
 	formatGatewayKeyLabel,
@@ -392,7 +393,11 @@ export function RequestCard({
 						<RequestMetric
 							icon={<Database size={14} />}
 							label={titleForLocale(locale, "缓存读取", "Cache Read")}
-							value={formatMaybeCount(item.cache_read_input_tokens, running)}
+							value={formatCacheRead(
+								item.cache_read_input_tokens,
+								item.input_tokens,
+								running,
+							)}
 						/>
 						<RequestMetric
 							icon={<Upload size={14} />}

@@ -103,6 +103,18 @@ export function formatMaybeCount(value: number, pending: boolean) {
   return formatCount(value);
 }
 
+export function formatCacheRead(
+  cacheReadTokens: number,
+  inputTokens: number,
+  pending: boolean,
+) {
+  if (pending && !cacheReadTokens) return "-";
+  const count = formatCount(cacheReadTokens);
+  if (inputTokens <= 0) return count;
+  const hitRate = Math.round((cacheReadTokens / inputTokens) * 100);
+  return `${count} · ${hitRate}%`;
+}
+
 export function formatTps(value: number | null | undefined, pending: boolean) {
   if (
     pending ||
