@@ -25,9 +25,15 @@ from ..shared import (
 
 
 def _tokens_per_second(
-    *, output_tokens: int, latency_ms: int, first_token_latency_ms: int
+    *,
+    output_tokens: int,
+    latency_ms: int,
+    first_token_latency_ms: int,
+    is_stream: bool,
 ) -> float:
-    generation_latency_ms = latency_ms - first_token_latency_ms
+    generation_latency_ms = (
+        latency_ms - first_token_latency_ms if is_stream else latency_ms
+    )
     if output_tokens <= 0 or generation_latency_ms <= 0:
         return 0.0
     return output_tokens * 1000 / generation_latency_ms
@@ -267,6 +273,7 @@ class RequestLogChannelResolutionMixin:
                 output_tokens=entity.output_tokens,
                 latency_ms=entity.latency_ms,
                 first_token_latency_ms=entity.first_token_latency_ms,
+                is_stream=bool(entity.is_stream),
             ),
             input_tokens=entity.input_tokens,
             cache_read_input_tokens=entity.cache_read_input_tokens,

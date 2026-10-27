@@ -60,6 +60,12 @@ class _RequestLogger:
             self.upstream_headers = upstream_headers
         if channel is not None:
             self.upstream_protocol = channel.protocol
+        latency_ms = _elapsed_ms(self.started_at)
+        if success and not is_stream:
+            # Non-streaming clients only see the first byte once the whole
+            # response is ready, so downstream-perceived first-token latency
+            # equals the total latency.
+            first_token_latency_ms = latency_ms
         kwargs: dict[str, Any] = {}
         if result is not None:
             kwargs.update(
@@ -97,7 +103,7 @@ class _RequestLogger:
             success=success,
             is_stream=is_stream,
             first_token_latency_ms=first_token_latency_ms,
-            latency_ms=_elapsed_ms(self.started_at),
+            latency_ms=latency_ms,
             request_content=self.upstream_request_content,
             client_request_content=self.request_content,
             upstream_request_content=self.upstream_request_content,

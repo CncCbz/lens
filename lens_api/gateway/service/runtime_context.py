@@ -737,6 +737,7 @@ class StreamCapture:
     chat_expected_choices: int = 1
     chat_finished_choices: set[int] = field(default_factory=set)
     first_token_latency_ms: int = 0
+    attempt_first_token_latency_ms: int = 0
     response_content_chunks: list[str] = field(default_factory=list)
     client_response_content_chunks: list[str] = field(default_factory=list)
     event_buffer: str = ""

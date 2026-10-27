@@ -181,7 +181,10 @@ def _mark_stream_first_chunk(capture: StreamCapture, stream_started_at: float) -
     if capture.saw_first_chunk:
         return
     capture.saw_first_chunk = True
-    capture.first_token_latency_ms = _elapsed_ms(stream_started_at)
+    capture.attempt_first_token_latency_ms = _elapsed_ms(stream_started_at)
+    capture.first_token_latency_ms = _elapsed_ms(
+        capture.stream_started_at or stream_started_at
+    )
     request_log_id = capture.request_log_id
     if request_log_id is None:
         return
@@ -189,7 +192,7 @@ def _mark_stream_first_chunk(capture: StreamCapture, stream_started_at: float) -
         _persist_stream_first_token_latency(
             request_log_id=request_log_id,
             first_token_latency_ms=capture.first_token_latency_ms,
-            latency_ms=_elapsed_ms(capture.stream_started_at or stream_started_at),
+            latency_ms=capture.first_token_latency_ms,
         )
     )
 
@@ -407,7 +410,13 @@ async def _record_stream_request_log(
     attempt_logs = [dict(item) for item in attempts]
     if attempt_logs and attempt_logs[-1].get("success"):
         attempt_logs[-1]["duration_ms"] = (
-            latency_ms if capture_issue is not None else first_token_latency_ms
+            latency_ms
+            if capture_issue is not None
+            else (
+                capture.attempt_first_token_latency_ms
+                if capture is not None
+                else first_token_latency_ms
+            )
         )
         if capture_issue is not None:
             attempt_logs[-1]["success"] = False

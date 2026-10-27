@@ -24,6 +24,7 @@ from lens_api.gateway.service.runtime_context import (
     resolve_channel_error_policy,
 )
 from lens_api.gateway.service.stream_logging import (
+    _mark_stream_first_chunk,
     _record_stream_event_payload,
     _stream_log_status_code,
 )
@@ -508,6 +509,17 @@ def test_stream_explicit_error_status_is_preserved() -> None:
     issue = _describe_stream_capture_issue(ProtocolKind.OPENAI_RESPONSES, capture, None)
     result = UpstreamResult(response=Response(), status_code=200)
     assert _stream_log_status_code(result, capture, issue) == 504
+
+
+def test_stream_first_token_latency_includes_retry_wait() -> None:
+    request_started_at = time.perf_counter() - 0.05
+    attempt_started_at = time.perf_counter()
+    capture = StreamCapture(capture_body=False, stream_started_at=request_started_at)
+
+    _mark_stream_first_chunk(capture, attempt_started_at)
+
+    assert capture.first_token_latency_ms >= 50
+    assert capture.attempt_first_token_latency_ms < capture.first_token_latency_ms
 
 
 def test_client_disconnect_does_not_become_502() -> None:
