@@ -112,7 +112,7 @@ export function formatCacheRead(
   const count = formatCount(cacheReadTokens);
   if (inputTokens <= 0) return count;
   const hitRate = Math.round((cacheReadTokens / inputTokens) * 100);
-  return `${count} · ${hitRate}%`;
+  return `${count}(${hitRate}%)`;
 }
 
 export function formatTps(value: number | null | undefined, pending: boolean) {
