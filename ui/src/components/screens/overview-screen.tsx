@@ -4,7 +4,6 @@ import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
 import {
-  OverviewChannelHealthPoint,
   OverviewDailyPoint,
   OverviewDimensionUsageAnalytics,
   OverviewPerformanceAnalytics,
@@ -12,29 +11,21 @@ import {
   apiRequest,
 } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { SegmentedControl } from "@/components/ui/segmented-control";
 
-import { ChannelHealthList } from "./overview/channel-health-list";
-import { DailyOverviewChart } from "./overview/daily-overview-chart";
-import {
-  DimensionUsageSection,
-  ModelUsageSection,
-} from "./overview/dimension-usage-section";
-import { OverviewHeatmapSection } from "./overview/overview-heatmap-section";
-import { OverviewKpiRow } from "./overview/overview-kpi-row";
-import { PerformanceSection } from "./overview/performance-section";
 import {
   METRIC_OPTIONS,
   TIME_RANGE_OPTIONS,
   type OverviewMetric,
   type OverviewTimeRange,
 } from "./overview/overview-utils";
+import { OverviewCostSection } from "./overview/overview-cost-section";
+import { OverviewDetailTable } from "./overview/overview-detail-table";
+import { OverviewHeatmapSection } from "./overview/overview-heatmap-section";
+import { OverviewKeyUsageCard } from "./overview/overview-key-usage-card";
+import { OverviewKpiRow } from "./overview/overview-kpi-row";
+import { OverviewTrendSection } from "./overview/overview-trend-section";
+import { OverviewUsageSection } from "./overview/overview-usage-section";
 
 function withParams(path: string, params: Record<string, string | number>) {
   const search = new URLSearchParams();
@@ -48,7 +39,7 @@ export function OverviewScreen() {
   const { locale } = useI18n();
   const isZh = locale === "zh-CN";
   const [timeRange, setTimeRange] = useState<OverviewTimeRange>("7");
-  const [metric, setMetric] = useState<OverviewMetric>("cost");
+  const [metric, setMetric] = useState<OverviewMetric>("tokens");
   const days = Number(timeRange);
 
   const queryUrls = useMemo(
@@ -56,8 +47,11 @@ export function OverviewScreen() {
       summary: withParams("/admin/overview-summary", { days }),
       daily: withParams("/admin/overview-daily", { days }),
       heatmap: withParams("/admin/overview-daily", { days: 365 }),
-      channelHealth: withParams("/admin/overview-health/channels", { days }),
       modelUsage: withParams("/admin/overview-usage/models", { days, metric }),
+      channelUsage: withParams("/admin/overview-usage/channels", {
+        days,
+        metric,
+      }),
       gatewayKeyUsage: withParams("/admin/overview-usage/gateway-keys", {
         days,
         metric,
@@ -87,16 +81,16 @@ export function OverviewScreen() {
     queryFn: () => apiRequest<OverviewDailyPoint[]>(queryUrls.heatmap),
     staleTime: 60_000,
   });
-  const channelHealthQuery = useQuery({
-    queryKey: ["overview-health", "channels", days],
-    queryFn: () =>
-      apiRequest<OverviewChannelHealthPoint[]>(queryUrls.channelHealth),
-    refetchOnMount: "always",
-  });
   const modelUsageQuery = useQuery({
     queryKey: ["overview-usage", "models", days, metric],
     queryFn: () =>
       apiRequest<OverviewDimensionUsageAnalytics>(queryUrls.modelUsage),
+    refetchOnMount: "always",
+  });
+  const channelUsageQuery = useQuery({
+    queryKey: ["overview-usage", "channels", days, metric],
+    queryFn: () =>
+      apiRequest<OverviewDimensionUsageAnalytics>(queryUrls.channelUsage),
     refetchOnMount: "always",
   });
   const gatewayKeyUsageQuery = useQuery({
@@ -118,102 +112,92 @@ export function OverviewScreen() {
     refetchOnMount: "always",
   });
 
+  const usageLoading = modelUsageQuery.isLoading || channelUsageQuery.isLoading;
+
   return (
     <section className="flex flex-col gap-4">
-      <header className="flex justify-end gap-2">
-        <Select
+      <header className="flex flex-wrap items-center justify-end gap-2">
+        <SegmentedControl
           value={metric}
           onValueChange={(value) => setMetric(value as OverviewMetric)}
-        >
-          <SelectTrigger
-            className="w-full sm:w-36"
-            aria-label={isZh ? "选择排行指标" : "Select ranking metric"}
-          >
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent align="end" className="rounded-xl">
-            {METRIC_OPTIONS.map((option) => (
-              <SelectItem
-                key={option.value}
-                value={option.value}
-                className="rounded-lg"
-              >
-                {isZh ? option.zhLabel : option.enLabel}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Select
+          options={METRIC_OPTIONS.map((option) => ({
+            value: option.value,
+            label: isZh ? option.zhLabel : option.enLabel,
+          }))}
+        />
+        <SegmentedControl
           value={timeRange}
           onValueChange={(value) => setTimeRange(value as OverviewTimeRange)}
-        >
-          <SelectTrigger
-            className="w-full sm:w-36"
-            aria-label={isZh ? "选择统计范围" : "Select time range"}
-          >
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent align="end" className="rounded-xl">
-            {TIME_RANGE_OPTIONS.map((option) => (
-              <SelectItem
-                key={option.value}
-                value={option.value}
-                className="rounded-lg"
-              >
-                {isZh ? option.zhLabel : option.enLabel}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+          options={TIME_RANGE_OPTIONS.map((option) => ({
+            value: option.value,
+            label: isZh ? option.zhLabel : option.enLabel,
+          }))}
+        />
       </header>
 
       <OverviewKpiRow
         summary={summaryQuery.data}
-        isLoading={summaryQuery.isLoading}
+        points={dailyQuery.data}
+        isLoading={summaryQuery.isLoading || dailyQuery.isLoading}
         error={summaryQuery.error}
         zh={isZh}
       />
 
-      <section className="grid gap-4 xl:grid-cols-[minmax(0,1.45fr)_minmax(22rem,0.8fr)]">
-        <DailyOverviewChart
-          points={dailyQuery.data}
-          isLoading={dailyQuery.isLoading}
-          error={dailyQuery.error}
+      <section className="grid gap-4 xl:grid-cols-[minmax(0,1.5fr)_minmax(20rem,0.85fr)]">
+        <OverviewTrendSection
+          modelAnalytics={modelUsageQuery.data}
+          channelAnalytics={channelUsageQuery.data}
+          metric={metric}
+          isLoading={modelUsageQuery.isLoading || channelUsageQuery.isLoading}
+          error={modelUsageQuery.error || channelUsageQuery.error}
           zh={isZh}
         />
-        <ChannelHealthList
-          items={channelHealthQuery.data}
-          isLoading={channelHealthQuery.isLoading}
-          error={channelHealthQuery.error}
+        <OverviewCostSection
+          summary={summaryQuery.data}
+          metric={metric}
+          isLoading={summaryQuery.isLoading}
+          error={summaryQuery.error}
           zh={isZh}
         />
       </section>
 
-      <ModelUsageSection
-        title={isZh ? "模型分析" : "Model analytics"}
-        analytics={modelUsageQuery.data}
-        isLoading={modelUsageQuery.isLoading}
-        error={modelUsageQuery.error}
-        zh={isZh}
-      />
+      <section className="grid gap-4 xl:grid-cols-[minmax(0,1.5fr)_minmax(20rem,0.85fr)]">
+        <OverviewUsageSection
+          modelAnalytics={modelUsageQuery.data}
+          channelAnalytics={channelUsageQuery.data}
+          metric={metric}
+          isLoading={usageLoading}
+          modelError={modelUsageQuery.error}
+          channelError={channelUsageQuery.error}
+          zh={isZh}
+        />
+        <OverviewKeyUsageCard
+          analytics={gatewayKeyUsageQuery.data}
+          metric={metric}
+          isLoading={gatewayKeyUsageQuery.isLoading}
+          error={gatewayKeyUsageQuery.error}
+          zh={isZh}
+        />
+      </section>
 
-      <DimensionUsageSection
-        title={isZh ? "API Key 分析" : "API Key analytics"}
-        analytics={gatewayKeyUsageQuery.data}
-        isLoading={gatewayKeyUsageQuery.isLoading}
-        error={gatewayKeyUsageQuery.error}
+      <OverviewDetailTable
+        channelUsage={channelUsageQuery.data}
+        modelUsage={modelUsageQuery.data}
+        channelPerformance={channelPerformanceQuery.data}
+        modelPerformance={modelPerformanceQuery.data}
         metric={metric}
-        zh={isZh}
-      />
-
-      <PerformanceSection
-        channelAnalytics={channelPerformanceQuery.data}
-        modelAnalytics={modelPerformanceQuery.data}
         isLoading={
-          channelPerformanceQuery.isLoading || modelPerformanceQuery.isLoading
+          channelUsageQuery.isLoading ||
+          modelUsageQuery.isLoading ||
+          channelPerformanceQuery.isLoading ||
+          modelPerformanceQuery.isLoading
         }
-        channelError={channelPerformanceQuery.error}
-        modelError={modelPerformanceQuery.error}
+        error={
+          channelUsageQuery.error ||
+          modelUsageQuery.error ||
+          channelPerformanceQuery.error ||
+          modelPerformanceQuery.error
+        }
         zh={isZh}
       />
 

@@ -6,20 +6,7 @@ import type {
   OverviewDimensionUsagePoint,
   OverviewModelChannelUsagePoint,
 } from "@/lib/api";
-import {
-  Card,
-  CardAction,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { SegmentedControl } from "@/components/ui/segmented-control";
 import { cn } from "@/lib/utils";
 
 import {
@@ -35,7 +22,6 @@ import {
 import { SectionMessage, SectionSkeleton, errorLabel } from "./section-state";
 
 type UsageItem = OverviewDimensionUsagePoint | OverviewModelChannelUsagePoint;
-type DimensionView = "rank" | "tokens";
 type ModelBreakdownView = "cost" | "tokens";
 
 function tokenTotal(item: UsageItem) {
@@ -78,7 +64,7 @@ function ItemName({ item, zh }: { item: UsageItem; zh: boolean }) {
   );
 }
 
-function UsageRankList({
+export function UsageRankList({
   items,
   metric,
   zh,
@@ -122,6 +108,9 @@ function UsageRankList({
                 {zh ? "费用" : "Cost"} {formatMoney(item.total_cost_usd)}
               </span>
               <span>
+                {zh ? "Token" : "Token"} {formatCompact(item.total_tokens)}
+              </span>
+              <span>
                 {zh ? "延迟" : "Latency"}{" "}
                 {formatDuration(item.average_latency_ms)}
               </span>
@@ -133,7 +122,7 @@ function UsageRankList({
   );
 }
 
-function TokenComposition({
+export function TokenComposition({
   items,
   zh,
   panelRows = false,
@@ -208,7 +197,7 @@ function TokenComposition({
   );
 }
 
-function CostComposition({
+export function CostComposition({
   items,
   zh,
   panelRows = false,
@@ -276,230 +265,142 @@ function MetricCell({ label, value }: { label: string; value: string }) {
   );
 }
 
-export function DimensionUsageSection({
-  title,
-  analytics,
-  isLoading,
-  error,
-  metric,
-  zh,
-}: {
-  title: string;
-  analytics?: OverviewDimensionUsageAnalytics;
-  isLoading: boolean;
-  error: unknown;
-  metric: OverviewMetric;
-  zh: boolean;
-}) {
-  const [view, setView] = useState<DimensionView>("rank");
-  const items = analytics?.items ?? [];
-
-  return (
-    <Card size="sm" className="min-w-0 py-0">
-      <CardHeader className="border-b px-4 py-4">
-        <CardTitle className="text-base">{title}</CardTitle>
-        <CardAction>
-          <Select
-            value={view}
-            onValueChange={(value) => setView(value as DimensionView)}
-          >
-            <SelectTrigger
-              className="w-28"
-              aria-label={zh ? "选择用量视图" : "Select usage view"}
-            >
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent align="end" className="rounded-xl">
-              <SelectItem value="rank" className="rounded-lg">
-                {zh ? "排行" : "Rank"}
-              </SelectItem>
-              <SelectItem value="tokens" className="rounded-lg">
-                {zh ? "Token 结构" : "Token mix"}
-              </SelectItem>
-            </SelectContent>
-          </Select>
-        </CardAction>
-      </CardHeader>
-      <CardContent className="p-4">
-        {isLoading ? (
-          <SectionSkeleton />
-        ) : error ? (
-          <SectionMessage
-            tone="error"
-            label={errorLabel(
-              error,
-              zh ? "用量数据加载失败" : "Failed to load usage data",
-            )}
-          />
-        ) : items.length === 0 ? (
-          <SectionMessage label={zh ? "暂无用量数据" : "No usage data"} />
-        ) : view === "tokens" ? (
-          <TokenComposition items={items} zh={zh} />
-        ) : (
-          <UsageRankList items={items} metric={metric} zh={zh} />
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
-export function ModelUsageSection({
-  title,
+export function ModelUsageList({
   analytics,
   isLoading,
   error,
   zh,
 }: {
-  title: string;
   analytics?: OverviewDimensionUsageAnalytics;
   isLoading: boolean;
   error: unknown;
   zh: boolean;
 }) {
-  const [openModelId, setOpenModelId] = useState<string | null>(null);
+  const [openId, setOpenId] = useState<string | null>(null);
   const [breakdownView, setBreakdownView] =
     useState<ModelBreakdownView>("cost");
   const items = analytics?.items ?? [];
 
+  if (isLoading) {
+    return (
+      <div className="p-4">
+        <SectionSkeleton />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="p-4">
+        <SectionMessage
+          tone="error"
+          label={errorLabel(
+            error,
+            zh ? "模型数据加载失败" : "Failed to load model data",
+          )}
+        />
+      </div>
+    );
+  }
+
+  if (items.length === 0) {
+    return (
+      <div className="p-4">
+        <SectionMessage label={zh ? "暂无模型数据" : "No model data"} />
+      </div>
+    );
+  }
+
   return (
-    <Card size="sm" className="min-w-0 py-0">
-      <CardHeader className="border-b px-4 py-4">
-        <CardTitle className="text-base">{title}</CardTitle>
-        <CardAction>
-          <Select
-            value={breakdownView}
-            onValueChange={(value) =>
-              setBreakdownView(value as ModelBreakdownView)
-            }
-          >
-            <SelectTrigger
-              className="w-32"
-              aria-label={zh ? "选择模型明细视图" : "Select model detail view"}
-            >
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent align="end" className="rounded-xl">
-              <SelectItem value="cost" className="rounded-lg">
-                {zh ? "费用" : "Cost"}
-              </SelectItem>
-              <SelectItem value="tokens" className="rounded-lg">
-                {zh ? "Token 结构" : "Token mix"}
-              </SelectItem>
-            </SelectContent>
-          </Select>
-        </CardAction>
-      </CardHeader>
-      <CardContent className="p-0">
-        {isLoading ? (
-          <div className="p-4">
-            <SectionSkeleton />
-          </div>
-        ) : error ? (
-          <div className="p-4">
-            <SectionMessage
-              tone="error"
-              label={errorLabel(
-                error,
-                zh ? "模型数据加载失败" : "Failed to load model data",
+    <div className="divide-y">
+      {items.map((item) => {
+        const open = openId === item.id;
+        const channelItems = item.channel_items ?? [];
+        return (
+          <section key={item.id} className="min-w-0">
+            <button
+              type="button"
+              className={cn(
+                "grid w-full min-w-0 gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/50 md:grid-cols-[minmax(0,1fr)_auto_auto_auto_20px] md:items-center",
+                open && "bg-muted/35",
               )}
-            />
-          </div>
-        ) : items.length === 0 ? (
-          <div className="p-4">
-            <SectionMessage label={zh ? "暂无模型数据" : "No model data"} />
-          </div>
-        ) : (
-          <div className="divide-y">
-            {items.map((item) => {
-              const open = openModelId === item.id;
-              const channelItems = item.channel_items ?? [];
-              return (
-                <section key={item.id} className="min-w-0">
-                  <button
-                    type="button"
-                    className={cn(
-                      "grid w-full min-w-0 gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/50 md:grid-cols-[minmax(0,1fr)_auto_auto_auto_20px] md:items-center",
-                      open && "bg-muted/35",
+              aria-expanded={open}
+              onClick={() =>
+                setOpenId((current) => (current === item.id ? null : item.id))
+              }
+            >
+              <span className="min-w-0">
+                <span className="block truncate text-sm font-medium">
+                  {item.name || item.id}
+                </span>
+                <span className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                  <span>
+                    {zh ? "成功率" : "Success"}{" "}
+                    {formatPercent(
+                      item.request_count
+                        ? (item.successful_requests / item.request_count) * 100
+                        : 0,
                     )}
-                    aria-expanded={open}
-                    onClick={() =>
-                      setOpenModelId((current) =>
-                        current === item.id ? null : item.id,
-                      )
-                    }
-                  >
-                    <span className="min-w-0">
-                      <span className="block truncate text-sm font-medium">
-                        {item.name || item.id}
-                      </span>
-                      <span className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
-                        <span>
-                          {zh ? "成功率" : "Success"}{" "}
-                          {formatPercent(
-                            item.request_count
-                              ? (item.successful_requests /
-                                  item.request_count) *
-                                  100
-                              : 0,
-                          )}
-                        </span>
-                        <span>
-                          {zh ? "延迟" : "Latency"}{" "}
-                          {formatDuration(item.average_latency_ms)}
-                        </span>
-                        <span>
-                          {zh ? "渠道" : "Channels"} {channelItems.length}
-                        </span>
-                      </span>
-                    </span>
-                    <MetricCell
-                      label={zh ? "请求" : "Req"}
-                      value={formatCompact(item.request_count)}
+                  </span>
+                  <span>
+                    {zh ? "延迟" : "Latency"}{" "}
+                    {formatDuration(item.average_latency_ms)}
+                  </span>
+                  <span>
+                    {zh ? "渠道" : "Channels"} {channelItems.length}
+                  </span>
+                </span>
+              </span>
+              <MetricCell
+                label={zh ? "请求" : "Req"}
+                value={formatCompact(item.request_count)}
+              />
+              <MetricCell
+                label="Token"
+                value={formatCompact(item.total_tokens)}
+              />
+              <MetricCell
+                label={zh ? "费用" : "Cost"}
+                value={formatMoney(item.total_cost_usd)}
+              />
+              <ChevronDown
+                className={cn(
+                  "size-4 justify-self-end text-muted-foreground transition-transform",
+                  open && "rotate-180",
+                )}
+              />
+            </button>
+            {open ? (
+              <div className="border-t bg-muted/55 px-4 py-4">
+                <div className="mb-3 flex justify-end">
+                  <SegmentedControl
+                    value={breakdownView}
+                    onValueChange={setBreakdownView}
+                    options={[
+                      { value: "cost", label: zh ? "费用" : "Cost" },
+                      {
+                        value: "tokens",
+                        label: zh ? "Token 结构" : "Token mix",
+                      },
+                    ]}
+                  />
+                </div>
+                <div className="rounded-lg border border-border/80 border-l-4 border-l-primary/60 bg-muted/20 p-3 shadow-sm">
+                  {channelItems.length === 0 ? (
+                    <SectionMessage
+                      label={zh ? "暂无渠道明细" : "No channel details"}
                     />
-                    <MetricCell
-                      label="Token"
-                      value={formatCompact(item.total_tokens)}
-                    />
-                    <MetricCell
-                      label={zh ? "费用" : "Cost"}
-                      value={formatMoney(item.total_cost_usd)}
-                    />
-                    <ChevronDown
-                      className={cn(
-                        "size-4 justify-self-end text-muted-foreground transition-transform",
-                        open && "rotate-180",
-                      )}
-                    />
-                  </button>
-                  {open ? (
-                    <div className="border-t bg-muted/55 px-4 py-4">
-                      <div className="rounded-lg border border-border/80 border-l-4 border-l-primary/60 bg-muted/20 p-3 shadow-sm">
-                        {channelItems.length === 0 ? (
-                          <SectionMessage
-                            label={zh ? "暂无渠道明细" : "No channel details"}
-                          />
-                        ) : breakdownView === "tokens" ? (
-                          <TokenComposition
-                            items={channelItems}
-                            zh={zh}
-                            panelRows
-                          />
-                        ) : (
-                          <CostComposition
-                            items={channelItems}
-                            zh={zh}
-                            panelRows
-                          />
-                        )}
-                      </div>
-                    </div>
-                  ) : null}
-                </section>
-              );
-            })}
-          </div>
-        )}
-      </CardContent>
-    </Card>
+                  ) : breakdownView === "tokens" ? (
+                    <TokenComposition items={channelItems} zh={zh} panelRows />
+                  ) : (
+                    <CostComposition items={channelItems} zh={zh} panelRows />
+                  )}
+                </div>
+              </div>
+            ) : null}
+          </section>
+        );
+      })}
+    </div>
   );
 }
