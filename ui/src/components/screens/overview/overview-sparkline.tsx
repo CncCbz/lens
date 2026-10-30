@@ -23,12 +23,16 @@ export function Sparkline({
     return [x, y] as const;
   });
 
-  const line = points
-    .map(
-      (point, index) =>
-        `${index ? "L" : "M"}${point[0].toFixed(2)} ${point[1].toFixed(2)}`,
-    )
-    .join(" ");
+  // Smooth the curve with horizontal control points so it never overshoots
+  // past the real min/max of the series.
+  const line = points.reduce((path, point, index) => {
+    if (index === 0) {
+      return `M${point[0].toFixed(2)} ${point[1].toFixed(2)}`;
+    }
+    const previous = points[index - 1];
+    const midX = (previous[0] + point[0]) / 2;
+    return `${path} C${midX.toFixed(2)} ${previous[1].toFixed(2)} ${midX.toFixed(2)} ${point[1].toFixed(2)} ${point[0].toFixed(2)} ${point[1].toFixed(2)}`;
+  }, "");
   const area = `${line} L${width} ${height} L0 ${height} Z`;
 
   return (

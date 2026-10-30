@@ -21,10 +21,13 @@ import {
 import { SegmentedControl } from "@/components/ui/segmented-control";
 
 import {
+  addDays,
   CHART_COLORS,
   formatCompact,
   formatDateLabel,
   formatMoney,
+  parseDateKey,
+  toLocalDateKey,
   type OverviewMetric,
 } from "./overview-utils";
 import { SectionMessage, SectionSkeleton, errorLabel } from "./section-state";
@@ -116,28 +119,46 @@ export function OverviewTrendSection({
     }
 
     const restIds = new Set(rest.map((item) => item.id));
-    const byDate = new Map<string, Record<string, number | string>>();
+    const buckets = new Map<string, Record<string, number>>();
 
     for (const point of trend) {
-      const bucket = byDate.get(point.date) ?? {
-        date: point.date,
-        label: formatDateLabel(point.date),
-      };
+      const date = parseDateKey(point.date);
+      const bucket = buckets.get(date) ?? {};
       const key =
         keyById.get(point.id) ?? (restIds.has(point.id) ? OTHER_KEY : null);
-      if (key) {
-        const current =
-          typeof bucket[key] === "number" ? (bucket[key] as number) : 0;
-        bucket[key] = current + valueOf(metric, point);
-      }
-      byDate.set(point.date, bucket);
+      if (key) bucket[key] = (bucket[key] ?? 0) + valueOf(metric, point);
+      buckets.set(date, bucket);
     }
 
-    const sorted = [...byDate.entries()]
-      .sort((a, b) => a[0].localeCompare(b[0]))
-      .map(([, row]) => row);
+    const dates = [...buckets.keys()].sort();
 
-    return { rows: sorted, series: nextSeries };
+    // A stacked area needs one row per day and a value for every series.
+    // A missing series (or a day with no traffic at all) reads as a gap in
+    // recharts, which tears the stack apart, so fill the calendar and zero
+    // the series that have nothing that day.
+    const rows: Array<Record<string, number | string>> = [];
+    if (dates.length > 0) {
+      const start = new Date(`${dates[0]}T00:00:00`);
+      const end = new Date(`${dates[dates.length - 1]}T00:00:00`);
+      const span = Math.round((end.getTime() - start.getTime()) / 86_400_000);
+      const stepDays = span >= 0 && span <= 400 ? span : 0;
+
+      for (let index = 0; index <= stepDays; index += 1) {
+        const date =
+          span >= 0 && span <= 400
+            ? toLocalDateKey(addDays(start, index))
+            : dates[index];
+        const bucket = buckets.get(date) ?? {};
+        const row: Record<string, number | string> = {
+          date,
+          label: formatDateLabel(date),
+        };
+        for (const item of nextSeries) row[item.key] = bucket[item.key] ?? 0;
+        rows.push(row);
+      }
+    }
+
+    return { rows, series: nextSeries };
   }, [analytics, metric, zh]);
 
   const chartConfig = useMemo(() => {
