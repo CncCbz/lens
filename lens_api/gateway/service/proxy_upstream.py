@@ -654,6 +654,7 @@ async def _call_channel(
     request_content: str | None,
     deadline: _RequestDeadline,
     *,
+    attempt_started_at: float | None = None,
     credential_id: str | None,
     probe_owner: object | None,
     model_name: str | None = None,
@@ -668,6 +669,8 @@ async def _call_channel(
     proxy_url = resolve_upstream_proxy_url(channel, global_proxy_url)
     client, close_client = _resolve_http_client(proxy_url)
     is_stream_request = bool(body.get("stream"))
+    if attempt_started_at is None:
+        attempt_started_at = perf_counter()
 
     try:
         stream_started_at = perf_counter()
@@ -676,11 +679,13 @@ async def _call_channel(
             response = await _send_upstream(
                 client,
                 upstream,
-                stream=is_stream_request,
                 body_bytes=body_bytes,
                 timeout=send_timeout,
             )
         response.raise_for_status()
+        # Time to upstream response headers: DNS, TCP, TLS, request upload and
+        # the upstream queue up to its first header byte.
+        headers_ms = _elapsed_ms(attempt_started_at)
 
         is_event_stream = (
             "text/event-stream" in (response.headers.get("content-type") or "").lower()
@@ -725,6 +730,10 @@ async def _call_channel(
             )
             if close_client:
                 close_client = False
+            if result.stream_capture is not None:
+                result.stream_capture.headers_latency_ms = headers_ms
+                result.stream_capture.attempt_started_at = attempt_started_at
+            result.headers_ms = headers_ms
         elif is_stream_request and channel.protocol in chat_protocols:
             # A streaming request must receive a stream. Return an explicit
             # protocol error rather than ordinary JSON under a stream contract.
@@ -752,6 +761,8 @@ async def _call_channel(
                 log_output=log_output,
             )
         if not result.is_stream:
+            result.headers_ms = headers_ms
+            result.body_ms = max(_elapsed_ms(attempt_started_at) - headers_ms, 0)
             app_state.router.record_success(
                 channel.id,
                 credential_id=credential_id,
@@ -799,23 +810,16 @@ async def _send_upstream(
     client: httpx.AsyncClient,
     upstream: Any,
     *,
-    stream: bool,
     body_bytes: bytes,
     timeout: httpx.Timeout | None = None,
 ) -> httpx.Response:
-    if stream:
-        request = client.build_request(
-            upstream.method,
-            upstream.url,
-            headers=upstream.headers,
-            content=body_bytes,
-            timeout=timeout,
-        )
-        return await client.send(request, stream=True)
-    return await client.request(
+    # Always take the response unbuffered so the moment the headers land is
+    # observable; callers read the body themselves.
+    request = client.build_request(
         upstream.method,
         upstream.url,
         headers=upstream.headers,
         content=body_bytes,
         timeout=timeout,
     )
+    return await client.send(request, stream=True)

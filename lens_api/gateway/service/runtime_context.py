@@ -509,6 +509,8 @@ class UpstreamResult:
     response: Response
     status_code: int
     is_stream: bool = False
+    headers_ms: int = 0
+    body_ms: int = 0
     first_token_latency_ms: int = 0
     upstream_model_name: str | None = None
     input_tokens: int = 0
@@ -540,6 +542,9 @@ class AttemptLog:
     status_code: int | None
     success: bool
     duration_ms: int
+    headers_ms: int | None = None
+    wait_ms: int | None = None
+    stream_ms: int | None = None
     error_message: str | None = None
     error_category: str | None = None
     retryable: bool | None = None
@@ -704,6 +709,9 @@ def _attempt_logs_to_dicts(attempts: list[AttemptLog]) -> list[dict[str, Any]]:
             "error_message": attempt.error_message,
         }
         for key in (
+            "headers_ms",
+            "wait_ms",
+            "stream_ms",
             "error_category",
             "retryable",
             "cooldown_candidate",
@@ -738,6 +746,8 @@ class StreamCapture:
     chat_finished_choices: set[int] = field(default_factory=set)
     first_token_latency_ms: int = 0
     attempt_first_token_latency_ms: int = 0
+    headers_latency_ms: int = 0
+    attempt_started_at: float = 0.0
     response_content_chunks: list[str] = field(default_factory=list)
     client_response_content_chunks: list[str] = field(default_factory=list)
     event_buffer: str = ""

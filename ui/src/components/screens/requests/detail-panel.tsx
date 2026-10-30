@@ -119,6 +119,17 @@ const PROTOCOL_ROUTES: Partial<Record<RequestLogItem["protocol"], string>> = {
   gemini: "/v1beta/models/{model}:generateContent",
 };
 
+const ATTEMPT_SEGMENTS: {
+  key: "headers_ms" | "wait_ms" | "stream_ms";
+  zh: string;
+  en: string;
+  request: boolean;
+}[] = [
+  { key: "headers_ms", zh: "握手 ", en: "Connect ", request: true },
+  { key: "wait_ms", zh: "首字节 ", en: "First byte ", request: false },
+  { key: "stream_ms", zh: "产流 ", en: "Stream ", request: false },
+];
+
 function getTraceDefinition(key: TraceKey, attempts: RequestLogAttempt[]) {
   if (key.startsWith("req-")) {
     const index = Number(key.split("-")[1]);
@@ -589,6 +600,20 @@ function TraceDetail({
               {formatMs(attempt.duration_ms)}
             </strong>
           </span>
+          {ATTEMPT_SEGMENTS.filter(
+            (segment) => segment.request === isRequestNode,
+          ).map((segment) => {
+            const value = attempt[segment.key];
+            if (typeof value !== "number" || value === 0) return null;
+            return (
+              <span key={segment.key} className="tabular-nums">
+                {titleForLocale(locale, segment.zh, segment.en)}
+                <strong className="font-semibold text-foreground">
+                  {formatMs(value)}
+                </strong>
+              </span>
+            );
+          })}
           {isRequestNode ? (
             attempt.request_url ? (
               <span className="min-w-0 flex-1 truncate text-right">

@@ -409,15 +409,21 @@ async def _record_stream_request_log(
     status_code = _stream_log_status_code(result, capture, capture_issue)
     attempt_logs = [dict(item) for item in attempts]
     if attempt_logs and attempt_logs[-1].get("success"):
-        attempt_logs[-1]["duration_ms"] = (
-            latency_ms
-            if capture_issue is not None
-            else (
-                capture.attempt_first_token_latency_ms
-                if capture is not None
-                else first_token_latency_ms
-            )
+        # Segment the streaming attempt: headers -> first token -> stream end.
+        attempt_duration_ms = (
+            _elapsed_ms(capture.attempt_started_at)
+            if capture is not None and capture.attempt_started_at
+            else latency_ms
         )
+        first_token_ms = (
+            capture.attempt_first_token_latency_ms if capture is not None else 0
+        )
+        headers_ms = capture.headers_latency_ms if capture is not None else 0
+        if first_token_ms:
+            attempt_logs[-1]["headers_ms"] = min(headers_ms, first_token_ms)
+            attempt_logs[-1]["wait_ms"] = max(first_token_ms - headers_ms, 0)
+            attempt_logs[-1]["stream_ms"] = max(attempt_duration_ms - first_token_ms, 0)
+        attempt_logs[-1]["duration_ms"] = attempt_duration_ms
         if capture_issue is not None:
             attempt_logs[-1]["success"] = False
             attempt_logs[-1]["error_message"] = capture_issue

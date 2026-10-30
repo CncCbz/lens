@@ -1436,6 +1436,9 @@ class RequestLogAttempt(StrictBaseModel):
     status_code: int | None = None
     success: bool
     duration_ms: int = 0
+    headers_ms: int | None = None
+    wait_ms: int | None = None
+    stream_ms: int | None = None
     error_message: str | None = None
     error_category: str | None = None
     retryable: bool | None = None

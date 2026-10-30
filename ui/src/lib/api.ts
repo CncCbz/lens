@@ -1047,6 +1047,9 @@ export type RequestLogAttempt = {
   status_code?: number | null;
   success: boolean;
   duration_ms: number;
+  headers_ms?: number | null;
+  wait_ms?: number | null;
+  stream_ms?: number | null;
   error_message?: string | null;
   error_category?: string | null;
   retryable?: boolean | null;
