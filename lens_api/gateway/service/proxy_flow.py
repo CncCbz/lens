@@ -792,7 +792,6 @@ async def _try_target(
             upstream,
             body_bytes,
             upstream_request_content,
-            deadline,
             attempt_started_at=attempt_started_at,
             credential_id=target.credential_id,
             probe_owner=target.probe_owner,
