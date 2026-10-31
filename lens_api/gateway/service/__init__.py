@@ -80,6 +80,7 @@ from .admin_balance import (
     test_balance_script,
     update_balance_script,
 )
+from .admin_playground import playground_chat
 from .admin_sites import (
     clear_request_logs,
     clear_router_cooldown,
@@ -223,6 +224,7 @@ __all__ = [
     "overview_usage_channels",
     "overview_usage_gateway_keys",
     "overview_usage_models",
+    "playground_chat",
     "proxy_anthropic_messages",
     "proxy_gemini_generate_content",
     "proxy_gemini_stream_generate_content",

@@ -1351,6 +1351,17 @@ class GatewayApiKey(GatewayApiKeyBase):
     updated_at: str
 
 
+class PlaygroundTarget(StrictBaseModel):
+    channel_id: str = Field(min_length=1)
+    model_name: str = Field(min_length=1)
+    credential_id: str | None = None
+
+
+class PlaygroundChatRequest(StrictBaseModel):
+    target: PlaygroundTarget
+    request: dict[str, Any]
+
+
 class SettingsUpdate(StrictBaseModel):
     items: list[SettingItem]
 
@@ -1946,6 +1957,8 @@ __all__ = [
     "GatewayApiKeyCreate",
     "GatewayApiKeyUpdate",
     "GatewayApiKey",
+    "PlaygroundTarget",
+    "PlaygroundChatRequest",
     "SettingsUpdate",
     "ConfigBackupImportedStatsTotal",
     "ConfigBackupImportedStatsDaily",

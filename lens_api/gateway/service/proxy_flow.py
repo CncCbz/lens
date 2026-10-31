@@ -32,6 +32,7 @@ from ..router import (
     RouteSelection,
     RouteTarget,
 )
+from ...models import PlaygroundTarget
 from .auth import _gateway_key_allows_group, _gateway_key_allows_model
 from .errors import (
     _apply_router_runtime_settings,
@@ -71,6 +72,7 @@ from .stream_logging import (
 )
 
 _RETRY_AFTER_WAIT_CAP_SECONDS = 10.0
+PLAYGROUND_GATEWAY_KEY_ID = "playground"
 _CAPACITY_ERRORS = {
     "concurrency": (
         "concurrency_limit",
@@ -79,6 +81,10 @@ _CAPACITY_ERRORS = {
     "rpm": ("rpm_limit", "All matching channels are at RPM limit"),
     "usage": ("usage_limit", "All matching channels are at usage limit"),
 }
+
+
+class _PlaygroundTargetError(LookupError):
+    """Raised when the requested playground target is not routable."""
 
 
 def _capacity_error(reasons: set[str]) -> tuple[str, str]:
@@ -98,6 +104,7 @@ async def _proxy_protocol(
     path_suffix: str | None = None,
     multipart_files: list[tuple[str, tuple[str, bytes, str]]] | None = None,
     request_headers: Mapping[str, str] | None = None,
+    forced_target: PlaygroundTarget | None = None,
 ) -> Response:
     started_at = perf_counter()
     request_id = uuid.uuid4().hex
@@ -185,10 +192,15 @@ async def _proxy_protocol(
         )
     requested_model = requested_model.strip()
     requested_group = await app_state.group_repo.find_group_by_name(requested_model)
+    is_playground = gateway_key.id == PLAYGROUND_GATEWAY_KEY_ID
     model_allowed = (
-        _gateway_key_allows_group(gateway_key, requested_group)
-        if requested_group is not None
-        else _gateway_key_allows_model(gateway_key, requested_model)
+        True
+        if is_playground
+        else (
+            _gateway_key_allows_group(gateway_key, requested_group)
+            if requested_group is not None
+            else _gateway_key_allows_model(gateway_key, requested_model)
+        )
     )
     if not model_allowed:
         request_log = await app_state.request_log_store.create_pending_request_log(
@@ -268,6 +280,7 @@ async def _proxy_protocol(
             log_ctx=log_ctx,
             upstream_user_agent=upstream_user_agent,
             is_stream_body=is_stream_body,
+            forced_target=forced_target,
         )
         if routing_error is not None:
             return routing_error
@@ -444,10 +457,26 @@ async def _resolve_proxy_route(
     log_ctx: _RequestLogger,
     upstream_user_agent: str,
     is_stream_body: bool,
+    forced_target: PlaygroundTarget | None = None,
 ) -> tuple[RoutingPlan | None, RouteSelection | None, JSONResponse | None]:
     plan: RoutingPlan | None = None
     try:
         plan = await _resolve_routing_plan(protocol, requested_model, channels)
+        if forced_target is not None:
+            plan.route_targets = [
+                target
+                for target in plan.route_targets or []
+                if target.channel.id == forced_target.channel_id
+                and target.model_name == forced_target.model_name
+                and (
+                    not forced_target.credential_id
+                    or target.credential_id == forced_target.credential_id
+                )
+            ]
+            if not plan.route_targets:
+                raise _PlaygroundTargetError(
+                    "The selected channel and model are not part of this model group"
+                )
         selection = app_state.router.select(
             channels,
             protocol,
@@ -456,6 +485,7 @@ async def _resolve_proxy_route(
             route_targets=plan.route_targets,
             use_model_matching=plan.use_model_matching,
             cursor_key=plan.cursor_key,
+            mutate=forced_target is None,
         )
         await log_ctx.update(
             requested_group_name=plan.requested_group_name,
@@ -469,6 +499,22 @@ async def _resolve_proxy_route(
             is_stream=is_stream_body,
         )
         return plan, selection, None
+    except _PlaygroundTargetError as exc:
+        return (
+            plan,
+            None,
+            await _routing_error_response(
+                plan=plan,
+                protocol=protocol,
+                requested_model=requested_model,
+                log_ctx=log_ctx,
+                upstream_user_agent=upstream_user_agent,
+                is_stream_body=is_stream_body,
+                exc=exc,
+                status_code=400,
+                include_message=True,
+            ),
+        )
     except AllTargetsCooledError as exc:
         return (
             plan,
@@ -512,6 +558,8 @@ async def _routing_error_response(
     exc: LookupError,
     retryable: bool = False,
     retry_after_seconds: int = 0,
+    status_code: int = 503,
+    include_message: bool = False,
 ) -> JSONResponse:
     await log_ctx.update(
         requested_group_name=plan.requested_group_name if plan else requested_model,
@@ -520,7 +568,7 @@ async def _routing_error_response(
         channel=None,
         user_agent=upstream_user_agent,
         lifecycle_status=RequestLogLifecycleStatus.FAILED,
-        status_code=503,
+        status_code=status_code,
         success=False,
         is_stream=is_stream_body,
         error_message=str(exc),
@@ -530,9 +578,11 @@ async def _routing_error_response(
         headers["retry-after"] = str(int(retry_after_seconds))
     return _protocol_error_response(
         protocol=protocol,
-        status_code=503,
+        status_code=status_code,
         error_type="routing_error",
-        message="Gateway routing failed" if not retryable else str(exc),
+        message=(
+            str(exc) if retryable or include_message else "Gateway routing failed"
+        ),
         headers=headers,
         request_id=log_ctx.request_id,
         attempt_count=len(log_ctx.attempts),

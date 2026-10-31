@@ -52,6 +52,7 @@ import {
   Activity,
   ArchiveRestore,
   CalendarClock,
+  FlaskConical,
   Globe2,
   ImageIcon,
   KeyRound,
@@ -222,6 +223,12 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
             href: DASHBOARD_ROUTES.groups,
             label: t.groups,
             icon: Layers3,
+          },
+          {
+            key: "playground" as DashboardView,
+            href: DASHBOARD_ROUTES.playground,
+            label: t.playground,
+            icon: FlaskConical,
           },
           {
             key: "multimodalRelay" as DashboardView,

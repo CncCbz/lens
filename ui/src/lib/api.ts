@@ -1319,3 +1319,65 @@ export async function importConfigBackup(file: File) {
     body: formData,
   });
 }
+
+export type PlaygroundTarget = {
+  channel_id: string;
+  model_name: string;
+  credential_id?: string | null;
+};
+
+export type PlaygroundChatPayload = {
+  target: PlaygroundTarget;
+  request: Record<string, unknown>;
+};
+
+export async function playgroundChat(
+  payload: PlaygroundChatPayload,
+  signal?: AbortSignal,
+): Promise<Response> {
+  return apiFetch("/admin/playground/chat", {
+    method: "POST",
+    body: JSON.stringify(payload),
+    signal,
+    headers: { accept: "text/event-stream" },
+  });
+}
+
+export async function readSseJsonStream<T>(
+  response: Response,
+  onEvent: (data: T) => void,
+): Promise<void> {
+  const reader = response.body?.getReader();
+  if (!reader) {
+    throw new Error("SSE response has no body");
+  }
+  const decoder = new TextDecoder();
+  let buffer = "";
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
+      let separator = buffer.indexOf("\n\n");
+      while (separator >= 0) {
+        const raw = buffer.slice(0, separator);
+        buffer = buffer.slice(separator + 2);
+        const data = raw
+          .split("\n")
+          .filter((line) => line.startsWith("data:"))
+          .map((line) => line.slice(5).replace(/^ /, ""))
+          .join("\n");
+        if (data && data !== "[DONE]") {
+          onEvent(JSON.parse(data) as T);
+        }
+        separator = buffer.indexOf("\n\n");
+      }
+    }
+  } finally {
+    try {
+      await reader.cancel();
+    } catch {
+      // stream already closed
+    }
+  }
+}

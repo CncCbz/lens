@@ -3,6 +3,7 @@ export type DashboardView =
   | "requests"
   | "channels"
   | "groups"
+  | "playground"
   | "multimodalRelay"
   | "settings"
   | "apiKeys"
@@ -14,6 +15,7 @@ export type DashboardHref =
   | "/requests"
   | "/channels"
   | "/groups"
+  | "/playground"
   | "/multimodal-relay"
   | "/settings"
   | "/api-keys"
@@ -25,6 +27,7 @@ export const DASHBOARD_ROUTES: Record<DashboardView, DashboardHref> = {
   requests: "/requests",
   channels: "/channels",
   groups: "/groups",
+  playground: "/playground",
   multimodalRelay: "/multimodal-relay",
   settings: "/settings",
   apiKeys: "/api-keys",

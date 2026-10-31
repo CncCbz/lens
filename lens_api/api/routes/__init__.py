@@ -13,6 +13,7 @@ from . import (
     models_config,
     multimodal_relay,
     overview,
+    playground,
     proxy,
     public,
     request_logs,
@@ -40,6 +41,7 @@ def include_routes(app: FastAPI, service_module: ModuleType) -> None:
         gateway_api_keys,
         backups,
         settings,
+        playground,
         proxy,
         ui_static,
     ):
