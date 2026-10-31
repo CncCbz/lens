@@ -24,7 +24,7 @@ function matchesSearch(model: PlaygroundModel, query: string): boolean {
   if (!query) {
     return true;
   }
-  return [model.channelName, model.groupName, model.modelName].some((value) =>
+  return [model.siteName, model.comboName, model.modelName].some((value) =>
     value.toLowerCase().includes(query),
   );
 }
@@ -38,8 +38,8 @@ export function TargetPicker({
   const selected = models.find((model) => model.key === selectedKey) ?? null;
   const [search, setSearch] = useState("");
   const [enabledOnly, setEnabledOnly] = useState(false);
-  const [channelId, setChannelId] = useState(selected?.channelId ?? "");
-  const [groupId, setGroupId] = useState(selected?.groupId ?? "");
+  const [siteId, setSiteId] = useState(selected?.siteId ?? "");
+  const [comboId, setComboId] = useState(selected?.comboId ?? "");
   const [modelKey, setModelKey] = useState(selected?.key ?? "");
 
   const query = search.trim().toLowerCase();
@@ -51,52 +51,52 @@ export function TargetPicker({
     return filtered.filter((model) => matchesSearch(model, query));
   }, [enabledOnly, models, query]);
 
-  const channels = useMemo(
+  const sites = useMemo(
     () =>
       uniqueOptions(
         visible,
-        (model) => model.channelId,
-        (model) => model.channelName,
+        (model) => model.siteId,
+        (model) => model.siteName,
       ),
     [visible],
   );
-  const effectiveChannelId = channels.some((item) => item.id === channelId)
-    ? channelId
-    : (channels[0]?.id ?? "");
+  const effectiveSiteId = sites.some((item) => item.id === siteId)
+    ? siteId
+    : (sites[0]?.id ?? "");
 
-  const groups = useMemo(
+  const combos = useMemo(
     () =>
       uniqueOptions(
-        visible.filter((model) => model.channelId === effectiveChannelId),
-        (model) => model.groupId,
-        (model) => model.groupName,
+        visible.filter((model) => model.siteId === effectiveSiteId),
+        (model) => model.comboId,
+        (model) => model.comboName,
       ),
-    [effectiveChannelId, visible],
+    [effectiveSiteId, visible],
   );
-  const effectiveGroupId = groups.some((item) => item.id === groupId)
-    ? groupId
-    : (groups[0]?.id ?? "");
+  const effectiveComboId = combos.some((item) => item.id === comboId)
+    ? comboId
+    : (combos[0]?.id ?? "");
 
-  const modelsInGroup = useMemo(
+  const modelsInCombo = useMemo(
     () =>
       visible.filter(
         (model) =>
-          model.channelId === effectiveChannelId &&
-          model.groupId === effectiveGroupId,
+          model.siteId === effectiveSiteId &&
+          model.comboId === effectiveComboId,
       ),
-    [effectiveChannelId, effectiveGroupId, visible],
+    [effectiveComboId, effectiveSiteId, visible],
   );
-  const effectiveModelKey = modelsInGroup.some(
+  const effectiveModelKey = modelsInCombo.some(
     (model) => model.key === modelKey,
   )
     ? modelKey
-    : (modelsInGroup[0]?.key ?? "");
+    : (modelsInCombo[0]?.key ?? "");
 
-  const chosen = modelsInGroup.find((model) => model.key === effectiveModelKey);
-  const channelLabel =
-    channels.find((item) => item.id === effectiveChannelId)?.name ?? "";
-  const groupLabel =
-    groups.find((item) => item.id === effectiveGroupId)?.name ?? "";
+  const chosen = modelsInCombo.find((model) => model.key === effectiveModelKey);
+  const siteLabel =
+    sites.find((item) => item.id === effectiveSiteId)?.name ?? "";
+  const comboLabel =
+    combos.find((item) => item.id === effectiveComboId)?.name ?? "";
 
   return (
     <div className="flex flex-col">
@@ -118,38 +118,41 @@ export function TargetPicker({
         </label>
       </div>
 
-      <div className="grid max-h-72 grid-cols-[minmax(0,9rem)_minmax(0,9rem)_minmax(0,1fr)]">
+      {/* Flex, not grid: a max-height grid row never shrinks its items, so long
+          lists spilled over the footer instead of scrolling. */}
+      <div className="flex max-h-72 min-h-0 overflow-hidden">
         <PickerColumn
           title="渠道"
-          options={channels}
-          activeId={effectiveChannelId}
+          className="w-36 shrink-0"
+          options={sites}
+          activeId={effectiveSiteId}
           onSelect={(id) => {
-            setChannelId(id);
-            setGroupId("");
+            setSiteId(id);
+            setComboId("");
             setModelKey("");
           }}
         />
         <PickerColumn
           title="组合"
-          options={groups}
-          activeId={effectiveGroupId}
+          className="w-36 shrink-0 border-l"
+          options={combos}
+          activeId={effectiveComboId}
           onSelect={(id) => {
-            setGroupId(id);
+            setComboId(id);
             setModelKey("");
           }}
-          bordered
         />
-        <div className="flex min-w-0 flex-col border-l">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col border-l">
           <div className="px-2 py-2 text-[11px] text-muted-foreground">
             模型
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto px-1.5 pb-2">
-            {modelsInGroup.length === 0 ? (
+            {modelsInCombo.length === 0 ? (
               <div className="px-2 py-1.5 text-xs text-muted-foreground">
                 无可用模型
               </div>
             ) : null}
-            {modelsInGroup.map((model) => (
+            {modelsInCombo.map((model) => (
               <button
                 key={model.key}
                 type="button"
@@ -166,7 +169,9 @@ export function TargetPicker({
                     {model.modelName}
                   </span>
                   <span className="block truncate text-[11px] text-muted-foreground">
-                    {model.credentialName}
+                    {model.groupName && model.groupName !== model.modelName
+                      ? `${model.groupName} · ${model.credentialName}`
+                      : model.credentialName}
                   </span>
                 </span>
                 {model.key === effectiveModelKey ? (
@@ -180,7 +185,7 @@ export function TargetPicker({
 
       <div className="flex items-center gap-2 border-t bg-muted/40 px-3 py-2">
         <span className="min-w-0 truncate text-[11px] text-muted-foreground">
-          {channelLabel} / {groupLabel} / {chosen?.modelName ?? ""}
+          {siteLabel} / {comboLabel} / {chosen?.modelName ?? ""}
         </span>
         <span className="flex-1" />
         <Button type="button" size="sm" variant="outline" onClick={onCancel}>
@@ -208,7 +213,7 @@ type PickerColumnProps = {
   options: PlaygroundOption[];
   activeId: string;
   onSelect: (id: string) => void;
-  bordered?: boolean;
+  className?: string;
 };
 
 function PickerColumn({
@@ -216,10 +221,10 @@ function PickerColumn({
   options,
   activeId,
   onSelect,
-  bordered,
+  className,
 }: PickerColumnProps) {
   return (
-    <div className={cn("flex min-w-0 flex-col", bordered && "border-l")}>
+    <div className={cn("flex min-h-0 min-w-0 flex-col", className)}>
       <div className="px-2 py-2 text-[11px] text-muted-foreground">{title}</div>
       <div className="min-h-0 flex-1 overflow-y-auto px-1.5 pb-2">
         {options.map((option) => (

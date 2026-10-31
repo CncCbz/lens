@@ -28,6 +28,7 @@ import {
   playgroundChat,
   readSseJsonStream,
   type ModelGroup,
+  type Site,
 } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
@@ -179,7 +180,7 @@ export function PlaygroundScreen() {
     data: groups,
     error: groupsError,
     isError: groupsIsError,
-    isLoading,
+    isLoading: groupsLoading,
   } = useQuery({
     queryKey: ["model-groups"],
     queryFn: () => apiRequest<ModelGroup[]>("/admin/model-groups"),
@@ -187,7 +188,29 @@ export function PlaygroundScreen() {
     refetchOnMount: "always",
   });
 
-  const catalog = useMemo(() => buildPlaygroundCatalog(groups ?? []), [groups]);
+  const {
+    data: sites,
+    error: sitesError,
+    isError: sitesIsError,
+    isLoading: sitesLoading,
+  } = useQuery({
+    queryKey: ["sites"],
+    queryFn: () => apiRequest<Site[]>("/admin/sites"),
+    staleTime: 2 * 60_000,
+    refetchOnMount: "always",
+  });
+
+  const loadError = sitesIsError
+    ? sitesError
+    : groupsIsError
+      ? groupsError
+      : null;
+  const isLoading = sitesLoading || groupsLoading;
+
+  const catalog = useMemo(
+    () => buildPlaygroundCatalog(sites ?? [], groups ?? []),
+    [groups, sites],
+  );
 
   const selection = useMemo(
     () => catalog.find((model) => model.key === selectedKey) ?? null,
@@ -590,12 +613,12 @@ export function PlaygroundScreen() {
             ref={scrollRef}
             className="hide-scrollbar min-h-0 flex-1 overflow-y-auto px-4 py-2 sm:px-6"
           >
-            {groupsIsError ? (
+            {groupsIsError || sitesIsError ? (
               <div className="flex h-full items-center justify-center text-sm text-destructive">
                 {copy.loadFailed}:{" "}
-                {groupsError instanceof Error
-                  ? groupsError.message
-                  : String(groupsError)}
+                {loadError instanceof Error
+                  ? loadError.message
+                  : String(loadError)}
               </div>
             ) : isLoading ? (
               <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
@@ -621,13 +644,13 @@ export function PlaygroundScreen() {
                   <div className="flex min-w-0 items-center gap-1 border-b px-1 pb-2">
                     <TargetChip
                       label={copy.channel}
-                      value={selection?.channelName ?? "-"}
+                      value={selection?.siteName ?? "-"}
                       onClick={() => setPickerOpen(true)}
                     />
                     <ChevronRight className="size-3 shrink-0 text-muted-foreground" />
                     <TargetChip
                       label={copy.group}
-                      value={selection?.groupName ?? "-"}
+                      value={selection?.comboName ?? "-"}
                       onClick={() => setPickerOpen(true)}
                     />
                     <ChevronRight className="size-3 shrink-0 text-muted-foreground" />
@@ -642,11 +665,14 @@ export function PlaygroundScreen() {
                       variant="ghost"
                       size="icon-xs"
                       aria-label="Refresh"
-                      onClick={() =>
+                      onClick={() => {
+                        void queryClient.invalidateQueries({
+                          queryKey: ["sites"],
+                        });
                         void queryClient.invalidateQueries({
                           queryKey: ["model-groups"],
-                        })
-                      }
+                        });
+                      }}
                     >
                       <RefreshCcw />
                     </Button>
