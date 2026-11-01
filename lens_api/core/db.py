@@ -6,6 +6,8 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.orm import DeclarativeBase
 
+from .config import settings
+
 
 class Base(DeclarativeBase):
     pass
@@ -34,6 +36,10 @@ def create_engine(database_url: str) -> AsyncEngine:
     return create_async_engine(
         normalize_async_database_url(database_url),
         pool_pre_ping=True,
+        pool_size=settings.db_pool_size,
+        max_overflow=settings.db_max_overflow,
+        pool_timeout=settings.db_pool_timeout_seconds,
+        pool_recycle=settings.db_pool_recycle_seconds,
     )
 
 

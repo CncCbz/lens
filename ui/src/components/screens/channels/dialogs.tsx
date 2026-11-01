@@ -25,7 +25,7 @@ import type {
   BalanceScript,
   CredentialBalance,
   ProtocolKind,
-  Site,
+  SiteSummary,
 } from "@/lib/api";
 import { ProtocolConfigItem } from "./form-sections";
 import {
@@ -753,11 +753,11 @@ export function DeleteChannelDialog({
   setDeleteTarget,
   removeSite,
 }: {
-  deleteTarget: Site | null;
+  deleteTarget: SiteSummary | null;
   locale: Locale;
   busyId: string | null;
-  setDeleteTarget: Dispatch<SetStateAction<Site | null>>;
-  removeSite: (site: Site) => void;
+  setDeleteTarget: Dispatch<SetStateAction<SiteSummary | null>>;
+  removeSite: (site: SiteSummary) => void;
 }) {
   return (
     <Dialog

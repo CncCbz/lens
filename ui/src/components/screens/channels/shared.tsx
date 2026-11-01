@@ -4,6 +4,8 @@ import type {
   ChannelProxyMode,
   ProtocolKind,
   Site,
+  SiteBaseUrl,
+  SiteSummary,
   SiteBatchImportPayload,
   SiteBatchImportResult,
   SiteBaseUrlInput,
@@ -177,7 +179,7 @@ export type TestableModelOption = Omit<
   "selectedProtocol"
 >;
 
-export type SiteRow = Site & {
+export type SiteRow = SiteSummary & {
   subtitle: string;
   enabled_protocol_channel_count: number;
   model_count: number;
@@ -556,7 +558,16 @@ export function modelBadgeClassName(enabled: boolean) {
     : "inline-flex h-8 items-center gap-2 rounded-full border bg-muted/40 px-3 text-sm font-medium text-muted-foreground";
 }
 
-export function siteProtocols(site: Site) {
+// Structural shape shared by SiteSummary (list) and Site (editor detail).
+type SiteLike = {
+  base_urls: SiteBaseUrl[];
+  protocols: {
+    protocols: ProtocolKind[];
+    enabled: boolean;
+  }[];
+};
+
+export function siteProtocols(site: SiteLike) {
   return Array.from(
     new Set(
       site.protocols.flatMap((protocolConfig) => protocolConfig.protocols),
@@ -564,13 +575,13 @@ export function siteProtocols(site: Site) {
   );
 }
 
-export function siteSubtitle(site: Site, locale: "zh-CN" | "en-US") {
+export function siteSubtitle(site: SiteLike, locale: "zh-CN" | "en-US") {
   return siteProtocols(site)
     .map((p) => protocolLabel(p, locale))
     .join(" / ");
 }
 
-export function siteEndpointSummary(site: Site, locale: string = "zh-CN") {
+export function siteEndpointSummary(site: SiteLike, locale: string = "zh-CN") {
   const enabled = site.base_urls.filter((item) => item.enabled);
   const firstUrl = enabled[0]?.url || site.base_urls[0]?.url || "";
   const extraCount =
@@ -587,15 +598,14 @@ export function siteEndpointSummary(site: Site, locale: string = "zh-CN") {
   return firstUrl;
 }
 
-export function siteModelCount(site: Site) {
+export function siteModelCount(site: SiteSummary) {
   return site.protocols.reduce(
-    (total, protocolConfig) =>
-      total + protocolConfig.models.filter((model) => model.enabled).length,
+    (total, protocolConfig) => total + protocolConfig.enabled_model_count,
     0,
   );
 }
 
-export function isSiteEnabled(site: Site) {
+export function isSiteEnabled(site: SiteLike) {
   return site.protocols.some((protocolConfig) => protocolConfig.enabled);
 }
 

@@ -77,7 +77,9 @@ async def test_update_site_preserves_model_ids(postgres_url: str) -> None:
             ],
         )
     )
-    assert created.protocols[0].models[0].id == "model-1"
+    assert created.protocols[0].model_count == 1
+    created_detail = await store.get_site(created.id)
+    assert created_detail.protocols[0].models[0].id == "model-1"
 
     session_factory = create_session_factory(engine)
     async with session_factory() as session:
@@ -87,7 +89,7 @@ async def test_update_site_preserves_model_ids(postgres_url: str) -> None:
         entity.spent_cost_usd = 1.25
         await session.commit()
 
-    updated = await store.update_site(
+    await store.update_site(
         created.id,
         SiteUpdate(
             name="Alpha",
@@ -135,6 +137,8 @@ async def test_update_site_preserves_model_ids(postgres_url: str) -> None:
             ],
         ),
     )
+    # update_site answers with the list row; the model rows come from the detail.
+    updated = await store.get_site(created.id)
     assert updated.protocols[0].models[0].id == "model-1"
     assert updated.protocols[0].headers == {"x": "1"}
     assert updated.protocols[0].spent_tokens == 42

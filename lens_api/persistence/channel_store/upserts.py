@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from sqlalchemy import update
+from typing import Any
+
+from sqlalchemy import insert, update
 
 from ...core.runtime_channel_ids import compose_runtime_channel_id
 from ..balance_store import dump_balance_params
@@ -20,16 +22,15 @@ from .shared import (
     SiteEntity,
     SiteProtocolConfigEntity,
     SiteProtocolConfigInput,
-    _channel_id_matches_protocol_config,
     _deduplicate_protocols,
     _deduplicate_protocol_config_models,
     _dump_protocols_json,
     delete,
     json,
-    or_,
     select,
     uuid,
 )
+from ..shared import _parse_supported_protocols_json
 
 
 class ChannelUpsertsMixin:
@@ -98,6 +99,9 @@ class ChannelUpsertsMixin:
             await self._site_protocol_config_ids(session, site_id)
         )
         current_credential_ids = set(await self._site_credential_ids(session, site_id))
+        # Capture the protocols each combo advertises before the payload rewrites
+        # them: channel ids of dropped protocols must still be cleaned up.
+        previous_protocols_by_config = await self._protocols_by_config(session, site_id)
         await self._upsert_credentials(session, site_id, normalized_credentials)
 
         next_protocol_config_ids = await self._upsert_protocol_configs(
@@ -112,12 +116,37 @@ class ChannelUpsertsMixin:
         )
 
         await self._cleanup_deleted_protocol_configs(
-            session, current_protocol_config_ids - next_protocol_config_ids
+            session,
+            current_protocol_config_ids - next_protocol_config_ids,
+            previous_protocols_by_config,
+            protocols,
         )
         await self._cleanup_deleted_credentials(
             session, current_credential_ids - credential_ids
         )
-        await self._cleanup_invalid_group_items(session, next_protocol_config_ids)
+        await self._cleanup_invalid_group_items(
+            session,
+            next_protocol_config_ids,
+            previous_protocols_by_config,
+            protocols,
+        )
+
+    @staticmethod
+    async def _protocols_by_config(
+        session: AsyncSession, site_id: str
+    ) -> dict[str, list[ProtocolKind]]:
+        rows = (
+            await session.execute(
+                select(
+                    SiteProtocolConfigEntity.id,
+                    SiteProtocolConfigEntity.protocols_json,
+                ).where(SiteProtocolConfigEntity.site_id == site_id)
+            )
+        ).all()
+        return {
+            str(row.id): _parse_supported_protocols_json(row.protocols_json)
+            for row in rows
+        }
 
     async def _upsert_base_urls(
         self, session: AsyncSession, site_id: str, items: list[SiteBaseUrl]
@@ -240,26 +269,40 @@ class ChannelUpsertsMixin:
             .all()
         )
         existing_entities = {row.id: row for row in existing_rows}
+        # Project only the columns the diff needs: loading 10k+ model rows as ORM
+        # entities is what made saving a large channel slow.
         existing_model_rows = (
             (
                 await session.execute(
-                    select(SiteDiscoveredModelEntity).where(
+                    select(
+                        SiteDiscoveredModelEntity.id,
+                        SiteDiscoveredModelEntity.protocol_config_id,
+                        SiteDiscoveredModelEntity.credential_id,
+                        SiteDiscoveredModelEntity.model_name,
+                        SiteDiscoveredModelEntity.enabled,
+                        SiteDiscoveredModelEntity.sort_order,
+                        SiteDiscoveredModelEntity.protocol,
+                    ).where(
                         SiteDiscoveredModelEntity.protocol_config_id.in_(
                             list(existing_entities) or [""]
                         )
                     )
                 )
-            )
-            .scalars()
-            .all()
+            ).all()
             if existing_entities
             else []
         )
-        existing_models_by_config: dict[str, dict[str, SiteDiscoveredModelEntity]] = {}
+        existing_models_by_config: dict[str, dict[str, tuple[Any, ...]]] = {}
         for row in existing_model_rows:
-            existing_models_by_config.setdefault(row.protocol_config_id, {})[
-                row.id
-            ] = row
+            existing_models_by_config.setdefault(str(row.protocol_config_id), {})[
+                str(row.id)
+            ] = (
+                str(row.credential_id),
+                str(row.model_name),
+                int(row.enabled),
+                int(row.sort_order),
+                row.protocol,
+            )
         for protocol_config in protocol_configs:
             protocol_config_id = protocol_config.id or str(uuid.uuid4())
             protocol_config_ids.add(protocol_config_id)
@@ -402,12 +445,14 @@ class ChannelUpsertsMixin:
         protocol_config: SiteProtocolConfigInput,
         credential_ids: set[str],
         credentials_by_id: dict[str, SiteCredential],
-        existing_models: dict[str, SiteDiscoveredModelEntity] | None = None,
+        existing_models: dict[str, tuple[Any, ...]] | None = None,
     ) -> None:
         existing = dict(existing_models or {})
         seen_models: set[tuple[str, str, str | None]] = set()
         seen_row_ids: set[str] = set()
         next_ids: set[str] = set()
+        inserts: list[dict[str, Any]] = []
+        updates: list[dict[str, Any]] = []
 
         for model_index, model in enumerate(
             _deduplicate_protocol_config_models(protocol_config.models)
@@ -453,26 +498,40 @@ class ChannelUpsertsMixin:
             seen_row_ids.add(model_id)
             next_ids.add(model_id)
 
-            entity = existing.get(model_id)
-            if entity is None:
-                session.add(
-                    SiteDiscoveredModelEntity(
-                        id=model_id,
-                        protocol_config_id=protocol_config_id,
-                        credential_id=model.credential_id,
-                        model_name=model_name,
-                        enabled=int(model.enabled),
-                        sort_order=model_index,
-                        protocol=protocol_value,
-                    )
+            next_values = (
+                model.credential_id,
+                model_name,
+                int(model.enabled),
+                model_index,
+                protocol_value,
+            )
+            current = existing.get(model_id)
+            if current is None:
+                inserts.append(
+                    {
+                        "id": model_id,
+                        "protocol_config_id": protocol_config_id,
+                        "credential_id": model.credential_id,
+                        "model_name": model_name,
+                        "enabled": int(model.enabled),
+                        "sort_order": model_index,
+                        "protocol": protocol_value,
+                    }
                 )
                 continue
-            entity.protocol_config_id = protocol_config_id
-            entity.credential_id = model.credential_id
-            entity.model_name = model_name
-            entity.enabled = int(model.enabled)
-            entity.sort_order = model_index
-            entity.protocol = protocol_value
+            if current == next_values:
+                continue
+            updates.append(
+                {
+                    "id": model_id,
+                    "protocol_config_id": protocol_config_id,
+                    "credential_id": model.credential_id,
+                    "model_name": model_name,
+                    "enabled": int(model.enabled),
+                    "sort_order": model_index,
+                    "protocol": protocol_value,
+                }
+            )
 
         stale_ids = [row_id for row_id in existing if row_id not in next_ids]
         if stale_ids:
@@ -481,24 +540,52 @@ class ChannelUpsertsMixin:
                     SiteDiscoveredModelEntity.id.in_(stale_ids)
                 )
             )
+        if updates:
+            await session.execute(update(SiteDiscoveredModelEntity), updates)
+        if inserts:
+            await session.execute(insert(SiteDiscoveredModelEntity), inserts)
+
+    @staticmethod
+    def _channel_ids_for_configs(
+        protocol_config_ids: set[str],
+        previous_protocols_by_config: dict[str, list[ProtocolKind]],
+        protocol_configs: list[SiteProtocolConfigInput],
+    ) -> list[str]:
+        """Runtime channel ids for these combos, without a LIKE prefix scan."""
+
+        protocols_by_config = dict(previous_protocols_by_config)
+        for protocol_config in protocol_configs:
+            if protocol_config.id:
+                protocols_by_config[protocol_config.id] = _deduplicate_protocols(
+                    list(protocols_by_config.get(protocol_config.id, []))
+                    + list(protocol_config.protocols)
+                )
+        channel_ids: list[str] = []
+        for protocol_config_id in protocol_config_ids:
+            for protocol in protocols_by_config.get(protocol_config_id, []):
+                channel_ids.append(
+                    compose_runtime_channel_id(protocol_config_id, protocol)
+                )
+        return channel_ids
 
     async def _cleanup_deleted_protocol_configs(
-        self, session: AsyncSession, protocol_config_ids: set[str]
+        self,
+        session: AsyncSession,
+        protocol_config_ids: set[str],
+        previous_protocols_by_config: dict[str, list[ProtocolKind]],
+        protocol_configs: list[SiteProtocolConfigInput],
     ) -> None:
         if not protocol_config_ids:
             return
-        await session.execute(
-            delete(ModelGroupItemEntity).where(
-                or_(
-                    *[
-                        _channel_id_matches_protocol_config(
-                            ModelGroupItemEntity.channel_id, pid
-                        )
-                        for pid in protocol_config_ids
-                    ]
+        channel_ids = self._channel_ids_for_configs(
+            protocol_config_ids, previous_protocols_by_config, protocol_configs
+        )
+        if channel_ids:
+            await session.execute(
+                delete(ModelGroupItemEntity).where(
+                    ModelGroupItemEntity.channel_id.in_(channel_ids)
                 )
             )
-        )
         await session.execute(
             delete(SiteDiscoveredModelEntity).where(
                 SiteDiscoveredModelEntity.protocol_config_id.in_(protocol_config_ids)
@@ -527,9 +614,18 @@ class ChannelUpsertsMixin:
         )
 
     async def _cleanup_invalid_group_items(
-        self, session: AsyncSession, protocol_config_ids: set[str]
+        self,
+        session: AsyncSession,
+        protocol_config_ids: set[str],
+        previous_protocols_by_config: dict[str, list[ProtocolKind]],
+        protocol_configs: list[SiteProtocolConfigInput],
     ) -> None:
         if not protocol_config_ids:
+            return
+        channel_ids = self._channel_ids_for_configs(
+            protocol_config_ids, previous_protocols_by_config, protocol_configs
+        )
+        if not channel_ids:
             return
         matching_model = (
             select(SiteDiscoveredModelEntity.id)
@@ -551,15 +647,6 @@ class ChannelUpsertsMixin:
         )
         await session.execute(
             delete(ModelGroupItemEntity)
-            .where(
-                or_(
-                    *[
-                        _channel_id_matches_protocol_config(
-                            ModelGroupItemEntity.channel_id, pid
-                        )
-                        for pid in protocol_config_ids
-                    ]
-                )
-            )
+            .where(ModelGroupItemEntity.channel_id.in_(channel_ids))
             .where(~matching_model)
         )

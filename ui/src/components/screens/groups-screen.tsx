@@ -15,7 +15,7 @@ import {
   RoutePreviewResponse,
   RoutingStrategy,
   SettingItem,
-  Site,
+  SiteSummary,
   SiteModelTestPayload,
   SiteModelTestResult,
   apiRequest,
@@ -170,7 +170,7 @@ export function GroupsScreen() {
     isError: sitesIsError,
   } = useQuery({
     queryKey: ["sites"],
-    queryFn: () => apiRequest<Site[]>("/admin/sites"),
+    queryFn: () => apiRequest<SiteSummary[]>("/admin/sites"),
     staleTime: 2 * 60_000,
     refetchOnMount: "always",
   });

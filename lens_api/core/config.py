@@ -13,6 +13,13 @@ class Settings(BaseSettings):
     max_connections: int = 200
     max_keepalive_connections: int = 50
     database_url: str
+    # Every admin list endpoint used to run long scans; the default 5+10 pool
+    # saturated as soon as one browser had a few tabs polling.
+    db_pool_size: int = 10
+    db_max_overflow: int = 20
+    db_pool_timeout_seconds: float = 30.0
+    db_pool_recycle_seconds: int = 1800
+    workers: int = 1
     anthropic_version: str = "2023-06-01"
     ui_static_dir: str = ""
 

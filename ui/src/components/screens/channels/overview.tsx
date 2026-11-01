@@ -8,7 +8,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import type {
   CredentialBalance,
   ProtocolKind,
-  Site,
+  SiteSummary,
   SiteRuntimeSummary,
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -30,7 +30,6 @@ import {
   toneTextClass,
   useLatestVerdicts,
   useVerificationThresholds,
-  verdictKey,
   verdictTone,
 } from "@/components/screens/verification/confidence";
 
@@ -78,42 +77,61 @@ export function ChannelsOverview({
   onProtocolChange: Dispatch<SetStateAction<"all" | ProtocolKind>>;
   onSortChange: Dispatch<SetStateAction<ChannelSort>>;
   onReset: () => void;
-  onOpenEdit: (site: Site) => void;
-  onToggleSiteEnabled: (site: Site, enabled: boolean) => void;
-  setDeleteTarget: Dispatch<SetStateAction<Site | null>>;
+  onOpenEdit: (site: SiteSummary) => void;
+  onToggleSiteEnabled: (site: SiteSummary, enabled: boolean) => void;
+  setDeleteTarget: Dispatch<SetStateAction<SiteSummary | null>>;
   balancesByCredentialId: Map<string, CredentialBalance>;
 }) {
   const verdicts = useLatestVerdicts();
   const thresholds = useVerificationThresholds();
 
   // Roll the per-model verdicts up to one line per channel so a bad model
-  // is visible without opening anything.
+  // is visible without opening anything. The list rows carry model names only,
+  // so verdicts are matched on the combo prefix plus a known model name.
   const verdictSummary = useMemo(() => {
     const summary = new Map<
       string,
       { total: number; risky: number; questionable: number; trusted: number }
     >();
+    const namesByCombo = new Map<string, Set<string>>();
+    const siteByCombo = new Map<string, string>();
     for (const site of visibleSites) {
-      const counts = {
+      for (const combo of site.protocols) {
+        namesByCombo.set(combo.id, new Set(combo.model_names));
+        siteByCombo.set(combo.id, site.id);
+      }
+    }
+    const counts: Record<
+      string,
+      { total: number; risky: number; questionable: number; trusted: number }
+    > = {};
+    for (const key of verdicts.keys()) {
+      const separator = key.indexOf("|");
+      if (separator < 0) continue;
+      const comboId = key.slice(0, separator);
+      const names = namesByCombo.get(comboId);
+      const siteId = siteByCombo.get(comboId);
+      if (!names || !siteId) continue;
+      if (!names.has(key.slice(key.lastIndexOf("|") + 1))) continue;
+      const verdict = verdicts.get(key);
+      if (!verdict) continue;
+      const bucket = (counts[siteId] ??= {
         total: 0,
         risky: 0,
         questionable: 0,
         trusted: 0,
-      };
-      for (const combo of site.protocols) {
-        for (const model of combo.models) {
-          const verdict = verdicts.get(
-            verdictKey(combo.id, model.credential_id, model.model_name),
-          );
-          if (!verdict) continue;
-          counts.total += 1;
-          const tone = verdictTone(verdict.probability, thresholds);
-          if (tone === "risky") counts.risky += 1;
-          else if (tone === "questionable") counts.questionable += 1;
-          else if (tone === "trusted") counts.trusted += 1;
-        }
-      }
-      summary.set(site.id, counts);
+      });
+      bucket.total += 1;
+      const tone = verdictTone(verdict.probability, thresholds);
+      if (tone === "risky") bucket.risky += 1;
+      else if (tone === "questionable") bucket.questionable += 1;
+      else if (tone === "trusted") bucket.trusted += 1;
+    }
+    for (const site of visibleSites) {
+      summary.set(
+        site.id,
+        counts[site.id] ?? { total: 0, risky: 0, questionable: 0, trusted: 0 },
+      );
     }
     return summary;
   }, [thresholds, verdicts, visibleSites]);

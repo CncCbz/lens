@@ -10,7 +10,7 @@ import type {
   ModelGroupSyncFilterMode,
   ProtocolKind,
   RoutingStrategy,
-  Site,
+  SiteBaseUrl,
 } from "@/lib/api";
 import { isGeneratedCredentialName } from "@/lib/utils";
 import { protocolLabel, protocolOptions } from "@/lib/protocols";
@@ -478,7 +478,10 @@ export function channelEndpoint(channel?: ProtocolMeta) {
   return channel.base_url || "";
 }
 
-export function protocolBaseUrl(site: Site, baseUrlId: string) {
+export function protocolBaseUrl(
+  site: { base_urls: SiteBaseUrl[] },
+  baseUrlId: string,
+) {
   const bound = site.base_urls.find((item) => item.id === baseUrlId);
   return bound?.url || "";
 }

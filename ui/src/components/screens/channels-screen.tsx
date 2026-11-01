@@ -25,6 +25,7 @@ import {
   Site,
   SiteBatchImportPayload,
   SiteBatchImportResult,
+  SiteSummary,
   SiteModelFetchItem,
   SiteModelFetchPayload,
   SiteModelTestPayload,
@@ -228,7 +229,7 @@ export function ChannelsScreen() {
   const [batchImporting, setBatchImporting] = useState(false);
   const savingSiteRef = useRef(false);
   const [savingSite, setSavingSite] = useState(false);
-  const [deleteTarget, setDeleteTarget] = useState<Site | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<SiteSummary | null>(null);
   const [editingSiteId, setEditingSiteId] = useState<string | null>(null);
   const [refreshingCredentialId, setRefreshingCredentialId] = useState<
     string | null
@@ -289,7 +290,7 @@ export function ChannelsScreen() {
     isLoading,
   } = useQuery({
     queryKey: ["sites"],
-    queryFn: () => apiRequest<Site[]>("/admin/sites"),
+    queryFn: () => apiRequest<SiteSummary[]>("/admin/sites"),
     staleTime: 2 * 60_000,
     refetchOnMount: "always",
   });
@@ -448,8 +449,8 @@ export function ChannelsScreen() {
         site.name,
         site.subtitle,
         site.endpoint_summary,
-        ...site.protocols.flatMap((protocolConfig) =>
-          protocolConfig.models.map((model) => model.model_name),
+        ...site.protocols.flatMap(
+          (protocolConfig) => protocolConfig.model_names,
         ),
       ]
         .join(" ")
@@ -603,12 +604,27 @@ export function ChannelsScreen() {
     setDialogOpen(true);
   }
 
-  function openEdit(site: Site) {
+  async function openEdit(site: SiteSummary) {
     if (!confirmDiscardChanges()) return;
-    setEditingSiteId(site.id);
     clearBatchModelTestResults();
-    applyPreparedForm(toForm(site, locale));
-    setDialogOpen(true);
+    setBusyId(site.id);
+    try {
+      const detail = await apiRequest<Site>(`/admin/sites/${site.id}`);
+      queryClient.setQueryData(["sites", site.id, "detail"], detail);
+      setEditingSiteId(site.id);
+      applyPreparedForm(toForm(detail, locale));
+      setDialogOpen(true);
+    } catch (e) {
+      const message =
+        e instanceof ApiError
+          ? e.message
+          : locale === "zh-CN"
+            ? "无法读取渠道"
+            : "Unable to read channel";
+      toast.error(message);
+    } finally {
+      setBusyId(null);
+    }
   }
 
   function closeEditor() {
@@ -703,7 +719,7 @@ export function ChannelsScreen() {
       }
 
       if (result.created.length) {
-        queryClient.setQueryData<Site[]>(["sites"], (current) => {
+        queryClient.setQueryData<SiteSummary[]>(["sites"], (current) => {
           const rows = current ?? [];
           const existingIds = new Set(rows.map((site) => site.id));
           return [
@@ -780,26 +796,30 @@ export function ChannelsScreen() {
 
   async function saveCurrentSite({ keepEditing = false } = {}) {
     const wasEditing = Boolean(editingSiteId);
-    const savedSite = await apiRequest<Site>(
+    const savedSite = await apiRequest<SiteSummary>(
       editingSiteId ? `/admin/sites/${editingSiteId}` : "/admin/sites",
       {
         method: editingSiteId ? "PUT" : "POST",
         body: JSON.stringify(toPayload(form)),
       },
     );
-    queryClient.setQueryData<Site[]>(["sites"], (current) => {
+    queryClient.setQueryData<SiteSummary[]>(["sites"], (current) => {
       const rows = current ?? [];
       const exists = rows.some((site) => site.id === savedSite.id);
       return exists
         ? rows.map((site) => (site.id === savedSite.id ? savedSite : site))
         : [savedSite, ...rows];
     });
-    applyPreparedForm(toForm(savedSite, locale));
+    queryClient.removeQueries({ queryKey: ["sites", savedSite.id, "detail"] });
+    let savedDetail: Site | null = null;
     if (keepEditing) {
+      // The write endpoint answers with the list row; re-read to keep editing.
+      savedDetail = await apiRequest<Site>(`/admin/sites/${savedSite.id}`);
+      applyPreparedForm(toForm(savedDetail, locale));
       setEditingSiteId(savedSite.id);
     }
     markChannelRelatedStale();
-    return { savedSite, wasEditing };
+    return { savedSite, savedDetail, wasEditing };
   }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -844,13 +864,16 @@ export function ChannelsScreen() {
     setAllowModelGroupProtocolExtension(false);
     setSelectedModelGroupEnsureKeys([]);
     try {
-      const { savedSite } = await saveCurrentSite({ keepEditing: true });
+      const { savedSite, savedDetail } = await saveCurrentSite({
+        keepEditing: true,
+      });
+      if (!savedDetail) return;
       const modelGroups = await queryClient.fetchQuery<ModelGroup[]>({
         queryKey: ["model-groups"],
         queryFn: () => apiRequest<ModelGroup[]>("/admin/model-groups"),
       });
       const models = buildModelGroupEnsureInputs(
-        savedSite,
+        savedDetail,
         executionModelGroups(modelGroups),
       );
       if (!models.length) {
@@ -1079,11 +1102,11 @@ export function ChannelsScreen() {
     }
   }
 
-  async function removeSite(site: Site) {
+  async function removeSite(site: SiteSummary) {
     setBusyId(site.id);
     try {
       await apiRequest<void>(`/admin/sites/${site.id}`, { method: "DELETE" });
-      queryClient.setQueryData<Site[]>(["sites"], (current) =>
+      queryClient.setQueryData<SiteSummary[]>(["sites"], (current) =>
         (current ?? []).filter((item) => item.id !== site.id),
       );
       setDeleteTarget(null);
@@ -1156,65 +1179,73 @@ export function ChannelsScreen() {
     }
   }
 
-  async function toggleSiteEnabled(site: Site, enabled: boolean) {
+  async function toggleSiteEnabled(site: SiteSummary, enabled: boolean) {
     setBusyId(site.id);
     try {
-      const updatedSite = await apiRequest<Site>(`/admin/sites/${site.id}`, {
-        method: "PUT",
-        body: JSON.stringify({
-          name: site.name,
-          base_urls: site.base_urls.map((item) => ({
-            id: item.id,
-            url: item.url,
-            name: item.name,
-            enabled: item.enabled,
-            supported_protocols: item.supported_protocols ?? [],
-          })),
-          credentials: site.credentials.map((item) => ({
-            id: item.id,
-            name: item.name,
-            api_key: item.api_key,
-            enabled: item.enabled,
-            cost_multiplier: item.cost_multiplier,
-            base_url_id: item.base_url_id,
-            balance_script_id: item.balance_script_id || "",
-            balance_params: item.balance_params ?? {},
-          })),
-          protocols: site.protocols.map((protocolConfig) => ({
-            id: protocolConfig.id,
-            name: protocolConfig.name,
-            protocols: protocolConfig.protocols,
-            enabled,
-            headers: protocolConfig.headers,
-            proxy_mode: protocolConfig.proxy_mode,
-            channel_proxy: protocolConfig.channel_proxy,
-            concurrency_limit: protocolConfig.concurrency_limit,
-            rpm_limit: protocolConfig.rpm_limit,
-            token_limit: protocolConfig.token_limit,
-            cost_limit_usd: protocolConfig.cost_limit_usd,
-            first_token_timeout_seconds:
-              protocolConfig.first_token_timeout_seconds,
-            stream_idle_timeout_seconds:
-              protocolConfig.stream_idle_timeout_seconds,
-            param_override: protocolConfig.param_override,
-            match_regex: protocolConfig.match_regex,
-            base_url_id: protocolConfig.base_url_id,
-            credential_id: protocolConfig.credential_id,
-            models: protocolConfig.models.map((model) => ({
-              id: model.id,
-              protocol: model.protocol,
-              credential_id: model.credential_id,
-              model_name: model.model_name,
-              enabled: model.enabled,
+      // Only the list row is cached now, so read the site back before the PUT.
+      const detail = await apiRequest<Site>(`/admin/sites/${site.id}`);
+      const updatedSite = await apiRequest<SiteSummary>(
+        `/admin/sites/${site.id}`,
+        {
+          method: "PUT",
+          body: JSON.stringify({
+            name: detail.name,
+            base_urls: detail.base_urls.map((item) => ({
+              id: item.id,
+              url: item.url,
+              name: item.name,
+              enabled: item.enabled,
+              supported_protocols: item.supported_protocols ?? [],
             })),
-          })),
-        }),
-      });
-      queryClient.setQueryData<Site[]>(["sites"], (current) =>
+            credentials: detail.credentials.map((item) => ({
+              id: item.id,
+              name: item.name,
+              api_key: item.api_key,
+              enabled: item.enabled,
+              cost_multiplier: item.cost_multiplier,
+              base_url_id: item.base_url_id,
+              balance_script_id: item.balance_script_id || "",
+              balance_params: item.balance_params ?? {},
+            })),
+            protocols: detail.protocols.map((protocolConfig) => ({
+              id: protocolConfig.id,
+              name: protocolConfig.name,
+              protocols: protocolConfig.protocols,
+              enabled,
+              headers: protocolConfig.headers,
+              proxy_mode: protocolConfig.proxy_mode,
+              channel_proxy: protocolConfig.channel_proxy,
+              concurrency_limit: protocolConfig.concurrency_limit,
+              rpm_limit: protocolConfig.rpm_limit,
+              token_limit: protocolConfig.token_limit,
+              cost_limit_usd: protocolConfig.cost_limit_usd,
+              first_token_timeout_seconds:
+                protocolConfig.first_token_timeout_seconds,
+              stream_idle_timeout_seconds:
+                protocolConfig.stream_idle_timeout_seconds,
+              param_override: protocolConfig.param_override,
+              match_regex: protocolConfig.match_regex,
+              base_url_id: protocolConfig.base_url_id,
+              credential_id: protocolConfig.credential_id,
+              models: protocolConfig.models.map((model) => ({
+                id: model.id,
+                protocol: model.protocol,
+                credential_id: model.credential_id,
+                model_name: model.model_name,
+                enabled: model.enabled,
+              })),
+            })),
+          }),
+        },
+      );
+      queryClient.setQueryData<SiteSummary[]>(["sites"], (current) =>
         (current ?? []).map((item) =>
           item.id === updatedSite.id ? updatedSite : item,
         ),
       );
+      queryClient.removeQueries({
+        queryKey: ["sites", updatedSite.id, "detail"],
+      });
       toast.success(
         enabled
           ? locale === "zh-CN"

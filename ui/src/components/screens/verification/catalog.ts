@@ -126,8 +126,8 @@ export function buildVerificationTargets(
 
 export function useVerificationCatalog() {
   const sitesQuery = useQuery<Site[]>({
-    queryKey: ["sites"],
-    queryFn: () => apiRequest<Site[]>("/admin/sites"),
+    queryKey: ["sites", "full"],
+    queryFn: () => apiRequest<Site[]>("/admin/sites/full"),
   });
   const groupsQuery = useQuery<ModelGroup[]>({
     queryKey: ["model-groups"],

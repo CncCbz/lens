@@ -40,6 +40,7 @@ from .runtime_context import (
     SiteModelFetchRequest,
     SiteModelTestRequest,
     SiteModelTestResult,
+    SiteSummary,
     SiteUpdate,
     app_state,
 )
@@ -92,8 +93,16 @@ def _sse_response(events: AsyncIterator[str]) -> StreamingResponse:
     )
 
 
-async def list_sites(_: Any = Depends(get_current_admin)) -> list[SiteConfig]:
+async def list_sites(_: Any = Depends(get_current_admin)) -> list[SiteSummary]:
+    return await app_state.channel_store.list_site_summaries()
+
+
+async def list_sites_full(_: Any = Depends(get_current_admin)) -> list[SiteConfig]:
     return await app_state.channel_store.list_sites()
+
+
+async def get_site(site_id: str, _: Any = Depends(get_current_admin)) -> SiteConfig:
+    return await app_state.channel_store.get_site(site_id)
 
 
 async def site_runtime_summaries(
@@ -109,7 +118,7 @@ async def site_runtime_summaries(
 
 async def create_site(
     payload: SiteCreate, _: Any = Depends(get_current_admin)
-) -> SiteConfig:
+) -> SiteSummary:
     return await app_state.channel_store.create_site(payload)
 
 
@@ -121,7 +130,7 @@ async def import_sites(
 
 async def update_site(
     site_id: str, payload: SiteUpdate, _: Any = Depends(get_current_admin)
-) -> SiteConfig:
+) -> SiteSummary:
     return await app_state.channel_store.update_site(site_id, payload)
 
 

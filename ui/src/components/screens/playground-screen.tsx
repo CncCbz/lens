@@ -200,8 +200,9 @@ export function PlaygroundScreen() {
     isError: sitesIsError,
     isLoading: sitesLoading,
   } = useQuery({
-    queryKey: ["sites"],
-    queryFn: () => apiRequest<Site[]>("/admin/sites"),
+    // The playground needs every combo's model list, so it asks for the full tree.
+    queryKey: ["sites", "full"],
+    queryFn: () => apiRequest<Site[]>("/admin/sites/full"),
     staleTime: 2 * 60_000,
     refetchOnMount: "always",
   });

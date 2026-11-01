@@ -5,6 +5,11 @@ from fastapi import FastAPI
 
 def register(app: FastAPI, service_module: ModuleType) -> None:
     app.add_api_route("/api/admin/sites", service_module.list_sites, methods=["GET"])
+    # Full tree with every discovered model; only the playground and verification
+    # screens need it, and it is deliberately not the list endpoint.
+    app.add_api_route(
+        "/api/admin/sites/full", service_module.list_sites_full, methods=["GET"]
+    )
     app.add_api_route(
         "/api/admin/sites/runtime",
         service_module.site_runtime_summaries,
@@ -21,6 +26,9 @@ def register(app: FastAPI, service_module: ModuleType) -> None:
         service_module.import_sites,
         methods=["POST"],
         response_model=service_module.SiteBatchImportResult,
+    )
+    app.add_api_route(
+        "/api/admin/sites/{site_id}", service_module.get_site, methods=["GET"]
     )
     app.add_api_route(
         "/api/admin/sites/{site_id}", service_module.update_site, methods=["PUT"]

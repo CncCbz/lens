@@ -82,10 +82,13 @@ def db_stamp(args: argparse.Namespace) -> None:
 def serve(args: argparse.Namespace) -> None:
     import uvicorn
 
+    # Workers stay opt-in: router cooldowns and the panel caches are per process,
+    # so more workers means less shared state, not more capacity per request.
     uvicorn.run(
         APP_IMPORT_PATH,
         host=settings.host,
         port=settings.port,
+        workers=max(settings.workers, 1),
         loop=_uvicorn_loop_factory_path(),
     )
 

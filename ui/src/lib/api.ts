@@ -321,7 +321,7 @@ export type SiteModelInput = {
   enabled: boolean;
 };
 
-export type SiteProtocolConfig = {
+export type SiteProtocolConfigBase = {
   id: string;
   name: string;
   protocols: ProtocolKind[];
@@ -342,6 +342,9 @@ export type SiteProtocolConfig = {
   router_error_policy_config: string;
   base_url_id: string;
   credential_id: string;
+};
+
+export type SiteProtocolConfig = SiteProtocolConfigBase & {
   models: SiteModel[];
 };
 
@@ -373,6 +376,22 @@ export type Site = {
   base_urls: SiteBaseUrl[];
   credentials: SiteCredential[];
   protocols: SiteProtocolConfig[];
+};
+
+export type SiteProtocolConfigSummary = SiteProtocolConfigBase & {
+  model_count: number;
+  enabled_model_count: number;
+  model_names: string[];
+};
+
+// List rows carry combo and model counts instead of every model row; the editor
+// fetches one site in full from `/admin/sites/{id}`.
+export type SiteSummary = {
+  id: string;
+  name: string;
+  base_urls: SiteBaseUrl[];
+  credentials: SiteCredential[];
+  protocols: SiteProtocolConfigSummary[];
 };
 
 export type SiteRuntimeSummary = {
@@ -476,7 +495,7 @@ export type SiteBatchImportResult = {
   created_count: number;
   skipped_count: number;
   error_count: number;
-  created: Site[];
+  created: SiteSummary[];
   skipped: SiteBatchImportSkipped[];
   errors: SiteBatchImportError[];
 };
@@ -1244,6 +1263,7 @@ export type RequestLogFilterOption = {
 export type RequestLogPage = {
   items: RequestLogItem[];
   total: number;
+  total_capped: boolean;
   limit: number;
   offset: number;
   channels: RequestLogFilterOption[];

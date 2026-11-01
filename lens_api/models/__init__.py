@@ -392,7 +392,7 @@ class SiteModelInput(StrictBaseModel):
     protocol: ProtocolKind
 
 
-class SiteProtocolConfig(StrictBaseModel):
+class SiteProtocolConfigBase(StrictBaseModel):
     id: str
     name: str = ""
     protocols: list[ProtocolKind] = Field(default_factory=list)
@@ -413,6 +413,9 @@ class SiteProtocolConfig(StrictBaseModel):
     router_error_policy_config: str = ""
     base_url_id: str = Field(min_length=1)
     credential_id: str = ""
+
+
+class SiteProtocolConfig(SiteProtocolConfigBase):
     models: list[SiteModel] = Field(default_factory=list)
 
 
@@ -449,6 +452,24 @@ class SiteConfig(StrictBaseModel):
     base_urls: list[SiteBaseUrl] = Field(default_factory=list)
     credentials: list[SiteCredential] = Field(default_factory=list)
     protocols: list[SiteProtocolConfig] = Field(default_factory=list)
+
+
+class SiteProtocolConfigSummary(SiteProtocolConfigBase):
+    """Combo without its model rows, for list views."""
+
+    model_count: int = Field(default=0, ge=0)
+    enabled_model_count: int = Field(default=0, ge=0)
+    model_names: list[str] = Field(default_factory=list)
+
+
+class SiteSummary(StrictBaseModel):
+    """Site list row: same shape as SiteConfig minus the discovered models."""
+
+    id: str
+    name: str
+    base_urls: list[SiteBaseUrl] = Field(default_factory=list)
+    credentials: list[SiteCredential] = Field(default_factory=list)
+    protocols: list[SiteProtocolConfigSummary] = Field(default_factory=list)
 
 
 class SiteRuntimeSummary(StrictBaseModel):
@@ -568,7 +589,7 @@ class SiteBatchImportResult(StrictBaseModel):
     created_count: int = 0
     skipped_count: int = 0
     error_count: int = 0
-    created: list[SiteConfig] = Field(default_factory=list)
+    created: list[SiteSummary] = Field(default_factory=list)
     skipped: list[SiteBatchImportSkipped] = Field(default_factory=list)
     errors: list[SiteBatchImportError] = Field(default_factory=list)
 
@@ -1602,6 +1623,7 @@ class RequestLogFilterOption(StrictBaseModel):
 class RequestLogPage(StrictBaseModel):
     items: list[RequestLogItem] = Field(default_factory=list)
     total: int = 0
+    total_capped: bool = False
     limit: int = 0
     offset: int = 0
     channels: list[RequestLogFilterOption] = Field(default_factory=list)

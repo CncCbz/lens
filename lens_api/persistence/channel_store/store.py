@@ -18,11 +18,10 @@ from .shared import (
     SiteEntity,
     SiteModelFetchRequest,
     SiteProtocolConfigEntity,
+    SiteSummary,
     SiteUpdate,
-    _channel_id_matches_protocol_config,
     async_sessionmaker,
     delete,
-    or_,
     uuid,
 )
 from .loaders import ChannelLoadersMixin
@@ -51,6 +50,17 @@ class ChannelStore(
         async with self._session_factory() as session:
             return await self._load_sites(session)
 
+    async def list_site_summaries(self) -> list[SiteSummary]:
+        async with self._session_factory() as session:
+            return await self._load_site_summaries(session)
+
+    async def get_site_summary(self, site_id: str) -> SiteSummary:
+        async with self._session_factory() as session:
+            summaries = await self._load_site_summaries(session, site_ids=[site_id])
+            if not summaries:
+                raise KeyError(site_id)
+            return summaries[0]
+
     async def get_site(self, site_id: str) -> SiteConfig:
         async with self._session_factory() as session:
             sites = await self._load_sites(session, site_ids=[site_id])
@@ -58,7 +68,7 @@ class ChannelStore(
                 raise KeyError(site_id)
             return sites[0]
 
-    async def create_site(self, payload: SiteCreate) -> SiteConfig:
+    async def create_site(self, payload: SiteCreate) -> SiteSummary:
         async with self._session_factory() as session:
             await self._ensure_site_name_unique(session, payload.name)
             site_id = str(uuid.uuid4())
@@ -71,9 +81,9 @@ class ChannelStore(
                 payload.protocols,
             )
             await session.commit()
-        return await self.get_site(site_id)
+        return await self.get_site_summary(site_id)
 
-    async def update_site(self, site_id: str, payload: SiteUpdate) -> SiteConfig:
+    async def update_site(self, site_id: str, payload: SiteUpdate) -> SiteSummary:
         async with self._session_factory() as session:
             site = await session.get(SiteEntity, site_id)
             if site is None:
@@ -90,7 +100,7 @@ class ChannelStore(
                 payload.protocols,
             )
             await session.commit()
-        return await self.get_site(site_id)
+        return await self.get_site_summary(site_id)
 
     async def import_sites(
         self, payload: SiteBatchImportRequest
@@ -184,7 +194,7 @@ class ChannelStore(
 
             await session.commit()
 
-        created = await self._load_sites_by_ids(site_ids)
+        created = await self._load_site_summaries_by_ids(site_ids)
         return self._batch_import_result(
             committed=bool(created),
             created=created,
@@ -201,18 +211,17 @@ class ChannelStore(
             protocol_config_ids = await self._site_protocol_config_ids(session, site_id)
             credential_ids = await self._site_credential_ids(session, site_id)
             if protocol_config_ids:
-                await session.execute(
-                    delete(ModelGroupItemEntity).where(
-                        or_(
-                            *[
-                                _channel_id_matches_protocol_config(
-                                    ModelGroupItemEntity.channel_id, pid
-                                )
-                                for pid in protocol_config_ids
-                            ]
+                channel_ids = self._channel_ids_for_configs(
+                    set(protocol_config_ids),
+                    await self._protocols_by_config(session, site_id),
+                    [],
+                )
+                if channel_ids:
+                    await session.execute(
+                        delete(ModelGroupItemEntity).where(
+                            ModelGroupItemEntity.channel_id.in_(channel_ids)
                         )
                     )
-                )
                 await session.execute(
                     delete(SiteDiscoveredModelEntity).where(
                         SiteDiscoveredModelEntity.protocol_config_id.in_(

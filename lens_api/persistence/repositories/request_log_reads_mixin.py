@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import time
 
+from sqlalchemy import true
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import load_only
 
 from ..shared import (
+    Any,
     CHANNEL_HEALTH_BUCKET_COUNT,
     CHANNEL_HEALTH_BUCKET_SECONDS,
     ProtocolKind,
@@ -32,6 +34,11 @@ from ..shared import (
     select,
     timedelta,
 )
+from ..site_loader import load_channel_labels, load_known_model_names
+
+# Exact totals on a filterable log table need a full scan; 100 pages of history
+# is more than anyone scrolls, and the UI renders "10000+" past this cap.
+REQUEST_LOG_COUNT_CAP = 10_001
 
 
 class RequestLogReadMixin:
@@ -107,17 +114,16 @@ class RequestLogReadMixin:
             items_result = await session.execute(items_stmt)
             entities = items_result.scalars().all()
 
-            # ponytail: count + distinct option queries are full-table scans;
-            # cache them briefly so the 5s auto-refresh doesn't rescan the table
-            # every tick. Stale totals/options for a few seconds are acceptable.
+            # The count and the filter options are the expensive part of this
+            # endpoint and it is polled every 5s, so both stay off the log table:
+            # the count is bounded and the options come from the config tables.
             aux_key = (
-                days,
                 gateway_key_id,
                 model_prefix,
                 status_filter,
                 protocol,
                 channel,
-                keyword,
+                self._normalize_request_log_keyword(keyword),
                 source,
             )
             now_mono = time.monotonic()
@@ -125,15 +131,15 @@ class RequestLogReadMixin:
             if cached is not None and now_mono - cached[0] < 15.0:
                 (
                     total,
+                    total_capped,
                     channels,
                     gateway_keys,
                     gateway_has_multiple_keys,
                     model_names,
                 ) = cached[1]
             else:
-                total_stmt = select(func.count()).select_from(RequestLogEntity)
-                total_stmt = self._apply_request_log_filters(
-                    total_stmt,
+                count_stmt = self._apply_request_log_filters(
+                    select(RequestLogEntity.id),
                     days=days,
                     time_zone=time_zone,
                     gateway_key_id=gateway_key_id,
@@ -143,135 +149,25 @@ class RequestLogReadMixin:
                     channel=channel,
                     keyword=keyword,
                     source=source,
-                )
-
-                channel_label_expr = func.coalesce(
-                    func.nullif(func.trim(RequestLogEntity.channel_name), ""),
-                    RequestLogEntity.channel_id,
-                    literal("n/a"),
-                )
-                channel_stmt = (
-                    select(
-                        RequestLogEntity.channel_id,
-                        channel_label_expr.label("label"),
+                ).limit(REQUEST_LOG_COUNT_CAP)
+                total = int(
+                    await session.scalar(
+                        select(func.count()).select_from(count_stmt.subquery())
                     )
-                    .select_from(RequestLogEntity)
-                    .distinct()
+                    or 0
                 )
-                channel_stmt = self._apply_request_log_filters(
-                    channel_stmt,
-                    days=days,
-                    time_zone=time_zone,
-                    gateway_key_id=gateway_key_id,
-                    model_prefix=model_prefix,
-                    status_filter=status_filter,
-                    protocol=protocol,
-                    keyword=keyword,
-                    source=source,
-                )
-
-                gateway_key_stmt = (
-                    select(RequestLogEntity.gateway_key_id)
-                    .select_from(RequestLogEntity)
-                    .distinct()
-                )
-                gateway_key_stmt = self._apply_request_log_filters(
-                    gateway_key_stmt,
-                    days=days,
-                    time_zone=time_zone,
-                    model_prefix=model_prefix,
-                    status_filter=status_filter,
-                    protocol=protocol,
-                    channel=channel,
-                    keyword=keyword,
-                    source=source,
-                )
-
-                model_name_stmt = (
-                    select(
-                        RequestLogEntity.resolved_group_name,
-                        RequestLogEntity.requested_group_name,
-                        RequestLogEntity.upstream_model_name,
-                    )
-                    .select_from(RequestLogEntity)
-                    .distinct()
-                )
-                model_name_stmt = self._apply_request_log_filters(
-                    model_name_stmt,
-                    days=days,
-                    time_zone=time_zone,
-                    gateway_key_id=gateway_key_id,
-                    status_filter=status_filter,
-                    protocol=protocol,
-                    channel=channel,
-                    keyword=keyword,
-                    source=source,
-                )
-
-                total = await session.scalar(total_stmt)
-                channel_result = await session.execute(channel_stmt)
-                gateway_key_result = await session.execute(gateway_key_stmt)
-                model_name_result = await session.execute(model_name_stmt)
-                channel_options_by_id: dict[str, str] = {}
-                for channel_id, label in channel_result.all():
-                    option_id = str(channel_id) if channel_id is not None else "n/a"
-                    channel_options_by_id[option_id] = str(label or option_id)
-                channels = [
-                    RequestLogFilterOption(id=option_id, label=label)
-                    for option_id, label in sorted(
-                        channel_options_by_id.items(),
-                        key=lambda item: (item[1].lower(), item[0]),
-                    )
-                ]
-                gateway_key_options_by_id = {
-                    str(value) if value is not None else "n/a"
-                    for value in gateway_key_result.scalars().all()
-                }
-                gateway_key_ids = sorted(
-                    key_id for key_id in gateway_key_options_by_id if key_id != "n/a"
-                )
-                gateway_key_remarks = (
-                    await self._gateway_key_repo._gateway_key_remarks_by_id(
-                        session, gateway_key_ids
-                    )
-                )
-                gateway_has_multiple_keys = await self._gateway_has_multiple_keys(
-                    session
-                )
-                gateway_keys = [
-                    RequestLogFilterOption(
-                        id=key_id,
-                        label=(
-                            "n/a"
-                            if key_id == "n/a"
-                            else gateway_key_remarks.get(key_id, "") or key_id
-                        ),
-                    )
-                    for key_id in sorted(
-                        gateway_key_options_by_id,
-                        key=lambda item: (
-                            (
-                                "n/a"
-                                if item == "n/a"
-                                else gateway_key_remarks.get(item, "") or item
-                            ).lower(),
-                            item,
-                        ),
-                    )
-                ]
-                model_name_values = set()
-                for row in model_name_result.all():
-                    for value in row:
-                        if value is None:
-                            continue
-                        normalized_value = str(value).strip()
-                        if normalized_value:
-                            model_name_values.add(normalized_value)
-                model_names = sorted(model_name_values)
+                total_capped = total >= REQUEST_LOG_COUNT_CAP
+                channels = await self._request_log_channel_options(session)
+                (
+                    gateway_keys,
+                    gateway_has_multiple_keys,
+                ) = await self._request_log_key_options(session)
+                model_names = await load_known_model_names(session)
                 self._log_page_aux_cache[aux_key] = (
                     now_mono,
                     (
                         total,
+                        total_capped,
                         channels,
                         gateway_keys,
                         gateway_has_multiple_keys,
@@ -288,6 +184,7 @@ class RequestLogReadMixin:
                     gateway_has_multiple_keys=gateway_has_multiple_keys,
                 ),
                 total=int(total),
+                total_capped=total_capped,
                 limit=max(limit, 0),
                 offset=max(offset, 0),
                 channels=channels,
@@ -295,6 +192,43 @@ class RequestLogReadMixin:
                 gateway_has_multiple_keys=gateway_has_multiple_keys,
                 model_names=model_names,
             )
+
+    @staticmethod
+    async def _request_log_channel_options(
+        session: AsyncSession,
+    ) -> list[RequestLogFilterOption]:
+        labels = await load_channel_labels(session)
+        options = [
+            RequestLogFilterOption(id=channel_id, label=label or channel_id)
+            for channel_id, label in labels
+        ]
+        if await session.scalar(
+            select(literal(1)).where(RequestLogEntity.channel_id.is_(None)).limit(1)
+        ):
+            options.insert(0, RequestLogFilterOption(id="n/a", label="n/a"))
+        return sorted(options, key=lambda item: (item.label.lower(), item.id))
+
+    async def _request_log_key_options(
+        self, session: AsyncSession
+    ) -> tuple[list[RequestLogFilterOption], bool]:
+        rows = await self._gateway_key_repo.list_key_options(session)
+        has_nulls = bool(
+            await session.scalar(
+                select(literal(1))
+                .where(RequestLogEntity.gateway_key_id.is_(None))
+                .limit(1)
+            )
+        )
+        options = [
+            RequestLogFilterOption(id=key_id, label=remark or key_id)
+            for key_id, remark in rows
+        ]
+        if has_nulls:
+            options.append(RequestLogFilterOption(id="n/a", label="n/a"))
+        return (
+            sorted(options, key=lambda item: (item.label.lower(), item.id)),
+            len(rows) + int(has_nulls) > 1,
+        )
 
     async def list_site_runtime_summaries(self) -> list[SiteRuntimeSummary]:
         async with self._session_factory() as session:
@@ -361,47 +295,46 @@ class RequestLogReadMixin:
                 for row in recent_count_rows.all()
             }
 
-            ranked_logs = (
+            # One index lookup per combo instead of a window over every log row:
+            # this snapshot runs every 5s while the channel page is open.
+            latest_log = (
                 select(
-                    SiteProtocolConfigEntity.site_id.label("site_id"),
+                    RequestLogEntity.id.label("id"),
                     RequestLogEntity.channel_id.label("channel_id"),
                     RequestLogEntity.channel_name.label("channel_name"),
                     RequestLogEntity.status_code.label("status_code"),
                     RequestLogEntity.success.label("success"),
                     RequestLogEntity.error_message.label("error_message"),
                     RequestLogEntity.created_at.label("created_at"),
-                    func.row_number()
-                    .over(
-                        partition_by=SiteProtocolConfigEntity.site_id,
-                        order_by=(
-                            RequestLogEntity.created_at.desc(),
-                            RequestLogEntity.id.desc(),
-                        ),
-                    )
-                    .label("row_number"),
                 )
-                .join(
-                    SiteProtocolConfigEntity,
-                    RequestLogEntity.protocol_config_id == SiteProtocolConfigEntity.id,
+                .where(
+                    RequestLogEntity.protocol_config_id == SiteProtocolConfigEntity.id
                 )
                 .where(
                     RequestLogEntity.lifecycle_status.in_(REQUEST_LOG_TERMINAL_STATUSES)
                 )
-                .subquery()
+                .order_by(
+                    RequestLogEntity.created_at.desc(), RequestLogEntity.id.desc()
+                )
+                .limit(1)
+                .lateral("latest_log")
             )
-
             latest_rows = await session.execute(
-                select(
-                    ranked_logs.c.site_id,
-                    ranked_logs.c.channel_id,
-                    ranked_logs.c.channel_name,
-                    ranked_logs.c.status_code,
-                    ranked_logs.c.success,
-                    ranked_logs.c.error_message,
-                    ranked_logs.c.created_at,
-                ).where(ranked_logs.c.row_number == 1)
+                select(SiteProtocolConfigEntity.site_id, latest_log)
+                .outerjoin(latest_log, true())
+                .order_by(SiteProtocolConfigEntity.site_id.asc())
             )
-            latest_by_site = {str(row.site_id): row for row in latest_rows.all()}
+            latest_by_site: dict[str, Any] = {}
+            latest_sort_key: dict[str, tuple[datetime, int]] = {}
+            for row in latest_rows.all():
+                if row.channel_id is None and row.created_at is None:
+                    continue
+                site_id = str(row.site_id)
+                sort_key = (row.created_at, int(row.id or 0))
+                if site_id in latest_sort_key and sort_key <= latest_sort_key[site_id]:
+                    continue
+                latest_sort_key[site_id] = sort_key
+                latest_by_site[site_id] = row
 
             bucket_anchor = datetime.now(UTC).replace(second=0, microsecond=0)
             bucket_anchor -= timedelta(minutes=bucket_anchor.minute % 5)

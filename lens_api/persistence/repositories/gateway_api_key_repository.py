@@ -278,3 +278,21 @@ class GatewayApiKeyRepository:
             for key_id, remark in rows
             if key_id is not None
         }
+
+    @staticmethod
+    async def list_key_options(session: AsyncSession) -> list[tuple[str, str]]:
+        """Every key id + remark, straight from the key table."""
+
+        rows = (
+            await session.execute(
+                select(GatewayApiKeyEntity.id, GatewayApiKeyEntity.remark).order_by(
+                    GatewayApiKeyEntity.created_at.asc(),
+                    GatewayApiKeyEntity.id.asc(),
+                )
+            )
+        ).all()
+        return [
+            (str(key_id), str(remark or "").strip())
+            for key_id, remark in rows
+            if key_id is not None
+        ]

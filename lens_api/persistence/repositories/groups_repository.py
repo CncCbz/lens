@@ -1388,7 +1388,11 @@ class GroupRepository:
             protocol_by_channel_id,
             credential_names_by_channel,
             credential_numbers,
-        ) = await self._load_group_item_channel_lookups(session, channel_ids)
+        ) = await self._load_group_item_channel_lookups(
+            session,
+            channel_ids,
+            {row.credential_id for row in rows},
+        )
         for row in rows:
             items_by_group.setdefault(row.group_id, []).append(
                 ModelGroupItem(
@@ -1430,7 +1434,10 @@ class GroupRepository:
             )
 
     async def _load_group_item_channel_lookups(
-        self, session: AsyncSession, channel_ids: list[str]
+        self,
+        session: AsyncSession,
+        channel_ids: list[str],
+        credential_ids: set[str],
     ) -> tuple[
         dict[str, str],
         dict[str, ProtocolKind],
@@ -1497,44 +1504,58 @@ class GroupRepository:
                     combo_index=combo_index_by_protocol_config.get(protocol_config_id),
                 )
             )
+        # Only the credentials the items reference, numbered by their position in
+        # the site. Joining combos to their site's credentials was a cross product.
+        site_id_by_protocol_config = {
+            str(protocol_config_id): str(row_site_id)
+            for protocol_config_id, _name, row_site_id, _site_name in site_rows
+        }
         credential_rows = await session.execute(
             select(
-                SiteProtocolConfigEntity.id,
                 SiteCredentialEntity.id,
+                SiteCredentialEntity.site_id,
                 SiteCredentialEntity.name,
                 SiteCredentialEntity.sort_order,
             )
-            .join(
-                SiteCredentialEntity,
-                SiteCredentialEntity.site_id == SiteProtocolConfigEntity.site_id,
-            )
-            .where(SiteProtocolConfigEntity.id.in_(protocol_config_ids))
+            .where(SiteCredentialEntity.id.in_(sorted(credential_ids) or [""]))
             .order_by(
-                SiteProtocolConfigEntity.id.asc(),
+                SiteCredentialEntity.site_id.asc(),
                 SiteCredentialEntity.sort_order.asc(),
                 SiteCredentialEntity.id.asc(),
             )
         )
-        credential_names_by_protocol_config: dict[str, dict[str, str]] = {}
-        credential_numbers_by_protocol_config: dict[str, dict[str, int]] = {}
-        credential_counts_by_protocol_config: dict[str, int] = {}
+        credential_site_by_id: dict[str, str] = {}
+        credential_number_by_id: dict[str, int] = {}
+        site_credential_counts: dict[str, int] = {}
+        credential_names_by_id: dict[str, str] = {}
         for (
-            protocol_config_id,
             credential_id,
+            credential_site_id,
             credential_name,
             _sort_order,
         ) in credential_rows.all():
-            protocol_config_id = str(protocol_config_id)
             credential_id = str(credential_id)
-            credential_names_by_protocol_config.setdefault(protocol_config_id, {})[
-                credential_id
-            ] = str(credential_name)
-            credential_counts_by_protocol_config[protocol_config_id] = (
-                credential_counts_by_protocol_config.get(protocol_config_id, 0) + 1
+            credential_site_id = str(credential_site_id)
+            site_credential_counts[credential_site_id] = (
+                site_credential_counts.get(credential_site_id, 0) + 1
             )
-            credential_numbers_by_protocol_config.setdefault(protocol_config_id, {})[
-                credential_id
-            ] = credential_counts_by_protocol_config[protocol_config_id]
+            credential_site_by_id[credential_id] = credential_site_id
+            credential_number_by_id[credential_id] = site_credential_counts[
+                credential_site_id
+            ]
+            credential_names_by_id[credential_id] = str(credential_name)
+        credential_names_by_protocol_config: dict[str, dict[str, str]] = {}
+        credential_numbers_by_protocol_config: dict[str, dict[str, int]] = {}
+        for protocol_config_id, config_site_id in site_id_by_protocol_config.items():
+            names: dict[str, str] = {}
+            numbers: dict[str, int] = {}
+            for credential_id in credential_ids:
+                if credential_site_by_id.get(credential_id) != config_site_id:
+                    continue
+                names[credential_id] = credential_names_by_id.get(credential_id, "")
+                numbers[credential_id] = credential_number_by_id.get(credential_id, 0)
+            credential_names_by_protocol_config[protocol_config_id] = names
+            credential_numbers_by_protocol_config[protocol_config_id] = numbers
 
         channel_site_names: dict[str, str] = {}
         credential_names_by_channel: dict[str, dict[str, str]] = {}

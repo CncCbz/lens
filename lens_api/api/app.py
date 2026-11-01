@@ -2,6 +2,7 @@ from collections.abc import Awaitable, Callable
 from types import ModuleType
 
 from fastapi import FastAPI, Request, Response
+from fastapi.middleware.gzip import GZipMiddleware
 
 from .routes import include_routes
 
@@ -26,6 +27,9 @@ def create_app(service_module: ModuleType) -> FastAPI:
     )
     app.middleware("http")(service_module.dynamic_cors_middleware)
     app.middleware("http")(_normalize_duplicate_v1_prefix)
+    # Admin list payloads are highly repetitive JSON; gzip turns a 4.8 MB group
+    # list into ~80 KB on the wire without touching the response shape.
+    app.add_middleware(GZipMiddleware, minimum_size=1024)
     service_module.register_exception_handlers(app)
     include_routes(app, service_module)
     return app
