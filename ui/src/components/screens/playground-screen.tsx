@@ -152,11 +152,17 @@ function initialSessionState(): SessionState {
   return { sessions: [session], activeId: session.id };
 }
 
+// Reading distance from the bottom that still counts as "follow the stream".
+const FOLLOW_THRESHOLD = 24;
+
 export function PlaygroundScreen() {
   const { locale } = useI18n();
   const copy = locale === "zh-CN" ? ZH : EN;
   const queryClient = useQueryClient();
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  // Following stops as soon as the reader scrolls up, and resumes at the bottom.
+  const followRef = useRef(true);
+  const lastTopRef = useRef(0);
   const runnersRef = useRef<Map<string, AbortController>>(new Map());
 
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
@@ -243,10 +249,46 @@ export function PlaygroundScreen() {
 
   useEffect(() => {
     const node = scrollRef.current;
-    if (node) {
+    if (!node) {
+      return;
+    }
+    // Our own writes keep the offset stable, so any change means the reader
+    // scrolled; scroll events arrive too late to tell, because the content has
+    // already grown by then.
+    const atBottom =
+      node.scrollHeight - node.scrollTop - node.clientHeight <=
+      FOLLOW_THRESHOLD;
+    if (Math.abs(node.scrollTop - lastTopRef.current) > 1) {
+      followRef.current = atBottom;
+    } else if (followRef.current) {
       node.scrollTop = node.scrollHeight;
     }
+    lastTopRef.current = node.scrollTop;
   }, [messages]);
+
+  // A different chat always starts at its newest message.
+  useEffect(() => {
+    followRef.current = true;
+    lastTopRef.current = 0;
+    const node = scrollRef.current;
+    if (node) {
+      node.scrollTop = node.scrollHeight;
+      lastTopRef.current = node.scrollTop;
+    }
+  }, [sessionState.activeId]);
+
+  function handleTranscriptScroll() {
+    const node = scrollRef.current;
+    if (!node) {
+      return;
+    }
+    if (
+      node.scrollHeight - node.scrollTop - node.clientHeight <=
+      FOLLOW_THRESHOLD
+    ) {
+      followRef.current = true;
+    }
+  }
 
   function patchMessages(
     sessionId: string,
@@ -611,7 +653,8 @@ export function PlaygroundScreen() {
         <div className="flex min-w-0 flex-1 flex-col">
           <div
             ref={scrollRef}
-            className="hide-scrollbar min-h-0 flex-1 overflow-y-auto px-4 py-2 sm:px-6"
+            onScroll={handleTranscriptScroll}
+            className="hide-scrollbar min-h-0 flex-1 overflow-y-auto px-4 py-2 [overflow-anchor:none] sm:px-6"
           >
             {groupsIsError || sitesIsError ? (
               <div className="flex h-full items-center justify-center text-sm text-destructive">

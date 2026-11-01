@@ -143,7 +143,7 @@ export function MessageList({
                     durationMs={message.reasoningMs}
                   />
                 ) : null}
-                <Markdown text={message.content} />
+                <Markdown text={message.content} streaming={message.pending} />
                 {message.pending ? (
                   <span className="ml-0.5 inline-block h-4 w-1.5 animate-pulse bg-foreground align-middle" />
                 ) : null}
