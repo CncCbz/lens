@@ -117,6 +117,7 @@ def _challenge_body(
     prompt: str,
     reasoning_effort: str,
     expected_count: int,
+    max_tokens: int = 0,
 ) -> dict[str, Any]:
     """The body the gateway forwards.
 
@@ -130,7 +131,7 @@ def _challenge_body(
     """
     # A thinking model can burn the whole budget before writing anything, so
     # the answer length is only a floor: reasoning runs on top of it.
-    budget = max(expected_count * _BUDGET_PER_ANSWER, _MIN_BUDGET)
+    budget = max_tokens if max_tokens > 0 else _default_budget(expected_count)
     if protocol == ProtocolKind.OPENAI_CHAT:
         body: dict[str, Any] = {
             "model": group_name,
@@ -158,11 +159,17 @@ def _challenge_body(
             "contents": [{"role": "user", "parts": [{"text": prompt}]}],
             "stream": True,
         }
+        if max_tokens > 0:
+            body["generationConfig"] = {"maxOutputTokens": budget}
     else:
         raise ValueError(f"Protocol {protocol.value} cannot be verified")
     if reasoning_effort:
         body["reasoning_effort"] = reasoning_effort
     return body
+
+
+def _default_budget(expected_count: int) -> int:
+    return max(expected_count * _BUDGET_PER_ANSWER, _MIN_BUDGET)
 
 
 _TEXT_KEYS = ("choices", "content", "candidates", "output")
@@ -339,9 +346,15 @@ async def _probe_challenge(
     expected_count: int,
     reasoning_effort: str,
     timeout_seconds: float,
+    max_tokens: int = 0,
 ) -> tuple[ModelVerificationSample, str, str]:
     body = _challenge_body(
-        protocol, group_name, prompt, reasoning_effort, expected_count
+        protocol,
+        group_name,
+        prompt,
+        reasoning_effort,
+        expected_count,
+        max_tokens=max_tokens,
     )
     # The marker lets a cancelled stream report a verification timeout instead
     # of a client disconnect in the request log.
@@ -513,6 +526,7 @@ async def _probe_until_scorable(
     challenge: dict[str, Any],
     reasoning_effort: str,
     timeout_seconds: float,
+    max_tokens: int = 0,
 ) -> tuple[ModelVerificationSample, str, str]:
     expected_count = int(challenge["expected_count"])
     minimum = _min_numbers(expected_count)
@@ -526,6 +540,7 @@ async def _probe_until_scorable(
             expected_count=expected_count,
             reasoning_effort=reasoning_effort,
             timeout_seconds=timeout_seconds,
+            max_tokens=max_tokens,
         )
         if best is None or probe[0].count > best[0].count:
             best = probe
@@ -607,16 +622,25 @@ async def run_verification(
         )
         raise
 
+    runtime: dict[str, Any] = {}
+    try:
+        runtime = await app_state.settings_repo.get_runtime_settings()
+    except Exception:
+        runtime = {}
+
     effective_timeout = timeout_seconds
     if effective_timeout is None:
         try:
-            runtime = await app_state.settings_repo.get_runtime_settings()
             effective_timeout = float(
                 runtime.get("verification_timeout_seconds") or 90.0
             )
-        except Exception:
+        except (TypeError, ValueError):
             effective_timeout = 90.0
     effective_timeout = max(float(effective_timeout), 5.0)
+    try:
+        max_tokens = max(int(runtime.get("verification_max_tokens") or 0), 0)
+    except (TypeError, ValueError):
+        max_tokens = 0
 
     challenges = _generate_challenges(payload.count)
     forced = PlaygroundTarget(
@@ -633,6 +657,7 @@ async def run_verification(
                 challenge=challenge,
                 reasoning_effort=wire_effort,
                 timeout_seconds=effective_timeout,
+                max_tokens=max_tokens,
             )
         )
         for challenge in challenges

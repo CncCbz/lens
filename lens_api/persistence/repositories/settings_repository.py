@@ -45,6 +45,7 @@ from ..shared import (
     SETTING_VERIFICATION_BATCH_SIZE,
     SETTING_VERIFICATION_CHALLENGE_COUNT,
     SETTING_VERIFICATION_CONCURRENCY,
+    SETTING_VERIFICATION_MAX_TOKENS,
     SETTING_VERIFICATION_REASONING_EFFORT,
     SETTING_VERIFICATION_SELECTED_MODELS,
     SETTING_VERIFICATION_TIMEOUT_SECONDS,
@@ -287,6 +288,16 @@ class SettingsRepository:
                     15,
                 ),
                 600,
+            ),
+            # 0 keeps the built-in budget derived from the challenge size.
+            "verification_max_tokens": min(
+                max(
+                    self._parse_int(
+                        mapping.get(SETTING_VERIFICATION_MAX_TOKENS), default=0
+                    ),
+                    0,
+                ),
+                262_144,
             ),
             "verification_selected_models": self._parse_selected_models(
                 mapping.get(SETTING_VERIFICATION_SELECTED_MODELS)

@@ -32,6 +32,7 @@ const BATCH_SIZE = "verification_batch_size";
 const CHALLENGE_COUNT = "verification_challenge_count";
 const CONCURRENCY = "verification_concurrency";
 const TIMEOUT_SECONDS = "verification_timeout_seconds";
+const MAX_TOKENS = "verification_max_tokens";
 const REASONING_EFFORT = "verification_reasoning_effort";
 const SELECTED_MODELS = "verification_selected_models";
 const TRUST_THRESHOLD = "verification_trust_threshold";
@@ -99,6 +100,7 @@ export function VerificationScheduleDialog({
   const [batch, setBatch] = useState("5");
   const [concurrency, setConcurrency] = useState("2");
   const [timeoutSeconds, setTimeoutSeconds] = useState("90");
+  const [maxTokens, setMaxTokens] = useState("0");
   const [count, setCount] = useState("3");
   const [effort, setEffort] = useState("none");
   const [trust, setTrust] = useState("80");
@@ -114,6 +116,7 @@ export function VerificationScheduleDialog({
     setBatch(valueOf(items, BATCH_SIZE, "5"));
     setConcurrency(valueOf(items, CONCURRENCY, "2"));
     setTimeoutSeconds(valueOf(items, TIMEOUT_SECONDS, "90"));
+    setMaxTokens(valueOf(items, MAX_TOKENS, "0"));
     setCount(valueOf(items, CHALLENGE_COUNT, "3"));
     setEffort(valueOf(items, REASONING_EFFORT, "none"));
     setTrust(valueOf(items, TRUST_THRESHOLD, "80"));
@@ -203,6 +206,7 @@ export function VerificationScheduleDialog({
             { key: BATCH_SIZE, value: batch },
             { key: CONCURRENCY, value: concurrency },
             { key: TIMEOUT_SECONDS, value: timeoutSeconds },
+            { key: MAX_TOKENS, value: maxTokens },
             { key: CHALLENGE_COUNT, value: count },
             { key: REASONING_EFFORT, value: effort },
             {
@@ -300,7 +304,7 @@ export function VerificationScheduleDialog({
               </div>
             </div>
 
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <div className="flex flex-col gap-1.5">
                 <Label className="text-xs text-muted-foreground">
                   {titleForLocale(locale, "思考档位", "Reasoning effort")}
@@ -325,6 +329,17 @@ export function VerificationScheduleDialog({
                     ))}
                   </SelectContent>
                 </Select>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label className="text-xs text-muted-foreground">
+                  {titleForLocale(locale, "输出上限", "Max tokens")}
+                </Label>
+                <Input
+                  value={maxTokens}
+                  onChange={(event) => setMaxTokens(event.target.value)}
+                  inputMode="numeric"
+                  placeholder={titleForLocale(locale, "0 = 自动", "0 = auto")}
+                />
               </div>
               <div className="flex flex-col gap-1.5">
                 <Label className="text-xs text-muted-foreground">
