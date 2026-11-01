@@ -596,6 +596,7 @@ export type ModelVerificationResult = {
 
 export type ModelVerificationLatest = {
   model_name: string;
+  expected_model?: string;
   protocol_config_id: string;
   credential_id: string;
   channel_id: string;

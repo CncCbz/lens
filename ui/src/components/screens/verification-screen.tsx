@@ -96,9 +96,10 @@ export function VerificationScreen() {
     [targetKey, targets],
   );
 
-  // The name is the claim under test, so it follows the selection instead of
-  // being typed by hand; an empty box silently skipped the whole comparison.
-  const expected = selected?.modelName ?? "";
+  // The canonical group name is the claim under test (falling back to the
+  // channel model name), so a prefixed upstream model name still matches the
+  // reference bank.
+  const expected = selected?.groupName || selected?.modelName || "";
 
   // Levels belong to the group, so a stale choice from another model must not
   // survive the switch; the selection is kept only while it stays valid.

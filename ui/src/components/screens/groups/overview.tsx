@@ -7,6 +7,7 @@ import {
   Filter,
   GripVertical,
   Lock,
+  Plus,
   RefreshCw,
   Route,
   Trash2,
@@ -125,6 +126,7 @@ export function GroupsOverview({
   setSortBy,
   resetFilters,
   openEdit,
+  openCreateVariant,
   changeStrategy,
   reorderGroupMembers,
   removeGroupMember,
@@ -165,6 +167,7 @@ export function GroupsOverview({
   setSortBy: Dispatch<SetStateAction<GroupSort>>;
   resetFilters: () => void;
   openEdit: (item: ModelGroup) => void;
+  openCreateVariant: (parent: ModelGroup) => void;
   changeStrategy: (group: GroupRow, strategy: RoutingStrategy) => void;
   reorderGroupMembers: (
     group: GroupRow,
@@ -179,6 +182,107 @@ export function GroupsOverview({
   const thresholds = useVerificationThresholds();
   const copyModelNameLabel =
     locale === "zh-CN" ? "复制模型名称" : "Copy model name";
+
+  const topLevelIds = new Set(
+    visibleGroups.filter((group) => !group.is_route_group).map((g) => g.id),
+  );
+  const variantsByParentId = new Map<string, GroupRow[]>();
+  for (const item of visibleGroups) {
+    const parentId = item.route_group_id ?? "";
+    if (item.is_route_group && topLevelIds.has(parentId)) {
+      const list = variantsByParentId.get(parentId) ?? [];
+      list.push(item);
+      variantsByParentId.set(parentId, list);
+    }
+  }
+  const topLevelGroups = visibleGroups.filter(
+    (item) =>
+      !item.is_route_group || !topLevelIds.has(item.route_group_id ?? ""),
+  );
+
+  function renderMemberPills(group: GroupRow) {
+    if (!group.display_members.length) {
+      return (
+        <ItemDescription className="text-sm">
+          {locale === "zh-CN" ? "暂无成员" : "No members"}
+        </ItemDescription>
+      );
+    }
+    return group.display_members.map((member, index) => {
+      const channelName = member.channel_names.slice(0, 2).join(" · ") || "n/a";
+      const sourceLabel = `${channelName} · ${credentialNumberLabel(member, locale)}`;
+      const disabledChannelLabel =
+        locale === "zh-CN" ? "关联渠道已停用" : "Linked channel disabled";
+      return (
+        <div
+          key={`${member.key}::${index}`}
+          className={cn(
+            "flex min-w-0 max-w-full items-center rounded-full border bg-background",
+            member.has_disabled_channel &&
+              "border-amber-500/40 bg-amber-500/8 text-amber-900 dark:text-amber-200",
+            !member.enabled && "opacity-55",
+            cardDragging?.groupId === group.id &&
+              cardDragging.index === index &&
+              "opacity-60",
+          )}
+          title={`${sourceLabel} · ${member.model_name}${member.has_disabled_channel ? ` · ${disabledChannelLabel}` : ""}`}
+        >
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            draggable={busyId !== group.id}
+            className="h-auto min-w-0 max-w-full rounded-full rounded-r-none border-0 px-3 py-1.5 cursor-grab active:cursor-grabbing"
+            onDragStart={() =>
+              setCardDragging({
+                groupId: group.id,
+                index,
+              })
+            }
+            onDragOver={(event) => event.preventDefault()}
+            onDrop={() => {
+              if (!cardDragging || cardDragging.groupId !== group.id) return;
+              void reorderGroupMembers(group, cardDragging.index, index);
+            }}
+            onDragEnd={() => setCardDragging(null)}
+          >
+            <GripVertical data-icon="inline-start" />
+            <span className="min-w-0 truncate">{member.model_name}</span>
+            <ConfidenceBadge
+              verdict={verdicts.get(
+                verdictKey(
+                  member.protocol_config_id,
+                  member.credential_id,
+                  member.model_name,
+                ),
+              )}
+              thresholds={thresholds}
+              locale={locale}
+            />
+            <span className="min-w-0 truncate text-muted-foreground">
+              · {sourceLabel}
+            </span>
+            {member.has_disabled_channel ? (
+              <span className="inline-flex shrink-0 items-center gap-1 text-amber-700 dark:text-amber-300">
+                <AlertCircle size={13} />
+                {disabledChannelLabel}
+              </span>
+            ) : null}
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            className="mr-1 shrink-0 rounded-full text-muted-foreground hover:text-destructive"
+            disabled={busyId === group.id}
+            onClick={() => void removeGroupMember(group, member.key)}
+          >
+            <X />
+          </Button>
+        </div>
+      );
+    });
+  }
 
   async function copyGroupName(name: string) {
     try {
@@ -233,10 +337,11 @@ export function GroupsOverview({
 
         <Card className="min-h-0 overflow-hidden py-0 xl:min-h-[calc(100dvh-18rem)]">
           <CardContent className="max-h-[calc(100dvh-18rem)] overflow-y-auto px-3 py-3">
-            {isLoading || groupsIsError ? null : visibleGroups.length ? (
+            {isLoading || groupsIsError ? null : topLevelGroups.length ? (
               <ItemGroup className="gap-3">
-                {visibleGroups.map((group) => {
+                {topLevelGroups.map((group) => {
                   const GroupAvatar = getModelGroupAvatar(group.name);
+                  const variants = variantsByParentId.get(group.id) ?? [];
                   return (
                     <Item
                       key={group.id}
@@ -355,7 +460,7 @@ export function GroupsOverview({
                             />
                           )}
                         </div>
-                        {!group.is_route_group ? (
+                        {!group.is_route_group || group.items.length > 0 ? (
                           <ItemFooter
                             className="mt-3 flex flex-wrap items-center gap-2.5"
                             onClick={(event) => event.stopPropagation()}
@@ -378,121 +483,203 @@ export function GroupsOverview({
                           onClick={(event) => event.stopPropagation()}
                           onKeyDown={(event) => event.stopPropagation()}
                         >
-                          {group.is_route_group ? (
+                          {group.is_route_group && !group.items.length ? (
                             <Badge variant="outline" className="px-3 py-1.5">
                               {group.route_group_name ||
                                 group.route_group_id ||
                                 "n/a"}
                             </Badge>
-                          ) : group.display_members.length ? (
-                            group.display_members.map((member, index) => {
-                              const channelName =
-                                member.channel_names.slice(0, 2).join(" · ") ||
-                                "n/a";
-                              const sourceLabel = `${channelName} · ${credentialNumberLabel(member, locale)}`;
-                              const disabledChannelLabel =
-                                locale === "zh-CN"
-                                  ? "关联渠道已停用"
-                                  : "Linked channel disabled";
-                              return (
-                                <div
-                                  key={`${member.key}::${index}`}
-                                  className={cn(
-                                    "flex min-w-0 max-w-full items-center rounded-full border bg-background",
-                                    member.has_disabled_channel &&
-                                      "border-amber-500/40 bg-amber-500/8 text-amber-900 dark:text-amber-200",
-                                    !member.enabled && "opacity-55",
-                                    cardDragging?.groupId === group.id &&
-                                      cardDragging.index === index &&
-                                      "opacity-60",
-                                  )}
-                                  title={`${sourceLabel} · ${member.model_name}${member.has_disabled_channel ? ` · ${disabledChannelLabel}` : ""}`}
-                                >
-                                  <Button
-                                    type="button"
-                                    variant="ghost"
-                                    size="sm"
-                                    draggable={busyId !== group.id}
-                                    className="h-auto min-w-0 max-w-full rounded-full rounded-r-none border-0 px-3 py-1.5 cursor-grab active:cursor-grabbing"
-                                    onDragStart={() =>
-                                      setCardDragging({
-                                        groupId: group.id,
-                                        index,
-                                      })
-                                    }
-                                    onDragOver={(event) =>
-                                      event.preventDefault()
-                                    }
-                                    onDrop={() => {
-                                      if (
-                                        !cardDragging ||
-                                        cardDragging.groupId !== group.id
-                                      )
-                                        return;
-                                      void reorderGroupMembers(
-                                        group,
-                                        cardDragging.index,
-                                        index,
-                                      );
-                                    }}
-                                    onDragEnd={() => setCardDragging(null)}
-                                  >
-                                    <GripVertical data-icon="inline-start" />
-                                    <span className="min-w-0 truncate">
-                                      {member.model_name}
-                                    </span>
-                                    <ConfidenceBadge
-                                      verdict={verdicts.get(
-                                        verdictKey(
-                                          member.protocol_config_id,
-                                          member.credential_id,
-                                          member.model_name,
-                                        ),
-                                      )}
-                                      thresholds={thresholds}
-                                      locale={locale}
-                                    />
-                                    <span className="min-w-0 truncate text-muted-foreground">
-                                      · {sourceLabel}
-                                    </span>
-                                    {member.has_disabled_channel ? (
-                                      <span className="inline-flex shrink-0 items-center gap-1 text-amber-700 dark:text-amber-300">
-                                        <AlertCircle size={13} />
-                                        {disabledChannelLabel}
-                                      </span>
-                                    ) : null}
-                                  </Button>
-                                  <Button
-                                    type="button"
-                                    variant="ghost"
-                                    size="icon-xs"
-                                    className="mr-1 shrink-0 rounded-full text-muted-foreground hover:text-destructive"
-                                    disabled={busyId === group.id}
-                                    onClick={() =>
-                                      void removeGroupMember(group, member.key)
-                                    }
-                                  >
-                                    <X />
-                                  </Button>
-                                </div>
-                              );
-                            })
                           ) : (
-                            <ItemDescription className="text-sm">
-                              {locale === "zh-CN" ? "暂无成员" : "No members"}
-                            </ItemDescription>
+                            renderMemberPills(group)
                           )}
                         </div>
+                        {variants.length > 0 ? (
+                          <div
+                            className="mt-4 rounded-xl border border-border/80 bg-muted/30 p-3"
+                            onClick={(event) => event.stopPropagation()}
+                            onKeyDown={(event) => event.stopPropagation()}
+                          >
+                            <div className="mb-2.5 flex items-center justify-between">
+                              <span className="text-xs font-medium text-muted-foreground">
+                                {locale === "zh-CN"
+                                  ? `路由组 (${variants.length})`
+                                  : `Route groups (${variants.length})`}
+                              </span>
+                            </div>
+                            <div className="flex flex-col gap-2.5">
+                              {variants.map((variant) => {
+                                const hasCustomOrder = variant.items.length > 0;
+                                return (
+                                  <div
+                                    key={variant.id}
+                                    role="button"
+                                    tabIndex={0}
+                                    className="rounded-lg border bg-background p-3 transition hover:border-ring/50 cursor-pointer"
+                                    onClick={() => openEdit(variant)}
+                                    onKeyDown={(event) => {
+                                      if (
+                                        event.key === "Enter" ||
+                                        event.key === " "
+                                      ) {
+                                        event.preventDefault();
+                                        openEdit(variant);
+                                      }
+                                    }}
+                                  >
+                                    <div className="flex flex-wrap items-center justify-between gap-2">
+                                      <div className="flex flex-wrap items-center gap-2">
+                                        <span className="text-muted-foreground">
+                                          ↳
+                                        </span>
+                                        <span className="text-sm font-semibold text-foreground">
+                                          {variant.name}
+                                        </span>
+                                        <Button
+                                          type="button"
+                                          variant="ghost"
+                                          size="icon-xs"
+                                          aria-label={copyModelNameLabel}
+                                          className="-ml-1 text-muted-foreground hover:text-foreground"
+                                          onClick={(event) => {
+                                            event.stopPropagation();
+                                            void copyGroupName(variant.name);
+                                          }}
+                                          onKeyDown={(event) =>
+                                            event.stopPropagation()
+                                          }
+                                        >
+                                          <Copy />
+                                        </Button>
+                                        <Badge
+                                          variant="outline"
+                                          className="px-2 py-0.5 text-[11px]"
+                                        >
+                                          {hasCustomOrder
+                                            ? locale === "zh-CN"
+                                              ? "自定义排序"
+                                              : "Custom order"
+                                            : locale === "zh-CN"
+                                              ? "跟随主组"
+                                              : "Follow target"}
+                                        </Badge>
+                                        {groupRestrictsKeys(variant) ? (
+                                          <Badge
+                                            variant="outline"
+                                            className="px-2 py-0.5 text-[11px]"
+                                          >
+                                            <Lock data-icon="inline-start" />
+                                            {locale === "zh-CN"
+                                              ? `${variant.allowed_key_ids?.length ?? 0} 个密钥`
+                                              : `${variant.allowed_key_ids?.length ?? 0} keys`}
+                                          </Badge>
+                                        ) : null}
+                                      </div>
+                                      <div
+                                        className="flex flex-wrap items-center gap-2"
+                                        onClick={(event) =>
+                                          event.stopPropagation()
+                                        }
+                                        onKeyDown={(event) =>
+                                          event.stopPropagation()
+                                        }
+                                      >
+                                        {hasCustomOrder ? (
+                                          <>
+                                            <StrategyToggle
+                                              value={variant.strategy}
+                                              locale={locale}
+                                              disabled={busyId === variant.id}
+                                              size="sm"
+                                              onChange={(value) =>
+                                                void changeStrategy(
+                                                  variant,
+                                                  value,
+                                                )
+                                              }
+                                            />
+                                            <Switch
+                                              checked={isGroupEnabled(variant)}
+                                              disabled={busyId === variant.id}
+                                              onCheckedChange={(checked) =>
+                                                void toggleGroupEnabled(
+                                                  variant,
+                                                  checked,
+                                                )
+                                              }
+                                            />
+                                          </>
+                                        ) : null}
+                                        <Button
+                                          type="button"
+                                          variant="ghost"
+                                          size="sm"
+                                          className="text-destructive hover:text-destructive"
+                                          onClick={() =>
+                                            setDeleteTarget(variant)
+                                          }
+                                        >
+                                          <Trash2 data-icon="inline-start" />
+                                          {locale === "zh-CN"
+                                            ? "删除"
+                                            : "Delete"}
+                                        </Button>
+                                      </div>
+                                    </div>
+                                    <CompactPriceSummary
+                                      locale={locale}
+                                      inputPrice={
+                                        variant.input_price_per_million
+                                      }
+                                      outputPrice={
+                                        variant.output_price_per_million
+                                      }
+                                      cacheReadPrice={
+                                        variant.cache_read_price_per_million
+                                      }
+                                      cacheWritePrice={
+                                        variant.cache_write_price_per_million
+                                      }
+                                    />
+                                    {hasCustomOrder ? (
+                                      <div
+                                        className="mt-2.5 flex flex-wrap items-center gap-1.5"
+                                        onClick={(event) =>
+                                          event.stopPropagation()
+                                        }
+                                        onKeyDown={(event) =>
+                                          event.stopPropagation()
+                                        }
+                                      >
+                                        {renderMemberPills(variant)}
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        ) : null}
                       </ItemContent>
                       <ItemActions
                         className="basis-full flex-wrap justify-end self-start sm:ml-auto sm:basis-auto sm:shrink-0"
                         onClick={(event) => event.stopPropagation()}
                         onKeyDown={(event) => event.stopPropagation()}
                       >
+                        {!group.is_route_group ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => openCreateVariant(group)}
+                          >
+                            <Plus data-icon="inline-start" />
+                            {locale === "zh-CN" ? "派生组" : "Variant"}
+                          </Button>
+                        ) : null}
                         <Switch
                           checked={isGroupEnabled(group)}
                           disabled={
-                            group.is_route_group ||
+                            (group.is_route_group && !group.items.length) ||
                             busyId === group.id ||
                             !group.items.length
                           }

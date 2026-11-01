@@ -865,28 +865,30 @@ class GroupRepository:
                 if payload.route_group_id is not None
                 else entity.route_group_id
             )
-            inbound_route_group_result = await session.execute(
-                select(ModelGroupEntity.id)
-                .where(ModelGroupEntity.route_group_id == group_id)
-                .where(ModelGroupEntity.id != group_id)
-                .limit(1)
+            inbound_route_groups = (
+                (
+                    await session.execute(
+                        select(ModelGroupEntity)
+                        .where(ModelGroupEntity.route_group_id == group_id)
+                        .where(ModelGroupEntity.id != group_id)
+                    )
+                )
+                .scalars()
+                .all()
             )
-            has_inbound_route_group = (
-                inbound_route_group_result.scalar_one_or_none() is not None
-            )
+            has_inbound_route_group = bool(inbound_route_groups)
             if (
                 payload.protocols is not None
                 and has_inbound_route_group
+                and not next_route_group_id
                 and set(current_protocols) - set(next_protocols)
             ):
                 raise ValueError(
                     "Execution groups referenced by route groups cannot remove protocols"
                 )
-            if next_route_group_id and has_inbound_route_group:
-                raise ValueError(
-                    "Execution groups referenced by route groups cannot become route groups"
-                )
-            current_items = await self._load_group_items(session, [group_id])
+            current_items = await self._load_group_items(
+                session, [group_id, *[item.id for item in inbound_route_groups]]
+            )
             next_items = (
                 payload.items
                 if payload.items is not None
@@ -910,6 +912,19 @@ class GroupRepository:
                 next_items,
                 exclude_group_id=group_id,
             )
+            if route_group is not None and inbound_route_groups:
+                target_protocols = set(_parse_group_protocols(route_group))
+                for child_group in inbound_route_groups:
+                    child_protocols = _parse_group_protocols(child_group)
+                    missing = [p for p in child_protocols if p not in target_protocols]
+                    if missing:
+                        missing_str = ", ".join(p.value for p in missing)
+                        raise ValueError(
+                            f"Route target protocols must cover dependent group {child_group.name}: {missing_str}"
+                        )
+                    child_group.route_group_id = route_group.id
+                    if not current_items.get(child_group.id) and next_items:
+                        self._replace_group_items(session, child_group.id, next_items)
 
             changes = payload.model_dump(exclude_unset=True)
             for key, value in changes.items():
@@ -953,6 +968,9 @@ class GroupRepository:
             if entity.route_group_id:
                 entity.sync_filter_mode = ""
                 entity.sync_filter_query = ""
+                if "pi_config" not in changes:
+                    entity.pi_config_json = ""
+                    entity.pi_config_auto = 0
 
             if payload.items is not None or payload.protocols is not None:
                 await session.execute(
@@ -1280,17 +1298,30 @@ class GroupRepository:
             self._to_group(
                 item,
                 items_by_group.get(item.id, []),
-                prices_by_key.get(normalize_model_key(item.name)),
+                prices_by_key.get(normalize_model_key(item.name))
+                or (
+                    prices_by_key.get(
+                        normalize_model_key(
+                            route_name_by_id.get(item.route_group_id, "")
+                        )
+                    )
+                    if item.route_group_id.strip()
+                    else None
+                ),
                 route_name_by_id.get(item.route_group_id, ""),
             )
             for item in all_entities
         ]
         groups_by_id = {group.id: group for group in hydrated}
         for group in hydrated:
-            if not group.route_group_id.strip() or group.pi_config.strip():
+            if not group.route_group_id.strip():
                 continue
             target = groups_by_id.get(group.route_group_id)
-            if target is None or not target.pi_config.strip():
+            if target is None:
+                continue
+            if not group.multimodal_resolved and target.multimodal_resolved:
+                group.multimodal_resolved = dict(target.multimodal_resolved)
+            if group.pi_config.strip() or not target.pi_config.strip():
                 continue
             # Inherit the target config but keep the route group's own
             # model id/name (it is the model name clients call).

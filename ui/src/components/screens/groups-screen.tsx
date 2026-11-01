@@ -215,7 +215,7 @@ export function GroupsScreen() {
           body: JSON.stringify(candidatePayload),
         },
       ),
-    enabled: dialogOpen && !form.route_group_id && form.protocols.length > 0,
+    enabled: dialogOpen && form.protocols.length > 0,
   });
 
   const channelMap = useMemo(() => {
@@ -260,13 +260,15 @@ export function GroupsScreen() {
     () =>
       (groups ?? []).map((group) => {
         const isRouteGroup = Boolean(group.route_group_id);
+        const hasOwnItems = group.items.length > 0;
+        const delegatesToParent = isRouteGroup && !hasOwnItems;
         const items = group.items
           .slice()
           .sort((a, b) => a.priority - b.priority);
-        const displayMembers = isRouteGroup
+        const displayMembers = delegatesToParent
           ? []
           : buildGroupDisplayMembers(items, channelMap);
-        const channelNames = isRouteGroup
+        const channelNames = delegatesToParent
           ? [group.route_group_name || group.route_group_id || ""]
           : [
               ...new Set(
@@ -283,11 +285,11 @@ export function GroupsScreen() {
         return {
           ...group,
           items,
-          member_count: isRouteGroup ? 1 : displayMembers.length,
-          enabled_member_count: isRouteGroup
+          member_count: delegatesToParent ? 1 : displayMembers.length,
+          enabled_member_count: delegatesToParent
             ? 1
             : displayMembers.filter((member) => member.enabled).length,
-          disabled_channel_member_count: isRouteGroup
+          disabled_channel_member_count: delegatesToParent
             ? 0
             : displayMembers.filter((member) => member.has_disabled_channel)
                 .length,
@@ -332,27 +334,45 @@ export function GroupsScreen() {
 
   const visibleGroups = useMemo<GroupRow[]>(() => {
     const keyword = search.trim().toLowerCase();
-    const filtered = groupRows.filter((group) => {
+    const directMatchedIds = new Set<string>();
+    const parentIdsToInclude = new Set<string>();
+    for (const group of groupRows) {
       if (
         effectiveSelectedModelPrefix !== "all" &&
-        getModelFamilyKey(group.name) !== effectiveSelectedModelPrefix
+        getModelFamilyKey(group.name) !== effectiveSelectedModelPrefix &&
+        getModelFamilyKey(group.route_group_name || group.name) !==
+          effectiveSelectedModelPrefix
       )
-        return false;
+        continue;
       if (protocolFilter !== "all" && !group.protocols.includes(protocolFilter))
-        return false;
+        continue;
       if (strategyFilter !== "all" && group.strategy !== strategyFilter)
-        return false;
-      if (!keyword) return true;
-      const haystack = [
-        group.name,
-        group.channel_summary,
-        ...group.channel_names,
-        ...group.items.map((item) => item.model_name),
-      ]
-        .join(" ")
-        .toLowerCase();
-      return haystack.includes(keyword);
-    });
+        continue;
+      if (keyword) {
+        const haystack = [
+          group.name,
+          group.route_group_name,
+          group.channel_summary,
+          ...group.channel_names,
+          ...group.items.map((item) => item.model_name),
+        ]
+          .join(" ")
+          .toLowerCase();
+        if (!haystack.includes(keyword)) continue;
+      }
+      directMatchedIds.add(group.id);
+      const parentId = group.route_group_id ?? "";
+      if (parentId) {
+        parentIdsToInclude.add(parentId);
+      }
+    }
+    const filtered = groupRows.filter(
+      (group) =>
+        directMatchedIds.has(group.id) ||
+        parentIdsToInclude.has(group.id) ||
+        (Boolean(group.route_group_id) &&
+          directMatchedIds.has(group.route_group_id ?? "")),
+    );
 
     return [...filtered].sort((left, right) => {
       if (sortBy === "name-asc")
@@ -630,6 +650,31 @@ export function GroupsScreen() {
     setDialogOpen(true);
   }
 
+  function openCreateVariant(parent: ModelGroup) {
+    setEditingId(null);
+    setForm({
+      ...emptyForm,
+      name: `${parent.name}-`,
+      protocols: [...parent.protocols],
+      strategy: parent.strategy,
+      route_group_id: parent.id,
+      input_price_per_million: String(parent.input_price_per_million ?? 0),
+      output_price_per_million: String(parent.output_price_per_million ?? 0),
+      cache_read_price_per_million: String(
+        parent.cache_read_price_per_million ?? 0,
+      ),
+      cache_write_price_per_million: String(
+        parent.cache_write_price_per_million ?? 0,
+      ),
+      context_window:
+        parent.context_window == null ? "" : String(parent.context_window),
+    });
+    setCandidateSearch(parent.name);
+    setCandidateSearchMode("contains");
+    setCandidateSearchUsesGroupName(false);
+    setDialogOpen(true);
+  }
+
   function openEdit(item: ModelGroup) {
     const hasSavedFilter = Boolean(
       item.sync_filter_mode && item.sync_filter_query.trim(),
@@ -736,7 +781,7 @@ export function GroupsScreen() {
       );
       return;
     }
-    if (!form.route_group_id && invalidSelectedMemberCount > 0) {
+    if (invalidSelectedMemberCount > 0) {
       toast.error(
         locale === "zh-CN"
           ? "请先移除不适用于所选协议的失效节点"
@@ -745,11 +790,9 @@ export function GroupsScreen() {
       return;
     }
     try {
+      const pricePayload = parsePriceForm(form);
       const savedGroup = await saveGroup(form, editingId);
-      if (!savedGroup.route_group_id) {
-        const pricePayload = parsePriceForm(form);
-        await saveGroupPrice(savedGroup.name, pricePayload);
-      }
+      await saveGroupPrice(savedGroup.name, pricePayload);
       toast.success(
         editingId
           ? locale === "zh-CN"
@@ -1187,7 +1230,11 @@ export function GroupsScreen() {
     fromIndex: number,
     toIndex: number,
   ) {
-    if (group.is_route_group || fromIndex === toIndex || busyId === group.id) {
+    if (
+      (group.is_route_group && !group.items.length) ||
+      fromIndex === toIndex ||
+      busyId === group.id
+    ) {
       return;
     }
     const nextMembers = moveItems(group.display_members, fromIndex, toIndex);
@@ -1213,7 +1260,7 @@ export function GroupsScreen() {
 
   async function changeStrategy(group: GroupRow, strategy: RoutingStrategy) {
     if (
-      group.is_route_group ||
+      (group.is_route_group && !group.items.length) ||
       busyId === group.id ||
       group.strategy === strategy
     ) {
@@ -1227,7 +1274,6 @@ export function GroupsScreen() {
 
   async function toggleGroupEnabled(group: GroupRow, enabled: boolean) {
     if (
-      group.is_route_group ||
       !group.items.length ||
       busyId === group.id ||
       isGroupEnabled(group) === enabled
@@ -1250,7 +1296,7 @@ export function GroupsScreen() {
   }
 
   async function removeGroupMember(group: GroupRow, memberKey: string) {
-    if (group.is_route_group || busyId === group.id) {
+    if ((group.is_route_group && !group.items.length) || busyId === group.id) {
       return;
     }
     const member = group.display_members.find((item) => item.key === memberKey);
@@ -1424,6 +1470,45 @@ export function GroupsScreen() {
     setExpandedChannels([]);
   }
 
+  function syncMembersFromRouteTarget() {
+    const target = (groups ?? []).find(
+      (item) => item.id === form.route_group_id,
+    );
+    if (!target) return;
+    const parentItems = toForm(target).items;
+    setForm((current) => {
+      if (current.items.length === 0) {
+        return {
+          ...current,
+          items:
+            current.strategy === "failover"
+              ? renumberFailoverItems(parentItems)
+              : parentItems,
+        };
+      }
+      const existing = new Set(current.items.map((item) => itemKey(item)));
+      const additions = parentItems.filter(
+        (item) => !existing.has(itemKey(item)),
+      );
+      const nextItems = [...current.items, ...additions];
+      return {
+        ...current,
+        items:
+          current.strategy === "failover"
+            ? renumberFailoverItems(nextItems)
+            : nextItems,
+      };
+    });
+  }
+
+  function changeRouteMemberMode(mode: "inherit" | "custom") {
+    if (mode === "inherit") {
+      setForm((current) => ({ ...current, items: [] }));
+      return;
+    }
+    syncMembersFromRouteTarget();
+  }
+
   function setAllMembersEnabled(enabled: boolean) {
     setForm((current) => ({
       ...current,
@@ -1544,6 +1629,7 @@ export function GroupsScreen() {
           routePreviewError={routePreviewError}
           refetchRoutePreview={refetchRoutePreview}
           openEdit={openEdit}
+          openCreateVariant={openCreateVariant}
           changeStrategy={changeStrategy}
           reorderGroupMembers={reorderGroupMembers}
           removeGroupMember={removeGroupMember}
@@ -1563,6 +1649,8 @@ export function GroupsScreen() {
             toggleProtocol={toggleProtocol}
             routeTargetOptions={routeTargetOptions}
             changeRouteTarget={changeRouteTarget}
+            changeRouteMemberMode={changeRouteMemberMode}
+            syncMembersFromRouteTarget={syncMembersFromRouteTarget}
             candidateSearchMode={candidateSearchMode}
             changeCandidateSearchMode={changeCandidateSearchMode}
             candidateSearch={candidateSearch}

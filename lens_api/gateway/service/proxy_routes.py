@@ -183,7 +183,11 @@ def _filtered_group_names(
 
     def has_enabled_item(group: ModelGroup) -> bool:
         target = (
-            group_by_id.get(group.route_group_id) if group.route_group_id else group
+            group
+            if group.route_group_id and group.items
+            else (
+                group_by_id.get(group.route_group_id) if group.route_group_id else group
+            )
         )
         return bool(
             target

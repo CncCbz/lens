@@ -718,14 +718,29 @@ async def _try_target(
     try:
         upstream_body = _apply_param_override(channel, upstream_body)
         match_rules = []
-        if plan.requested_group is not None and plan.requested_group.route_group_id:
-            match_rules.extend(
-                rule.model_dump() for rule in plan.requested_group.match_overrides
-            )
-        if plan.resolved_group is not None:
-            match_rules.extend(
-                rule.model_dump() for rule in plan.resolved_group.match_overrides
-            )
+        variant_has_custom_items = bool(
+            plan.requested_group is not None
+            and plan.requested_group.route_group_id
+            and plan.requested_group.items
+        )
+        if variant_has_custom_items:
+            if plan.resolved_group is not None:
+                match_rules.extend(
+                    rule.model_dump() for rule in plan.resolved_group.match_overrides
+                )
+            if plan.requested_group is not None:
+                match_rules.extend(
+                    rule.model_dump() for rule in plan.requested_group.match_overrides
+                )
+        else:
+            if plan.requested_group is not None and plan.requested_group.route_group_id:
+                match_rules.extend(
+                    rule.model_dump() for rule in plan.requested_group.match_overrides
+                )
+            if plan.resolved_group is not None:
+                match_rules.extend(
+                    rule.model_dump() for rule in plan.resolved_group.match_overrides
+                )
         try:
             upstream_body, match_headers = apply_match_overrides(
                 match_rules,
@@ -846,7 +861,7 @@ async def _try_target(
             credential_id=target.credential_id,
             probe_owner=target.probe_owner,
             model_name=target.model_name,
-            pricing_group_name=plan.resolved_group_name,
+            pricing_group_name=plan.requested_group_name or plan.resolved_group_name,
             client_protocol=protocol,
             log_body_enabled=log_response_body,
             log_response_headers_enabled=log_response_headers,

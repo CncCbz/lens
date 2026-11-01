@@ -37,6 +37,22 @@ class ModelPriceRepository:
                 ModelPriceEntity, normalize_model_key(model_name)
             )
             if entity is None:
+                route_group_id = (
+                    await session.execute(
+                        select(ModelGroupEntity.route_group_id)
+                        .where(ModelGroupEntity.name == model_name.strip())
+                        .limit(1)
+                    )
+                ).scalar_one_or_none()
+                if route_group_id and str(route_group_id).strip():
+                    target_group = await session.get(
+                        ModelGroupEntity, str(route_group_id).strip()
+                    )
+                    if target_group is not None:
+                        entity = await session.get(
+                            ModelPriceEntity, normalize_model_key(target_group.name)
+                        )
+            if entity is None:
                 return 0.0, 0.0, 0.0
 
         total_input_tokens = max(input_tokens, 0)
@@ -77,9 +93,9 @@ class ModelPriceRepository:
             )
             group_rows = (
                 await session.execute(
-                    select(ModelGroupEntity.name, ModelGroupEntity.protocols_json)
-                    .where(ModelGroupEntity.route_group_id == "")
-                    .order_by(ModelGroupEntity.name.asc())
+                    select(
+                        ModelGroupEntity.name, ModelGroupEntity.protocols_json
+                    ).order_by(ModelGroupEntity.name.asc())
                 )
             ).all()
             last_synced_at = await session.get(
@@ -162,7 +178,7 @@ class ModelPriceRepository:
                     select(
                         ModelGroupEntity.name,
                         ModelGroupEntity.protocols_json,
-                    ).where(ModelGroupEntity.route_group_id == "")
+                    )
                 )
             ).all()
             matched_groups = [

@@ -40,6 +40,86 @@ def _normalize_dump_group_items(data: object) -> object:
     return data
 
 
+def _extract_variant_base_name(name: str) -> str:
+    trimmed = name.strip()
+    lower = trimmed.lower()
+    for suffix in ("-free", "-paid"):
+        if lower.endswith(suffix) and len(trimmed) > len(suffix):
+            return trimmed[: -len(suffix)].strip()
+    return ""
+
+
+def _normalize_dump_route_variants(data: object) -> object:
+    """Migrate standalone *-free / *-paid groups into route variants of their parent group."""
+    if not isinstance(data, dict):
+        return data
+    groups = data.get("groups")
+    if not isinstance(groups, list):
+        return data
+
+    dict_groups = [g for g in groups if isinstance(g, dict)]
+    exec_by_name: dict[str, dict] = {}
+    groups_by_id: dict[str, dict] = {}
+    for group in dict_groups:
+        gid = str(group.get("id") or "").strip()
+        gname = str(group.get("name") or "").strip()
+        route_gid = str(group.get("route_group_id") or "").strip()
+        if gid:
+            groups_by_id[gid] = group
+        if gname and not route_gid:
+            exec_by_name[gname.lower()] = group
+
+    reparented: dict[str, dict] = {}
+    for group in dict_groups:
+        route_gid = str(group.get("route_group_id") or "").strip()
+        if route_gid:
+            continue
+        gname = str(group.get("name") or "").strip()
+        base_name = _extract_variant_base_name(gname)
+        if not base_name:
+            continue
+        parent = exec_by_name.get(base_name.lower())
+        if parent is None or parent is group:
+            continue
+        parent_id = str(parent.get("id") or "").strip()
+        if not parent_id:
+            continue
+        parent_protocols = set(parent.get("protocols") or [])
+        group_protocols = set(group.get("protocols") or [])
+        if not group_protocols.issubset(parent_protocols):
+            continue
+        group["route_group_id"] = parent_id
+        group["route_group_name"] = str(parent.get("name") or "")
+        group["pi_config"] = ""
+        group["pi_config_auto"] = False
+        group["sync_filter_mode"] = ""
+        group["sync_filter_query"] = ""
+        gid = str(group.get("id") or "").strip()
+        if gid:
+            reparented[gid] = parent
+
+    for group in dict_groups:
+        route_gid = str(group.get("route_group_id") or "").strip()
+        if not route_gid or route_gid not in reparented:
+            continue
+        intermediate = groups_by_id.get(route_gid)
+        parent = reparented[route_gid]
+        group["route_group_id"] = str(parent.get("id") or "")
+        group["route_group_name"] = str(parent.get("name") or "")
+        if intermediate is not None:
+            if not group.get("items") and intermediate.get("items"):
+                group["items"] = [
+                    dict(item) if isinstance(item, dict) else item
+                    for item in intermediate["items"]
+                ]
+            if not group.get("match_overrides") and intermediate.get("match_overrides"):
+                group["match_overrides"] = [
+                    dict(rule) if isinstance(rule, dict) else rule
+                    for rule in intermediate["match_overrides"]
+                ]
+    return data
+
+
 def _normalize_dump_credential_owners(data: object) -> object:
     if not isinstance(data, dict):
         return data
@@ -110,6 +190,7 @@ class BackupExportImportMixin:
         except json.JSONDecodeError as exc:
             raise ValueError("Invalid backup file") from exc
         data = _normalize_dump_group_items(data)
+        data = _normalize_dump_route_variants(data)
         data = _normalize_dump_credential_owners(data)
         try:
             return ConfigBackupDump.model_validate(data)

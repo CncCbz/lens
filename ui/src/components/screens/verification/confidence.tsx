@@ -36,6 +36,49 @@ export function matchState(matches: boolean | null | undefined): MatchState {
   return "unknown";
 }
 
+const VARIANT_SUFFIX_RE =
+  /-(?:free|paid|online|latest|high|medium|low|minimal|xhigh|max|\d{4}|\d{8})$/i;
+
+function normalizeModelTokens(value: string): Set<string> {
+  const raw = value.trim().toLowerCase();
+  if (!raw) return new Set();
+  const seeds = new Set<string>([raw]);
+  if (raw.includes("/")) {
+    const tail = raw.slice(raw.lastIndexOf("/") + 1).trim();
+    if (tail) seeds.add(tail);
+  }
+  const expanded = new Set<string>();
+  for (const seed of seeds) {
+    let current = seed;
+    while (current) {
+      expanded.add(current);
+      const stripped = current
+        .replace(VARIANT_SUFFIX_RE, "")
+        .replace(/^[\s._-]+|[\s._-]+$/g, "");
+      if (!stripped || stripped === current) break;
+      current = stripped;
+    }
+  }
+  const tokens = new Set<string>();
+  for (const item of expanded) {
+    tokens.add(item);
+    const canonical = item.replace(/[\s._-]+/g, "-").replace(/^-+|-+$/g, "");
+    if (canonical) tokens.add(canonical);
+  }
+  return tokens;
+}
+
+function modelsMatch(claimed: string, ...candidates: string[]): boolean {
+  const claimedTokens = normalizeModelTokens(claimed);
+  if (claimedTokens.size === 0) return false;
+  for (const candidate of candidates) {
+    for (const token of normalizeModelTokens(candidate)) {
+      if (claimedTokens.has(token)) return true;
+    }
+  }
+  return false;
+}
+
 /**
  * Rows written before the comparison existed have no `matches_expected` but do
  * carry both names, so derive the answer rather than showing a blank verdict.
@@ -56,7 +99,7 @@ function resolveMatch(verdict: LatestVerdict | undefined): MatchState {
   ).trim();
   const claimed = (verdict.expected_model || verdict.model_name || "").trim();
   if (!identified || !claimed) return "unknown";
-  return identified.toLowerCase() === claimed.toLowerCase()
+  return modelsMatch(claimed, verdict.prediction, verdict.prediction_name)
     ? "match"
     : "mismatch";
 }
@@ -326,6 +369,7 @@ export function useLatestVerdicts(): Map<string, LatestVerdict> {
           decision: item.decision,
           prediction: item.prediction,
           prediction_name: item.prediction_name,
+          expected_model: item.expected_model,
           model_name: item.model_name,
           expected_probability: item.expected_probability ?? null,
           matches_expected: item.matches_expected ?? null,

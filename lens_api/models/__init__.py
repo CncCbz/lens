@@ -1434,6 +1434,7 @@ class ModelVerificationRun(StrictBaseModel):
 
 class ModelVerificationLatest(StrictBaseModel):
     model_name: str
+    expected_model: str = ""
     protocol_config_id: str
     credential_id: str
     channel_id: str

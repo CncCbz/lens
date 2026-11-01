@@ -407,9 +407,12 @@ export function itemKey(
 }
 
 export function isGroupEnabled(
-  group: Pick<GroupRow, "enabled_member_count" | "is_route_group">,
+  group: Pick<GroupRow, "enabled_member_count" | "is_route_group" | "items">,
 ) {
-  return group.is_route_group || group.enabled_member_count > 0;
+  return (
+    (group.is_route_group && group.items.length === 0) ||
+    group.enabled_member_count > 0
+  );
 }
 
 export function moveItems<T>(items: T[], fromIndex: number, toIndex: number) {

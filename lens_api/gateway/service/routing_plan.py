@@ -62,6 +62,11 @@ async def _resolve_routing_plan(
                 f"supported={supported}"
             )
     channel_map = {channel.id: channel for channel in channels}
+    execution_group = (
+        matched_group
+        if matched_group.route_group_id.strip() and matched_group.items
+        else resolved_group
+    )
     route_targets = [
         RouteTarget(
             channel=channel_map[item.channel_id],
@@ -71,14 +76,14 @@ async def _resolve_routing_plan(
             priority=item.priority,
             weight=item.weight,
         )
-        for item in resolved_group.items
+        for item in execution_group.items
         if item.enabled
         and item.channel_id in channel_map
         and can_reach_protocol(channel_map[item.channel_id].protocol, protocol)
     ]
     if not route_targets:
         raise LookupError(
-            f"Model group {resolved_group.name} has no enabled route targets "
+            f"Model group {execution_group.name} has no enabled route targets "
             f"for protocol={protocol.value}; requested={requested_model}"
         )
     return RoutingPlan(
@@ -86,10 +91,10 @@ async def _resolve_routing_plan(
         resolved_group_name=resolved_group.name,
         requested_group=matched_group,
         resolved_group=resolved_group,
-        strategy=resolved_group.strategy,
+        strategy=execution_group.strategy,
         route_targets=route_targets,
         use_model_matching=False,
-        cursor_key=f"{protocol.value}:{resolved_group.id}",
+        cursor_key=f"{protocol.value}:{execution_group.id}",
     )
 
 

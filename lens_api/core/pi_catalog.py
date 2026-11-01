@@ -561,8 +561,12 @@ def collect_group_models(
             target = groups_by_id.get(route_group_id)
             if target is None:
                 continue
+        items_source = (
+            group if route_group_id and getattr(group, "items", []) else target
+        )
         if not any(
-            getattr(item, "enabled", False) for item in getattr(target, "items", [])
+            getattr(item, "enabled", False)
+            for item in getattr(items_source, "items", [])
         ):
             # Only groups with at least one enabled channel are exported.
             continue
