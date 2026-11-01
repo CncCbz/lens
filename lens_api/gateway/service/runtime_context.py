@@ -430,6 +430,14 @@ class AppState:
         runtime = await self.settings_repo.get_runtime_settings()
         batch_size = int(runtime["verification_batch_size"])
         count = int(runtime["verification_challenge_count"])
+        concurrency = max(int(runtime.get("verification_concurrency") or 2), 1)
+        timeout_seconds = max(
+            float(runtime.get("verification_timeout_seconds") or 90.0), 15.0
+        )
+        selected_models = runtime.get("verification_selected_models")
+        selected_set = (
+            set(selected_models) if isinstance(selected_models, list) else None
+        )
         effort = str(runtime["verification_reasoning_effort"])
         last_checked = await self.verification_store.last_checked_at()
 
@@ -441,7 +449,7 @@ class AppState:
             for item in group.items
             if item.enabled
         }
-        pending: list[tuple[datetime, dict[str, str]]] = []
+        pending: list[tuple[datetime, dict[str, str], str, str]] = []
         for site in await self.channel_store.list_sites():
             for protocol in site.protocols:
                 if not protocol.enabled:
@@ -449,14 +457,24 @@ class AppState:
                 for model in protocol.models:
                     if not model.enabled:
                         continue
-                    channel_id = compose_runtime_channel_id(
-                        protocol.id, model.protocol or ProtocolKind.OPENAI_CHAT
-                    )
+                    protocol_kind = model.protocol or ProtocolKind.OPENAI_CHAT
+                    channel_id = compose_runtime_channel_id(protocol.id, protocol_kind)
                     if (
                         channel_id,
                         model.credential_id,
                         model.model_name,
                     ) not in routed:
+                        continue
+                    target_key = (
+                        f"{protocol.id}|{model.credential_id}|{model.model_name}"
+                    )
+                    runtime_target_key = (
+                        f"{channel_id}|{model.credential_id}|{model.model_name}"
+                    )
+                    if selected_set is not None and (
+                        target_key not in selected_set
+                        and runtime_target_key not in selected_set
+                    ):
                         continue
                     key = (
                         protocol.id,
@@ -472,25 +490,79 @@ class AppState:
                                 "credential_id": model.credential_id,
                                 "model_name": model.model_name,
                             },
+                            channel_id,
+                            protocol_kind.value,
                         )
                     )
         pending.sort(key=lambda item: item[0])
-        for _checked_at, target in pending[:batch_size]:
-            try:
-                await run_verification(
-                    ModelVerificationRequest(
-                        target=ModelVerificationTarget(**target),
-                        count=count,
-                        reasoning_effort=effort,
-                    ),
-                    trigger="scheduled",
-                )
-            except Exception as exc:
-                logger.warning(
-                    "Model verification failed for %s: %s",
-                    target["model_name"],
-                    exc,
-                )
+        batch = pending[:batch_size]
+        if not batch:
+            return
+
+        semaphore = asyncio.Semaphore(concurrency)
+
+        async def _verify_one(
+            target: dict[str, str], channel_id: str, protocol_value: str
+        ) -> None:
+            async with semaphore:
+                started = perf_counter()
+                try:
+                    await run_verification(
+                        ModelVerificationRequest(
+                            target=ModelVerificationTarget(**target),
+                            count=count,
+                            reasoning_effort=effort,
+                        ),
+                        trigger="scheduled",
+                        timeout_seconds=timeout_seconds,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Model verification failed for %s: %s",
+                        target["model_name"],
+                        exc,
+                    )
+                    # Persist the failed attempt so last_checked_at advances and
+                    # a broken or unsupported model does not block the queue head.
+                    try:
+                        await self.verification_store.save(
+                            target=target,
+                            channel_id=channel_id,
+                            protocol=protocol_value,
+                            reasoning_effort=effort,
+                            trigger="scheduled",
+                            challenge_count=count,
+                            decision="unscorable",
+                            prediction="",
+                            prediction_name="",
+                            family_prediction="",
+                            family_prediction_name="",
+                            ranking_score=None,
+                            probability=None,
+                            probability_status="",
+                            used_outputs=0,
+                            model_like=None,
+                            matches_expected=None,
+                            error_message=str(exc),
+                            candidates=[],
+                            samples=[],
+                            detector_built_at="",
+                            request_id="",
+                            duration_ms=int((perf_counter() - started) * 1000),
+                        )
+                    except Exception as save_exc:
+                        logger.warning(
+                            "Failed to record verification failure for %s: %s",
+                            target["model_name"],
+                            save_exc,
+                        )
+
+        await asyncio.gather(
+            *(
+                _verify_one(target, channel_id, protocol_value)
+                for _checked_at, target, channel_id, protocol_value in batch
+            )
+        )
 
     async def _sync_model_prices(self) -> None:
         from .tasks import _sync_group_prices

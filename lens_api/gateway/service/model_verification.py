@@ -43,6 +43,8 @@ _SAMPLE_STATES = frozenset({"complete", "truncated", "failed", "cancelled"})
 _DETECTOR_LOCK = asyncio.Lock()
 _DETECTOR: Any = None
 _DETECTOR_BUILT_AT = ""
+_DETECTOR_LOADED_AT = 0.0
+_DETECTOR_TTL_SECONDS = 86_400.0
 _DETECTOR_FAILED_AT = 0.0
 _DETECTOR_RETRY_SECONDS = 300.0
 
@@ -60,14 +62,21 @@ def _verification_gateway_key() -> GatewayApiKey:
 
 
 async def _load_detector() -> tuple[Any, str]:
-    """Load the reference bank once; a failure is retried after a cooldown."""
-    global _DETECTOR, _DETECTOR_BUILT_AT, _DETECTOR_FAILED_AT
-    if _DETECTOR is not None:
+    """Load the reference bank and refresh it once per TTL window."""
+    global _DETECTOR, _DETECTOR_BUILT_AT, _DETECTOR_LOADED_AT, _DETECTOR_FAILED_AT
+    now = time.monotonic()
+    if _DETECTOR is not None and (now - _DETECTOR_LOADED_AT) < _DETECTOR_TTL_SECONDS:
         return _DETECTOR, _DETECTOR_BUILT_AT
     async with _DETECTOR_LOCK:
-        if _DETECTOR is not None:
+        now = time.monotonic()
+        if (
+            _DETECTOR is not None
+            and (now - _DETECTOR_LOADED_AT) < _DETECTOR_TTL_SECONDS
+        ):
             return _DETECTOR, _DETECTOR_BUILT_AT
-        if time.monotonic() - _DETECTOR_FAILED_AT < _DETECTOR_RETRY_SECONDS:
+        if now - _DETECTOR_FAILED_AT < _DETECTOR_RETRY_SECONDS:
+            if _DETECTOR is not None:
+                return _DETECTOR, _DETECTOR_BUILT_AT
             raise RuntimeError("The reference bank is unavailable; retry later")
         try:
             import lmfpd
@@ -82,9 +91,12 @@ async def _load_detector() -> tuple[Any, str]:
         except Exception as exc:
             _DETECTOR_FAILED_AT = time.monotonic()
             logger.warning("Failed to load the verification reference bank: %s", exc)
+            if _DETECTOR is not None:
+                return _DETECTOR, _DETECTOR_BUILT_AT
             raise RuntimeError(f"Failed to load the reference bank: {exc}") from exc
         _DETECTOR = detector
         _DETECTOR_BUILT_AT = str(getattr(detector, "built_at", ""))
+        _DETECTOR_LOADED_AT = time.monotonic()
         return _DETECTOR, _DETECTOR_BUILT_AT
 
 
@@ -422,7 +434,7 @@ async def _group_for_channel(channel_id: str, target: dict[str, str]) -> ModelGr
     raise LookupError("No model group routes to the selected channel and model")
 
 
-def _wire_effort(group: ModelGroup, level: str) -> str:
+def _wire_effort(group: ModelGroup, level: str, *, strict_level: bool = True) -> str:
     """Translate a level into the spelling the group declares for this model.
 
     ``thinkingLevelMap`` pins each level: a value is the wire spelling, null
@@ -449,6 +461,14 @@ def _wire_effort(group: ModelGroup, level: str) -> str:
         return normalized
     wire = mapping.get(normalized)
     if wire is None:
+        if not strict_level:
+            off = mapping.get("off")
+            if isinstance(off, str) and off.strip():
+                return off.strip()
+            for candidate in mapping.values():
+                if isinstance(candidate, str) and candidate.strip():
+                    return candidate.strip()
+            return ""
         raise ValueError(
             f"Model group {group.name} does not support thinking level {normalized}"
         )
@@ -505,16 +525,32 @@ async def _probe_until_scorable(
 async def run_verification(
     payload: ModelVerificationRequest,
     trigger: str = "manual",
+    timeout_seconds: float | None = None,
 ) -> ModelVerificationResult:
     target = payload.target.model_dump()
     started = time.perf_counter()
     protocol, channel_id, group = await _verification_protocol(target)
-    wire_effort = _wire_effort(group, payload.reasoning_effort)
+    wire_effort = _wire_effort(
+        group,
+        payload.reasoning_effort,
+        strict_level=(trigger != "scheduled"),
+    )
     if protocol not in SUPPORTED_PROTOCOLS:
         raise ValueError(
             f"Protocol {protocol.value} cannot be verified; "
             "only text protocols return a fingerprint"
         )
+
+    effective_timeout = timeout_seconds
+    if effective_timeout is None:
+        try:
+            runtime = await app_state.settings_repo.get_runtime_settings()
+            effective_timeout = float(
+                runtime.get("verification_timeout_seconds") or 90.0
+            )
+        except Exception:
+            effective_timeout = 90.0
+    effective_timeout = max(float(effective_timeout), 5.0)
 
     detector, built_at = await _load_detector()
     challenges = _generate_challenges(payload.count)
@@ -523,8 +559,8 @@ async def run_verification(
         model_name=target["model_name"],
         credential_id=target["credential_id"],
     )
-    probes = await asyncio.gather(
-        *(
+    probe_tasks = [
+        asyncio.create_task(
             _probe_until_scorable(
                 protocol=protocol,
                 target=forced,
@@ -532,9 +568,50 @@ async def run_verification(
                 challenge=challenge,
                 reasoning_effort=wire_effort,
             )
-            for challenge in challenges
         )
+        for challenge in challenges
+    ]
+    done_tasks, pending_tasks = await asyncio.wait(
+        probe_tasks, timeout=effective_timeout
     )
+    if pending_tasks:
+        for task in pending_tasks:
+            task.cancel()
+        await asyncio.gather(*pending_tasks, return_exceptions=True)
+
+    probes: list[tuple[ModelVerificationSample, str, str]] = []
+    timed_out_count = 0
+    for challenge, task in zip(challenges, probe_tasks):
+        if task in done_tasks and not task.cancelled():
+            exc = task.exception()
+            if exc is None:
+                probes.append(task.result())
+                continue
+            probes.append(
+                (
+                    ModelVerificationSample(
+                        state="failed",
+                        expected_count=int(challenge["expected_count"]),
+                        error=f"{type(exc).__name__}: {exc}",
+                    ),
+                    "",
+                    "",
+                )
+            )
+        else:
+            timed_out_count += 1
+            probes.append(
+                (
+                    ModelVerificationSample(
+                        state="failed",
+                        expected_count=int(challenge["expected_count"]),
+                        error=f"Timed out after {int(effective_timeout)}s",
+                    ),
+                    "",
+                    "",
+                )
+            )
+
     samples = [sample for sample, _text, _rid in probes]
     texts = [text for _sample, text, _rid in probes]
     request_id = next((rid for _s, _t, rid in probes if rid), "")
@@ -595,6 +672,8 @@ async def run_verification(
                 reason = str(evidence.get("reason") or "")
             if decision in {"unscorable", "not_model"} and reason:
                 error_message = reason
+    elif timed_out_count > 0:
+        error_message = f"Verification timed out after {int(effective_timeout)}s"
     else:
         error_message = "No valid answers; every challenge failed"
 

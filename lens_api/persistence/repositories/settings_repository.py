@@ -44,7 +44,10 @@ from ..shared import (
     SETTING_TIME_ZONE,
     SETTING_VERIFICATION_BATCH_SIZE,
     SETTING_VERIFICATION_CHALLENGE_COUNT,
+    SETTING_VERIFICATION_CONCURRENCY,
     SETTING_VERIFICATION_REASONING_EFFORT,
+    SETTING_VERIFICATION_SELECTED_MODELS,
+    SETTING_VERIFICATION_TIMEOUT_SECONDS,
     SETTING_VERIFICATION_TRUST_THRESHOLD,
     SETTING_VERIFICATION_WARN_THRESHOLD,
     SettingEntity,
@@ -95,6 +98,9 @@ class SettingsRepository:
         router_error_policy_config = cloned.get("router_error_policy_config")
         if isinstance(router_error_policy_config, dict):
             cloned["router_error_policy_config"] = deepcopy(router_error_policy_config)
+        selected_models = cloned.get("verification_selected_models")
+        if isinstance(selected_models, list):
+            cloned["verification_selected_models"] = list(selected_models)
         return cloned
 
     @staticmethod
@@ -264,6 +270,27 @@ class SettingsRepository:
                 ),
                 3,
             ),
+            "verification_concurrency": min(
+                max(
+                    self._parse_int(
+                        mapping.get(SETTING_VERIFICATION_CONCURRENCY), default=2
+                    ),
+                    1,
+                ),
+                10,
+            ),
+            "verification_timeout_seconds": min(
+                max(
+                    self._parse_int(
+                        mapping.get(SETTING_VERIFICATION_TIMEOUT_SECONDS), default=90
+                    ),
+                    15,
+                ),
+                600,
+            ),
+            "verification_selected_models": self._parse_selected_models(
+                mapping.get(SETTING_VERIFICATION_SELECTED_MODELS)
+            ),
             "verification_reasoning_effort": mapping.get(
                 SETTING_VERIFICATION_REASONING_EFFORT, "none"
             ).strip(),
@@ -288,6 +315,28 @@ class SettingsRepository:
         except (TypeError, ValueError):
             return default
         return min(max(value, 0), 100)
+
+    @staticmethod
+    def _parse_selected_models(raw: str | None) -> list[str] | None:
+        if raw is None:
+            return None
+        text = raw.strip()
+        if not text:
+            return None
+        try:
+            parsed = json.loads(text)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return None
+        if not isinstance(parsed, list):
+            return None
+        result: list[str] = []
+        seen: set[str] = set()
+        for item in parsed:
+            value = str(item or "").strip()
+            if value and value not in seen:
+                seen.add(value)
+                result.append(value)
+        return result
 
     async def get_branding_settings(self) -> dict[str, str]:
         runtime = await self.get_runtime_settings()
