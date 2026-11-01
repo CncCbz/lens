@@ -25,6 +25,7 @@ from .runtime_context import (
     RequestLogDetail,
     RequestLogPage,
     RequestLogSortMode,
+    RequestLogSource,
     RequestLogStatusFilter,
     Response,
     RoutePreviewRequest,
@@ -532,6 +533,7 @@ async def request_log_page(
     protocol: ProtocolKind | None = None,
     channel: str | None = None,
     keyword: str | None = None,
+    source: RequestLogSource | None = None,
     sort: RequestLogSortMode = RequestLogSortMode.LATEST,
     _: Any = Depends(get_current_admin),
 ) -> RequestLogPage:
@@ -544,6 +546,7 @@ async def request_log_page(
         protocol=protocol,
         channel=channel,
         keyword=keyword,
+        source=source,
         sort=sort,
     )
 

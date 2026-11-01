@@ -211,6 +211,9 @@ class _GatewayStreamingResponse(StreamingResponse):
         await self._finalize_stream(background)
 
     async def _finalize_stream(self, background: BackgroundTask | None) -> None:
+        # Start the terminal log write first: closing the iterator below can be
+        # interrupted by a cancellation, and the row must not stay "connecting".
+        log_task = asyncio.create_task(background()) if background is not None else None
         body_iterator = self.body_iterator
         close_iterator = getattr(body_iterator, "aclose", None)
         if close_iterator is not None:
@@ -225,8 +228,8 @@ class _GatewayStreamingResponse(StreamingResponse):
             await _close_stream_resources(self._capture)
         except Exception:
             logger.warning("Failed to close upstream stream resources", exc_info=True)
-        if background is not None:
-            await background()
+        if log_task is not None:
+            await asyncio.shield(log_task)
 
 
 async def _build_stream_result(

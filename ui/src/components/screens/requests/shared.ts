@@ -24,6 +24,7 @@ export type {
   SelectedModelPrefix,
 } from "@/lib/model-prefix";
 export type StatusFilter = "all" | "running" | "success" | "failed";
+export type SourceFilter = "all" | "verification" | "playground" | "api";
 export type SortMode = "latest" | "cost" | "latency" | "tokens";
 export type JsonLike =
   null | boolean | number | string | JsonLike[] | { [key: string]: JsonLike };

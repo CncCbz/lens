@@ -16,6 +16,7 @@ from ..shared import (
     RequestLogItem,
     RequestLogPage,
     RequestLogSortMode,
+    RequestLogSource,
     RequestLogStatusFilter,
     SiteChannelHealthBucket,
     SiteChannelRuntimeSummary,
@@ -48,6 +49,7 @@ class RequestLogReadMixin:
         protocol: ProtocolKind | None = None,
         channel: str | None = None,
         keyword: str | None = None,
+        source: RequestLogSource | None = None,
         sort: RequestLogSortMode = RequestLogSortMode.LATEST,
     ) -> RequestLogPage:
         time_zone = self._runtime_time_zone(
@@ -98,6 +100,7 @@ class RequestLogReadMixin:
                 protocol=protocol,
                 channel=channel,
                 keyword=keyword,
+                source=source,
             )
             items_stmt = self._apply_request_log_sort(items_stmt, sort=sort)
             items_stmt = items_stmt.offset(max(offset, 0)).limit(max(limit, 0))
@@ -115,6 +118,7 @@ class RequestLogReadMixin:
                 protocol,
                 channel,
                 keyword,
+                source,
             )
             now_mono = time.monotonic()
             cached = self._log_page_aux_cache.get(aux_key)
@@ -138,6 +142,7 @@ class RequestLogReadMixin:
                     protocol=protocol,
                     channel=channel,
                     keyword=keyword,
+                    source=source,
                 )
 
                 channel_label_expr = func.coalesce(
@@ -162,6 +167,7 @@ class RequestLogReadMixin:
                     status_filter=status_filter,
                     protocol=protocol,
                     keyword=keyword,
+                    source=source,
                 )
 
                 gateway_key_stmt = (
@@ -178,6 +184,7 @@ class RequestLogReadMixin:
                     protocol=protocol,
                     channel=channel,
                     keyword=keyword,
+                    source=source,
                 )
 
                 model_name_stmt = (
@@ -198,6 +205,7 @@ class RequestLogReadMixin:
                     protocol=protocol,
                     channel=channel,
                     keyword=keyword,
+                    source=source,
                 )
 
                 total = await session.scalar(total_stmt)

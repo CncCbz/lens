@@ -244,6 +244,10 @@ def _describe_stream_capture_issue(
     capture: StreamCapture | None,
     raw_content: str | None,
 ) -> str | None:
+    if capture is not None and capture.verification_cancelled:
+        # A verification timeout is the whole story; the dropped stream is not
+        # a separate upstream problem worth reporting.
+        return capture.errors[-1] if capture.errors else "verification cancelled"
     issues: list[str] = []
 
     client_disconnect_after_chat_finish = (

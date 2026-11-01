@@ -5,6 +5,7 @@ import json
 import logging
 import re
 from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
@@ -97,7 +98,7 @@ from ...models import (
     RequestLogLifecycleStatus,
     RequestLogPage,
     RequestLogSortMode,
-    RequestLogStatusFilter,
+    RequestLogSource,
     RequestLogStatusFilter,
     RoutePreviewRequest,
     RoutePreviewResponse,
@@ -157,6 +158,7 @@ from ...persistence.shared import (
     SETTING_SITE_NAME,
     SETTING_TIME_ZONE,
     SETTING_ROUTER_ERROR_POLICY_CONFIG,
+    VERIFICATION_USER_AGENT_PREFIX,
 )
 from ...persistence.repositories import (
     GatewayApiKeyRepository,
@@ -210,6 +212,12 @@ GENERIC_USER_AGENT_TOKENS = (
     "aiohttp",
     "httpcore",
     "urllib",
+)
+
+# Set while the model verifier drives an internal gateway request. A cancelled
+# stream then reports a verification timeout instead of a client disconnect.
+verification_call_context: ContextVar[float | None] = ContextVar(
+    "verification_call", default=None
 )
 
 ANTHROPIC_FORWARD_HEADER_PREFIXES = (
@@ -931,6 +939,7 @@ class StreamCapture:
     probe_owner: object | None = None
     route_health_recorded: bool = False
     saw_response_completed: bool = False
+    verification_cancelled: bool = False
 
 
 app_state = AppState()

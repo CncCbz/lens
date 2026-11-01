@@ -67,6 +67,7 @@ from ..models import (
     RequestLogLifecycleStatus,
     RequestLogPage,
     RequestLogSortMode,
+    RequestLogSource,
     RequestLogStatusFilter,
     SettingItem,
     SiteChannelHealthBucket,
@@ -262,6 +263,9 @@ REQUEST_LOG_TERMINAL_STATUSES = (
     RequestLogLifecycleStatus.SUCCEEDED.value,
     RequestLogLifecycleStatus.FAILED.value,
 )
+# The verifier sends this user agent; the playground uses this gateway key.
+VERIFICATION_USER_AGENT_PREFIX = "Lens-Verification/"
+PLAYGROUND_GATEWAY_KEY = "playground"
 REQUEST_LOG_MODEL_FAMILY_PREFIXES: dict[str, tuple[str, ...]] = {
     "openai": ("gpt-", "o1", "o3", "o4", "chatgpt", "openai", "text-embedding"),
     "claude": ("claude", "anthropic"),

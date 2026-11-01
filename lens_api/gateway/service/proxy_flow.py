@@ -51,7 +51,11 @@ from .proxy_upstream import (
     _record_target_failure,
 )
 from .request_logger import _RequestLogger, _update_request_log
-from .runtime_context import resolve_channel_error_policy
+from .runtime_context import (
+    VERIFICATION_USER_AGENT_PREFIX,
+    resolve_channel_error_policy,
+    verification_call_context,
+)
 from .routing_plan import (
     _apply_deepseek_thinking_compat,
     _apply_param_override,
@@ -649,6 +653,10 @@ async def _sleep_before_same_target_retry(
 def _effective_user_agent_from_headers(
     headers: Mapping[str, str], fallback: str
 ) -> str:
+    if fallback.startswith(VERIFICATION_USER_AGENT_PREFIX):
+        # The verifier marker identifies the caller, so channel headers must not
+        # overwrite it; the upstream request headers are still logged verbatim.
+        return fallback
     for name, value in headers.items():
         if name.lower() == "user-agent":
             return _normalize_user_agent(value)
@@ -887,6 +895,32 @@ async def _try_target(
             request_headers=upstream_headers_content,
             exc=exc,
         )
+
+    except asyncio.CancelledError:
+        # The verifier cancelled its own probe before any response existed, so
+        # the row would otherwise stay "connecting" forever.
+        timeout = verification_call_context.get()
+        await asyncio.shield(
+            log_ctx.update(
+                requested_group_name=plan.requested_group_name,
+                resolved_group_name=plan.resolved_group_name,
+                upstream_model_name=target.model_name,
+                channel=channel,
+                user_agent=effective_user_agent,
+                lifecycle_status=RequestLogLifecycleStatus.FAILED,
+                status_code=504 if timeout is not None else 499,
+                success=False,
+                is_stream=bool(upstream_body.get("stream")),
+                first_token_latency_ms=0,
+                request_content=upstream_request_content,
+                error_message=(
+                    f"verification timed out after {timeout:g}s"
+                    if timeout is not None
+                    else "client disconnected before the upstream response"
+                ),
+            )
+        )
+        raise
 
     log_ctx.attempts.append(
         AttemptLog(

@@ -5,15 +5,18 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from ..shared import (
     Any,
     GatewayApiKeyEntity,
+    PLAYGROUND_GATEWAY_KEY,
     ProtocolKind,
     REQUEST_LOG_MODEL_FAMILY_PREFIXES,
     REQUEST_LOG_RUNNING_STATUSES,
     RequestLogEntity,
     RequestLogLifecycleStatus,
     RequestLogSortMode,
+    RequestLogSource,
     RequestLogStatusFilter,
     String,
     UTC,
+    VERIFICATION_USER_AGENT_PREFIX,
     ZoneInfo,
     cast,
     datetime,
@@ -89,6 +92,24 @@ class RequestLogFilterMixin:
         return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
     @classmethod
+    def _apply_request_log_source_filter(
+        cls, stmt: Any, *, source: RequestLogSource | None
+    ) -> Any:
+        if source is None:
+            return stmt
+        verifier = RequestLogEntity.user_agent.startswith(
+            VERIFICATION_USER_AGENT_PREFIX
+        )
+        playground_key = RequestLogEntity.gateway_key_id == PLAYGROUND_GATEWAY_KEY
+        if source == RequestLogSource.VERIFICATION:
+            return stmt.where(verifier)
+        if source == RequestLogSource.PLAYGROUND:
+            return stmt.where(playground_key, ~verifier)
+        return stmt.where(
+            or_(RequestLogEntity.gateway_key_id.is_(None), ~playground_key)
+        )
+
+    @classmethod
     def _apply_request_log_model_prefix_filter(
         cls, stmt: Any, *, model_prefix: str | None
     ) -> Any:
@@ -161,12 +182,14 @@ class RequestLogFilterMixin:
         protocol: ProtocolKind | None = None,
         channel: str | None = None,
         keyword: str | None = None,
+        source: RequestLogSource | None = None,
     ) -> Any:
         stmt = cls._apply_request_log_window(stmt, days=days, time_zone=time_zone)
         stmt = cls._apply_gateway_key_filter(stmt, gateway_key_id=gateway_key_id)
         stmt = cls._apply_request_log_model_prefix_filter(
             stmt, model_prefix=model_prefix
         )
+        stmt = cls._apply_request_log_source_filter(stmt, source=source)
 
         if status_filter == RequestLogStatusFilter.SUCCESS:
             stmt = stmt.where(

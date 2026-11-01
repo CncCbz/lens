@@ -6,6 +6,7 @@ import logging
 import re
 import time
 from typing import Any
+from uuid import uuid4
 
 from ...models import (
     ModelGroup,
@@ -21,10 +22,14 @@ from .runtime_context import (
     UTC,
     GatewayApiKey,
     ProtocolKind,
+    RequestLogLifecycleStatus,
     StreamingResponse,
     app_state,
     datetime,
+    verification_call_context,
 )
+from .routing_plan import _elapsed_ms
+from .upstream_http import _verification_user_agent
 
 logger = logging.getLogger(__name__)
 
@@ -333,17 +338,20 @@ async def _probe_challenge(
     prompt: str,
     expected_count: int,
     reasoning_effort: str,
+    timeout_seconds: float,
 ) -> tuple[ModelVerificationSample, str, str]:
     body = _challenge_body(
         protocol, group_name, prompt, reasoning_effort, expected_count
     )
+    # The marker lets a cancelled stream report a verification timeout instead
+    # of a client disconnect in the request log.
+    token = verification_call_context.set(timeout_seconds)
     try:
         response = await _proxy_protocol(
             protocol,
             body,
             _verification_gateway_key(),
-            None,
-            None,
+            inbound_user_agent=_verification_user_agent(),
             forced_target=target,
         )
     except Exception as exc:
@@ -357,6 +365,8 @@ async def _probe_challenge(
             "",
             "",
         )
+    finally:
+        verification_call_context.reset(token)
     status_code = getattr(response, "status_code", 0)
     if status_code >= 400:
         detail = ""
@@ -397,10 +407,8 @@ def _resolve_channel_id(protocol_config_id: str, protocol: ProtocolKind) -> str:
     return f"{protocol_config_id}_{protocol.value}"
 
 
-async def _verification_protocol(
-    target: dict[str, str],
-) -> tuple[ProtocolKind, str, ModelGroup]:
-    """Find the runtime channel the target belongs to and the group routing it."""
+async def _verification_channel(target: dict[str, str]) -> tuple[ProtocolKind, str]:
+    """Find the runtime channel the target belongs to."""
     channels = await app_state.channel_store.list()
     for channel in channels:
         if channel.id != target["protocol_config_id"] and not channel.id.startswith(
@@ -413,9 +421,16 @@ async def _verification_protocol(
             for model in channel.models
         ):
             continue
-        group = await _group_for_channel(channel.id, target)
-        return channel.protocol, channel.id, group
+        return channel.protocol, channel.id
     raise LookupError("The selected channel and model are not part of this model group")
+
+
+async def _verification_protocol(
+    target: dict[str, str],
+) -> tuple[ProtocolKind, str, ModelGroup]:
+    """Find the runtime channel the target belongs to and the group routing it."""
+    protocol, channel_id = await _verification_channel(target)
+    return protocol, channel_id, await _group_for_channel(channel_id, target)
 
 
 async def _group_for_channel(channel_id: str, target: dict[str, str]) -> ModelGroup:
@@ -497,6 +512,7 @@ async def _probe_until_scorable(
     group_name: str,
     challenge: dict[str, Any],
     reasoning_effort: str,
+    timeout_seconds: float,
 ) -> tuple[ModelVerificationSample, str, str]:
     expected_count = int(challenge["expected_count"])
     minimum = _min_numbers(expected_count)
@@ -509,6 +525,7 @@ async def _probe_until_scorable(
             prompt=str(challenge["prompt"]),
             expected_count=expected_count,
             reasoning_effort=reasoning_effort,
+            timeout_seconds=timeout_seconds,
         )
         if best is None or probe[0].count > best[0].count:
             best = probe
@@ -522,6 +539,43 @@ async def _probe_until_scorable(
     return best
 
 
+async def _record_undispatched_verification_log(
+    payload: ModelVerificationRequest,
+    protocol: str,
+    error: Exception,
+    duration_ms: int,
+) -> None:
+    """Log a verification that failed before any gateway request existed."""
+    try:
+        await app_state.request_log_store.create_request_log(
+            protocol=protocol,
+            user_agent=_verification_user_agent(),
+            requested_group_name=None,
+            resolved_group_name=None,
+            upstream_model_name=payload.target.model_name,
+            channel_id=None,
+            channel_name=None,
+            gateway_key_id=PLAYGROUND_GATEWAY_KEY_ID,
+            status_code=500,
+            success=False,
+            lifecycle_status=RequestLogLifecycleStatus.FAILED,
+            is_stream=True,
+            first_token_latency_ms=0,
+            latency_ms=duration_ms,
+            input_tokens=0,
+            output_tokens=0,
+            total_tokens=0,
+            input_cost_usd=0.0,
+            output_cost_usd=0.0,
+            total_cost_usd=0.0,
+            request_id=uuid4().hex,
+            error_message=f"verification did not dispatch: {error}",
+            attempts=[],
+        )
+    except Exception as log_exc:
+        logger.warning("Failed to record a verification log: %s", log_exc)
+
+
 async def run_verification(
     payload: ModelVerificationRequest,
     trigger: str = "manual",
@@ -529,17 +583,29 @@ async def run_verification(
 ) -> ModelVerificationResult:
     target = payload.target.model_dump()
     started = time.perf_counter()
-    protocol, channel_id, group = await _verification_protocol(target)
-    wire_effort = _wire_effort(
-        group,
-        payload.reasoning_effort,
-        strict_level=(trigger != "scheduled"),
-    )
-    if protocol not in SUPPORTED_PROTOCOLS:
-        raise ValueError(
-            f"Protocol {protocol.value} cannot be verified; "
-            "only text protocols return a fingerprint"
+    protocol: ProtocolKind | None = None
+    try:
+        protocol, channel_id = await _verification_channel(target)
+        group = await _group_for_channel(channel_id, target)
+        wire_effort = _wire_effort(
+            group,
+            payload.reasoning_effort,
+            strict_level=(trigger != "scheduled"),
         )
+        if protocol not in SUPPORTED_PROTOCOLS:
+            raise ValueError(
+                f"Protocol {protocol.value} cannot be verified; "
+                "only text protocols return a fingerprint"
+            )
+        detector, built_at = await _load_detector()
+    except Exception as exc:
+        await _record_undispatched_verification_log(
+            payload,
+            (protocol or ProtocolKind.OPENAI_CHAT).value,
+            exc,
+            _elapsed_ms(started),
+        )
+        raise
 
     effective_timeout = timeout_seconds
     if effective_timeout is None:
@@ -552,7 +618,6 @@ async def run_verification(
             effective_timeout = 90.0
     effective_timeout = max(float(effective_timeout), 5.0)
 
-    detector, built_at = await _load_detector()
     challenges = _generate_challenges(payload.count)
     forced = PlaygroundTarget(
         channel_id=channel_id,
@@ -567,6 +632,7 @@ async def run_verification(
                 group_name=group.name,
                 challenge=challenge,
                 reasoning_effort=wire_effort,
+                timeout_seconds=effective_timeout,
             )
         )
         for challenge in challenges

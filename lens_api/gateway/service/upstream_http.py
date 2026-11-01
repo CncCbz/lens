@@ -9,6 +9,7 @@ from .runtime_context import (
     HTMLParser,
     HTTPException,
     Mapping,
+    VERIFICATION_USER_AGENT_PREFIX,
     _read_system_version,
     app_state,
     build_upstream_headers,
@@ -129,6 +130,11 @@ def _format_transport_error(exc: httpx.HTTPError, fallback_url: str) -> str:
 @lru_cache(maxsize=1)
 def _default_lens_user_agent() -> str:
     return f"Lens/{_read_system_version()}"
+
+
+@lru_cache(maxsize=1)
+def _verification_user_agent() -> str:
+    return f"{VERIFICATION_USER_AGENT_PREFIX}{_read_system_version()}"
 
 
 def _normalize_user_agent(value: str | None) -> str:

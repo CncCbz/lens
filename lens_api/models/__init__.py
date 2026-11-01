@@ -157,6 +157,12 @@ class RequestLogStatusFilter(str, Enum):
     FAILED = "failed"
 
 
+class RequestLogSource(str, Enum):
+    VERIFICATION = "verification"
+    PLAYGROUND = "playground"
+    API = "api"
+
+
 class RequestLogLifecycleStatus(str, Enum):
     CONNECTING = "connecting"
     STREAMING = "streaming"

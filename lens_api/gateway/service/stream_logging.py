@@ -18,6 +18,7 @@ from .runtime_context import (
     json,
     logger,
     needs_conversion,
+    verification_call_context,
 )
 from .upstream_http import _format_channel_error
 from .routing_plan import _elapsed_ms
@@ -217,6 +218,9 @@ async def _cancel_stream_capture(
     capture: StreamCapture, reason: str | None = None
 ) -> None:
     if capture.completed:
+        return
+    if capture.verification_cancelled and reason == "client disconnected":
+        # The verifier cancelled its own request; keep the timeout reason.
         return
     capture.client_disconnected = True
     if reason and reason not in capture.errors:
@@ -658,8 +662,17 @@ async def _stream_upstream_iterator(
         _flush_stream_event_buffer(protocol, capture, stream_started_at)
         capture.completed = True
     except asyncio.CancelledError:
-        capture.error_status_code = 499
-        await _cancel_stream_capture(capture, "client disconnected")
+        verification_timeout = verification_call_context.get()
+        if verification_timeout is None:
+            capture.error_status_code = 499
+            await _cancel_stream_capture(capture, "client disconnected")
+        else:
+            # The model verifier cancelled its own probe, not a real client drop.
+            capture.verification_cancelled = True
+            capture.error_status_code = 504
+            capture.errors.append(
+                f"verification timed out after {verification_timeout:g}s"
+            )
         raise
     except TimeoutError as exc:
         capture.error_status_code = 504
