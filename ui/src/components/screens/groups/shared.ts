@@ -112,6 +112,9 @@ export type GroupDisplayMember = {
   items: ModelGroup["items"];
   enabled: boolean;
   has_disabled_channel: boolean;
+  /** The triple a verification verdict is keyed by. */
+  protocol_config_id: string;
+  credential_id: string;
 };
 
 export type GroupSort =
@@ -311,6 +314,8 @@ export function buildGroupDisplayMembers(
         items: [],
         enabled: false,
         has_disabled_channel: false,
+        protocol_config_id: protocolConfigId,
+        credential_id: item.credential_id,
       });
     }
 

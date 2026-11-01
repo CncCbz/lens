@@ -1,7 +1,7 @@
 "use client";
 
-import type { Dispatch, SetStateAction } from "react";
-import { Trash2 } from "lucide-react";
+import { useMemo, type Dispatch, type SetStateAction } from "react";
+import { ShieldCheck, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -26,6 +26,13 @@ import {
   type Locale,
   type SiteRow,
 } from "./shared";
+import {
+  toneTextClass,
+  useLatestVerdicts,
+  useVerificationThresholds,
+  verdictKey,
+  verdictTone,
+} from "@/components/screens/verification/confidence";
 
 function siteCredentialCount(site: SiteRow) {
   return site.credentials.filter((item) => item.enabled).length;
@@ -76,6 +83,40 @@ export function ChannelsOverview({
   setDeleteTarget: Dispatch<SetStateAction<Site | null>>;
   balancesByCredentialId: Map<string, CredentialBalance>;
 }) {
+  const verdicts = useLatestVerdicts();
+  const thresholds = useVerificationThresholds();
+
+  // Roll the per-model verdicts up to one line per channel so a bad model
+  // is visible without opening anything.
+  const verdictSummary = useMemo(() => {
+    const summary = new Map<
+      string,
+      { total: number; risky: number; questionable: number; trusted: number }
+    >();
+    for (const site of visibleSites) {
+      const counts = {
+        total: 0,
+        risky: 0,
+        questionable: 0,
+        trusted: 0,
+      };
+      for (const combo of site.protocols) {
+        for (const model of combo.models) {
+          const verdict = verdicts.get(
+            verdictKey(combo.id, model.credential_id, model.model_name),
+          );
+          if (!verdict) continue;
+          counts.total += 1;
+          const tone = verdictTone(verdict.probability, thresholds);
+          if (tone === "risky") counts.risky += 1;
+          else if (tone === "questionable") counts.questionable += 1;
+          else if (tone === "trusted") counts.trusted += 1;
+        }
+      }
+      summary.set(site.id, counts);
+    }
+    return summary;
+  }, [thresholds, verdicts, visibleSites]);
   return (
     <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
       <Card className="overflow-hidden py-0 min-h-0 xl:min-h-[calc(100dvh-7.5rem)]">
@@ -246,10 +287,38 @@ export function ChannelsOverview({
                       onClick={(event) => event.stopPropagation()}
                       onKeyDown={(event) => event.stopPropagation()}
                     >
-                      <span className="truncate text-[11px] text-muted-foreground">
-                        {locale === "zh-CN"
-                          ? `${site.model_count} 模型 · ${credentialCount} 密钥`
-                          : `${site.model_count} models · ${credentialCount} keys`}
+                      <span className="flex min-w-0 items-center gap-2 truncate text-[11px] text-muted-foreground">
+                        <span className="truncate">
+                          {locale === "zh-CN"
+                            ? `${site.model_count} 模型 · ${credentialCount} 密钥`
+                            : `${site.model_count} models · ${credentialCount} keys`}
+                        </span>
+                        {(() => {
+                          const counts = verdictSummary.get(site.id);
+                          if (!counts || counts.total === 0) return null;
+                          const tone =
+                            counts.risky > 0
+                              ? "risky"
+                              : counts.questionable > 0
+                                ? "questionable"
+                                : "trusted";
+                          return (
+                            <span
+                              className={cn(
+                                "inline-flex shrink-0 items-center gap-1",
+                                toneTextClass(tone),
+                              )}
+                              title={
+                                locale === "zh-CN"
+                                  ? `已验真 ${counts.total} 个：可信 ${counts.trusted}，可疑 ${counts.questionable}，低置信 ${counts.risky}`
+                                  : `Verified ${counts.total}: ${counts.trusted} trusted, ${counts.questionable} questionable, ${counts.risky} low`
+                              }
+                            >
+                              <ShieldCheck className="size-3" />
+                              {counts.total}
+                            </span>
+                          );
+                        })()}
                       </span>
                       <Button
                         type="button"

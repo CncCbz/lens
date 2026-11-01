@@ -104,6 +104,59 @@ class CredentialBalanceEntity(Base):
     checked_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
 
+class SiteModelVerificationEntity(Base):
+    """One verification round for a single site model."""
+
+    __tablename__ = "site_model_verifications"
+
+    id: Mapped[str] = mapped_column(String(80), primary_key=True)
+    site_id: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    protocol_config_id: Mapped[str] = mapped_column(
+        String(80), nullable=False, index=True
+    )
+    credential_id: Mapped[str] = mapped_column(String(80), nullable=False)
+    model_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    channel_id: Mapped[str] = mapped_column(String(120), nullable=False)
+    protocol: Mapped[str] = mapped_column(String(40), nullable=False)
+    reasoning_effort: Mapped[str] = mapped_column(
+        String(20), nullable=False, default=""
+    )
+    # "manual" or "scheduled": the same run means different things depending on
+    # whether a person or the cron job started it.
+    trigger: Mapped[str] = mapped_column(String(20), nullable=False, default="manual")
+    challenge_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    decision: Mapped[str] = mapped_column(String(20), nullable=False, default="")
+    prediction: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    prediction_name: Mapped[str] = mapped_column(
+        String(200), nullable=False, default=""
+    )
+    family_prediction: Mapped[str] = mapped_column(
+        String(200), nullable=False, default=""
+    )
+    family_prediction_name: Mapped[str] = mapped_column(
+        String(200), nullable=False, default=""
+    )
+    ranking_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    probability: Mapped[float | None] = mapped_column(Float, nullable=True)
+    probability_status: Mapped[str] = mapped_column(
+        String(40), nullable=False, default=""
+    )
+    used_outputs: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    model_like: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    matches_expected: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    error_message: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    results_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    samples_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    detector_built_at: Mapped[str] = mapped_column(
+        String(40), nullable=False, default=""
+    )
+    request_id: Mapped[str] = mapped_column(String(80), nullable=False, default="")
+    duration_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        default=datetime.utcnow, nullable=False, index=True
+    )
+
+
 class SiteProtocolConfigEntity(Base):
     __tablename__ = "site_protocol_configs"
 

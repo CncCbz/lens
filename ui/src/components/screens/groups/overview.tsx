@@ -14,6 +14,12 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
+import {
+  ConfidenceBadge,
+  useLatestVerdicts,
+  useVerificationThresholds,
+  verdictKey,
+} from "@/components/screens/verification/confidence";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -169,6 +175,8 @@ export function GroupsOverview({
   toggleGroupEnabled: (group: GroupRow, enabled: boolean) => void;
   setDeleteTarget: Dispatch<SetStateAction<ModelGroup | null>>;
 }) {
+  const verdicts = useLatestVerdicts();
+  const thresholds = useVerificationThresholds();
   const copyModelNameLabel =
     locale === "zh-CN" ? "复制模型名称" : "Copy model name";
 
@@ -433,6 +441,17 @@ export function GroupsOverview({
                                     <span className="min-w-0 truncate">
                                       {member.model_name}
                                     </span>
+                                    <ConfidenceBadge
+                                      verdict={verdicts.get(
+                                        verdictKey(
+                                          member.protocol_config_id,
+                                          member.credential_id,
+                                          member.model_name,
+                                        ),
+                                      )}
+                                      thresholds={thresholds}
+                                      locale={locale}
+                                    />
                                     <span className="min-w-0 truncate text-muted-foreground">
                                       · {sourceLabel}
                                     </span>

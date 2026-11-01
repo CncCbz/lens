@@ -47,11 +47,21 @@ export function buildPlaygroundCatalog(
   sites: Site[],
   groups: ModelGroup[],
 ): PlaygroundModel[] {
-  const groupsByChannel = new Map<string, ModelGroup>();
+  // A group routes to a specific member, not to a whole channel: matching on
+  // the channel alone marks models the group never lists as usable, and the
+  // request then fails once the router cannot find a target.
+  const memberGroups = new Map<string, ModelGroup>();
   for (const group of groups) {
+    if ((group.route_group_id ?? "").trim()) {
+      continue;
+    }
     for (const item of group.items) {
-      if (!groupsByChannel.has(item.channel_id)) {
-        groupsByChannel.set(item.channel_id, group);
+      if (!item.enabled) {
+        continue;
+      }
+      const key = `${item.channel_id}|${item.credential_id}|${item.model_name}`;
+      if (!memberGroups.has(key)) {
+        memberGroups.set(key, group);
       }
     }
   }
@@ -60,7 +70,6 @@ export function buildPlaygroundCatalog(
   for (const site of sites) {
     site.protocols.forEach((combo, index) => {
       const id = channelId(combo.id);
-      const group = groupsByChannel.get(id);
       const name = `${site.name} / ${comboName(site, index)}`;
       for (const model of modelsOf(combo)) {
         const credential =
@@ -69,8 +78,10 @@ export function buildPlaygroundCatalog(
         if (!credential) {
           continue;
         }
+        const key = `${id}|${model.credential_id}|${model.model_name}`;
+        const group = memberGroups.get(key) ?? null;
         catalog.push({
-          key: `${id}|${model.credential_id}|${model.model_name}`,
+          key,
           siteId: site.id,
           siteName: site.name,
           comboId: combo.id,
@@ -82,7 +93,7 @@ export function buildPlaygroundCatalog(
           credentialName: model.credential_name || credential.name,
           groupId: group?.id ?? "",
           groupName: group?.name ?? "",
-          enabled: combo.enabled && model.enabled && Boolean(group),
+          enabled: combo.enabled && model.enabled && group !== null,
         });
       }
     });

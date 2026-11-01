@@ -123,7 +123,10 @@ from ...models import (
 )
 from ...persistence.admin_repository import AdminRepository
 from ...persistence.backup_store import BackupStore
+from ...core.runtime_channel_ids import compose_runtime_channel_id
 from ...persistence.balance_store import BalanceStore
+from ...persistence.verification_store import VerificationStore
+from .verification_runs import VerificationRuns
 from ...persistence.channel_store import ChannelStore
 from ...persistence.shared import (
     SETTING_CIRCUIT_BREAKER_COOLDOWN,
@@ -196,6 +199,7 @@ TASK_MODEL_PRICE_SYNC = "model_price_sync"
 TASK_PI_CATALOG_SYNC = "pi_catalog_sync"
 TASK_REQUEST_LOG_STATS_PERSIST = "request_log_stats_persist"
 TASK_CREDENTIAL_BALANCE_SYNC = "credential_balance_sync"
+TASK_MODEL_VERIFICATION = "model_verification"
 
 GENERIC_USER_AGENT_TOKENS = (
     "python-httpx",
@@ -255,6 +259,13 @@ CRONJOB_SPECS = (
         name="密钥余额同步",
         description="按密钥所属地址查询上游余额",
         default_interval_hours=6,
+    ),
+    CronjobSpec(
+        id=TASK_MODEL_VERIFICATION,
+        name="渠道模型验真",
+        description="抽样请求渠道模型并比对数指纹",
+        default_interval_hours=24,
+        default_enabled=False,
     ),
 )
 
@@ -345,6 +356,8 @@ class AppState:
         self.cronjob_store = CronjobStore(self.session_factory)
         self.channel_store = ChannelStore(self.session_factory)
         self.balance_store = BalanceStore(self.session_factory)
+        self.verification_store = VerificationStore(self.session_factory)
+        self.verification_runs = VerificationRuns()
         self.backup_store = BackupStore(self.session_factory)
         self.router = GatewayRouter()
         self.cronjob_runner = CronjobRunner(
@@ -356,6 +369,7 @@ class AppState:
                 TASK_PI_CATALOG_SYNC: self._sync_pi_catalog,
                 TASK_REQUEST_LOG_STATS_PERSIST: self.request_log_store.persist_request_log_stats,
                 TASK_CREDENTIAL_BALANCE_SYNC: self._sync_credential_balances,
+                TASK_MODEL_VERIFICATION: self._sync_model_verifications,
             },
             time_zone_provider=self._runtime_time_zone,
             logger=logger,
@@ -405,6 +419,78 @@ class AppState:
                 currency=outcome.currency,
                 error_message=outcome.error_message,
             )
+
+    async def _sync_model_verifications(self) -> None:
+        from .model_verification import run_verification
+        from ...models import (
+            ModelVerificationRequest,
+            ModelVerificationTarget,
+        )
+
+        runtime = await self.settings_repo.get_runtime_settings()
+        batch_size = int(runtime["verification_batch_size"])
+        count = int(runtime["verification_challenge_count"])
+        effort = str(runtime["verification_reasoning_effort"])
+        last_checked = await self.verification_store.last_checked_at()
+
+        groups = await self.group_repo.list_groups()
+        routed = {
+            (item.channel_id, item.credential_id, item.model_name)
+            for group in groups
+            if not group.route_group_id.strip()
+            for item in group.items
+            if item.enabled
+        }
+        pending: list[tuple[datetime, dict[str, str]]] = []
+        for site in await self.channel_store.list_sites():
+            for protocol in site.protocols:
+                if not protocol.enabled:
+                    continue
+                for model in protocol.models:
+                    if not model.enabled:
+                        continue
+                    channel_id = compose_runtime_channel_id(
+                        protocol.id, model.protocol or ProtocolKind.OPENAI_CHAT
+                    )
+                    if (
+                        channel_id,
+                        model.credential_id,
+                        model.model_name,
+                    ) not in routed:
+                        continue
+                    key = (
+                        protocol.id,
+                        model.credential_id,
+                        model.model_name,
+                    )
+                    pending.append(
+                        (
+                            last_checked.get(key) or datetime.min,
+                            {
+                                "site_id": site.id,
+                                "protocol_config_id": protocol.id,
+                                "credential_id": model.credential_id,
+                                "model_name": model.model_name,
+                            },
+                        )
+                    )
+        pending.sort(key=lambda item: item[0])
+        for _checked_at, target in pending[:batch_size]:
+            try:
+                await run_verification(
+                    ModelVerificationRequest(
+                        target=ModelVerificationTarget(**target),
+                        count=count,
+                        reasoning_effort=effort,
+                    ),
+                    trigger="scheduled",
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Model verification failed for %s: %s",
+                    target["model_name"],
+                    exc,
+                )
 
     async def _sync_model_prices(self) -> None:
         from .tasks import _sync_group_prices

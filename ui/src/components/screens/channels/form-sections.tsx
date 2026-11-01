@@ -20,6 +20,12 @@ import {
 } from "@/components/ui/combobox";
 import { ProtocolMultiSelect } from "@/components/ui/protocol-multi-select";
 import {
+  ConfidenceBadge,
+  useLatestVerdicts,
+  useVerificationThresholds,
+  verdictKey,
+} from "@/components/screens/verification/confidence";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -98,6 +104,10 @@ export function ProtocolConfigItem({
   testingDisabled?: boolean;
   credentialBalance?: CredentialBalance;
 }) {
+  // A verdict belongs to (combo, credential, model), which is exactly the
+  // key the row can build from what it already has.
+  const verdicts = useLatestVerdicts();
+  const thresholds = useVerificationThresholds();
   const submittedBaseUrls = formBaseUrlsForPayload(form);
   const submittedBaseUrlIds = new Set(submittedBaseUrls.map((item) => item.id));
   const protocolConfigDuplicated = protocolConfigCredentialKeys(
@@ -551,8 +561,22 @@ export function ProtocolConfigItem({
                               : `Select ${model.model_name}`
                           }
                         />
-                        <span className="min-w-0 truncate text-sm font-medium text-foreground">
-                          {model.model_name}
+                        <span className="flex min-w-0 items-center gap-2">
+                          <span className="min-w-0 truncate text-sm font-medium text-foreground">
+                            {model.model_name}
+                          </span>
+                          <ConfidenceBadge
+                            verdict={verdicts.get(
+                              verdictKey(
+                                protocolConfig.id ?? "",
+                                model.credential_id,
+                                model.model_name,
+                              ),
+                            )}
+                            thresholds={thresholds}
+                            locale={locale}
+                            showUnverified
+                          />
                         </span>
                         <ProtocolMultiSelect
                           value={protocols}

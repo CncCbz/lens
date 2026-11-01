@@ -527,6 +527,154 @@ export type SiteModelTestResult = {
   response_content?: string | null;
 };
 
+export type ModelVerificationTarget = {
+  site_id: string;
+  protocol_config_id: string;
+  credential_id: string;
+  model_name: string;
+};
+
+export type ModelVerificationPayload = {
+  target: ModelVerificationTarget;
+  count: number;
+  strict: boolean;
+  reasoning_effort: string;
+  expected_model: string;
+};
+
+export type ModelVerificationSample = {
+  state: string;
+  count: number;
+  expected_count: number;
+  first_byte_ms?: number | null;
+  response_model?: string | null;
+  error?: string | null;
+};
+
+export type ModelVerificationCandidate = {
+  model: string;
+  display_name: string;
+  family: string;
+  family_name: string;
+  score: number;
+  probability?: number | null;
+};
+
+export type ModelVerificationResult = {
+  id: string;
+  site_id: string;
+  site_name: string;
+  protocol_config_id: string;
+  credential_id: string;
+  model_name: string;
+  channel_id: string;
+  channel_name: string;
+  protocol: string;
+  reasoning_effort: string;
+  trigger: string;
+  challenge_count: number;
+  decision: string;
+  prediction: string;
+  prediction_name: string;
+  family_prediction: string;
+  family_prediction_name: string;
+  ranking_score?: number | null;
+  probability?: number | null;
+  probability_status: string;
+  used_outputs: number;
+  model_like?: boolean | null;
+  expected_model: string;
+  matches_expected?: boolean | null;
+  error_message: string;
+  results: ModelVerificationCandidate[];
+  samples: ModelVerificationSample[];
+  detector_built_at: string;
+  request_id: string;
+  duration_ms: number;
+  created_at: string;
+};
+
+export type ModelVerificationLatest = {
+  model_name: string;
+  protocol_config_id: string;
+  credential_id: string;
+  channel_id: string;
+  trigger: string;
+  decision: string;
+  prediction: string;
+  prediction_name: string;
+  probability?: number | null;
+  /** The claimed model's own probability, not the winner's. */
+  expected_probability?: number | null;
+  matches_expected?: boolean | null;
+  error_message: string;
+  created_at: string;
+};
+
+export type ModelVerificationPage = {
+  items: ModelVerificationResult[];
+  total: number;
+  limit: number;
+  offset: number;
+};
+
+export type ModelVerificationRun = {
+  run_id: string;
+  status: "running" | "succeeded" | "failed" | "cancelled";
+  result?: ModelVerificationResult | null;
+  error: string;
+};
+
+export async function startModelVerification(
+  payload: ModelVerificationPayload,
+): Promise<ModelVerificationRun> {
+  const response = await apiFetch("/admin/model-verifications", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+  return (await response.json()) as ModelVerificationRun;
+}
+
+export async function getModelVerificationRun(
+  runId: string,
+): Promise<ModelVerificationRun> {
+  const response = await apiFetch(
+    `/admin/model-verifications/runs/${encodeURIComponent(runId)}`,
+  );
+  return (await response.json()) as ModelVerificationRun;
+}
+
+export async function listModelVerifications(
+  params: {
+    site_id?: string;
+    model_name?: string;
+    decision?: string;
+    trigger?: string;
+    limit?: number;
+    offset?: number;
+  } = {},
+): Promise<ModelVerificationPage> {
+  const search = new URLSearchParams();
+  if (params.site_id) search.set("site_id", params.site_id);
+  if (params.model_name) search.set("model_name", params.model_name);
+  if (params.decision) search.set("decision", params.decision);
+  if (params.trigger) search.set("trigger", params.trigger);
+  if (params.limit) search.set("limit", String(params.limit));
+  if (params.offset) search.set("offset", String(params.offset));
+  const suffix = search.toString();
+  const response = await apiFetch(
+    "/admin/model-verifications" + (suffix ? "?" + suffix : ""),
+  );
+  return (await response.json()) as ModelVerificationPage;
+}
+
+export async function listLatestModelVerifications(): Promise<
+  ModelVerificationLatest[]
+> {
+  const response = await apiFetch("/admin/model-verifications/latest");
+  return (await response.json()) as ModelVerificationLatest[];
+}
+
 export type ModelGroupCandidatesPayload = {
   protocols?: ProtocolKind[];
   exclude_items: ModelGroupItemPayload[];

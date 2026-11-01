@@ -42,6 +42,11 @@ from ..shared import (
     SETTING_SITE_LOGO_URL,
     SETTING_SITE_NAME,
     SETTING_TIME_ZONE,
+    SETTING_VERIFICATION_BATCH_SIZE,
+    SETTING_VERIFICATION_CHALLENGE_COUNT,
+    SETTING_VERIFICATION_REASONING_EFFORT,
+    SETTING_VERIFICATION_TRUST_THRESHOLD,
+    SETTING_VERIFICATION_WARN_THRESHOLD,
     SettingEntity,
     SettingItem,
     monotonic,
@@ -241,10 +246,48 @@ class SettingsRepository:
             ),
             "site_name": mapping.get(SETTING_SITE_NAME, "Lens").strip() or "Lens",
             "site_logo_url": mapping.get(SETTING_SITE_LOGO_URL, "").strip(),
+            "verification_batch_size": min(
+                max(
+                    self._parse_int(
+                        mapping.get(SETTING_VERIFICATION_BATCH_SIZE), default=5
+                    ),
+                    1,
+                ),
+                200,
+            ),
+            "verification_challenge_count": min(
+                max(
+                    self._parse_int(
+                        mapping.get(SETTING_VERIFICATION_CHALLENGE_COUNT), default=3
+                    ),
+                    1,
+                ),
+                3,
+            ),
+            "verification_reasoning_effort": mapping.get(
+                SETTING_VERIFICATION_REASONING_EFFORT, "none"
+            ).strip(),
+            # A verdict is trusted at or above the trust threshold, questioned
+            # down to the warn threshold, and flagged below it.
+            "verification_trust_threshold": self._parse_percent(
+                mapping.get(SETTING_VERIFICATION_TRUST_THRESHOLD), default=80
+            ),
+            "verification_warn_threshold": self._parse_percent(
+                mapping.get(SETTING_VERIFICATION_WARN_THRESHOLD), default=50
+            ),
         }
         self._runtime_settings_cache = self._clone_runtime_settings(runtime)
         self._runtime_settings_cache_at = monotonic()
         return self._clone_runtime_settings(runtime)
+
+    @staticmethod
+    def _parse_percent(raw: str | None, *, default: int) -> int:
+        """Clamp a percentage setting to 0-100, falling back when unparsable."""
+        try:
+            value = int(str(raw).strip()) if raw is not None else default
+        except (TypeError, ValueError):
+            return default
+        return min(max(value, 0), 100)
 
     async def get_branding_settings(self) -> dict[str, str]:
         runtime = await self.get_runtime_settings()

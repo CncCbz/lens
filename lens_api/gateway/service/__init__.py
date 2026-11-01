@@ -18,6 +18,10 @@ from ...models import (
     GatewayApiKey,
     ModelGroup,
     ModelGroupCandidatesResponse,
+    ModelVerificationLatest,
+    ModelVerificationPage,
+    ModelVerificationResult,
+    ModelVerificationRun,
     ModelGroupEnsureFromSiteResponse,
     ModelPriceItem,
     ModelPriceListResponse,
@@ -41,6 +45,12 @@ from ...models import (
     SiteModelFetchItem,
     SiteModelTestResult,
     SiteRuntimeSummary,
+)
+from .admin_verification import (
+    get_verification_run,
+    latest_verifications,
+    list_verifications,
+    start_verification,
 )
 from .admin_config import (
     create_gateway_api_key,

@@ -38,6 +38,12 @@ import {
   strategyOptions,
   type FoldedMember,
 } from "./shared";
+import {
+  ConfidenceBadge,
+  useLatestVerdicts,
+  useVerificationThresholds,
+  verdictKey,
+} from "@/components/screens/verification/confidence";
 
 export { SeriesChip } from "@/lib/model-prefix";
 
@@ -295,6 +301,17 @@ export function FoldedMemberRow({
   onDragEnd: () => void;
   locale: "zh-CN" | "en-US";
 }) {
+  // The verdict is keyed by the same triple this row already carries, so a
+  // member shows its own confidence without another lookup shape.
+  const verdicts = useLatestVerdicts();
+  const thresholds = useVerificationThresholds();
+  const verdict = verdicts.get(
+    verdictKey(
+      member.protocolConfigId,
+      member.credential_id,
+      member.model_name,
+    ),
+  );
   const credentialLabel = credentialDisplayLabel(member, locale);
   const channelGroups: { name: string; protocols: ProtocolKind[] }[] = [];
   const seenChannels = new Set<string>();
@@ -349,8 +366,16 @@ export function FoldedMemberRow({
         )
       ) : null}
       <div className="min-w-0 flex-1">
-        <div className="truncate text-sm font-medium text-foreground">
-          {member.model_name}
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="truncate text-sm font-medium text-foreground">
+            {member.model_name}
+          </span>
+          <ConfidenceBadge
+            verdict={verdict}
+            thresholds={thresholds}
+            locale={locale}
+            showUnverified
+          />
         </div>
         <div className="flex min-w-0 flex-wrap items-center gap-1 text-xs text-muted-foreground">
           {channelGroups.map((group, channelIndex) => (

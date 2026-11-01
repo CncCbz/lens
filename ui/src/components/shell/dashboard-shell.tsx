@@ -61,6 +61,7 @@ import {
   LogOut,
   PanelLeftClose,
   Settings2,
+  ShieldCheck,
   Waypoints,
 } from "lucide-react";
 import Image from "next/image";
@@ -229,6 +230,12 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
             href: DASHBOARD_ROUTES.playground,
             label: t.playground,
             icon: FlaskConical,
+          },
+          {
+            key: "verification" as DashboardView,
+            href: DASHBOARD_ROUTES.verification,
+            label: t.verification,
+            icon: ShieldCheck,
           },
           {
             key: "multimodalRelay" as DashboardView,

@@ -20,6 +20,7 @@ type Copy = {
   channels: string;
   groups: string;
   playground: string;
+  verification: string;
   multimodalRelay: string;
   settings: string;
   apiKeys: string;
@@ -45,6 +46,7 @@ const messages: Record<Locale, Copy> = {
     channels: "渠道",
     groups: "模型组",
     playground: "操练场",
+    verification: "模型验真",
     multimodalRelay: "多模态降级",
     settings: "系统设置",
     apiKeys: "API 密钥",
@@ -68,6 +70,7 @@ const messages: Record<Locale, Copy> = {
     channels: "Channels",
     groups: "Group Management",
     playground: "Playground",
+    verification: "Verification",
     multimodalRelay: "Multimodal Relay",
     settings: "Settings",
     apiKeys: "API Keys",

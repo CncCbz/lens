@@ -1351,6 +1351,105 @@ class GatewayApiKey(GatewayApiKeyBase):
     updated_at: str
 
 
+class ModelVerificationTarget(StrictBaseModel):
+    site_id: str = Field(min_length=1)
+    protocol_config_id: str = Field(min_length=1)
+    credential_id: str = Field(min_length=1)
+    model_name: str = Field(min_length=1)
+
+
+class ModelVerificationRequest(StrictBaseModel):
+    target: ModelVerificationTarget
+    count: int = Field(default=3, ge=1, le=3)
+    strict: bool = False
+    reasoning_effort: str = ""
+    expected_model: str = ""
+
+
+class ModelVerificationSample(StrictBaseModel):
+    state: str
+    count: int = 0
+    expected_count: int = 0
+    first_byte_ms: int | None = None
+    response_model: str | None = None
+    error: str | None = None
+
+
+class ModelVerificationCandidate(StrictBaseModel):
+    model: str
+    display_name: str = ""
+    family: str = ""
+    family_name: str = ""
+    score: float = 0.0
+    probability: float | None = None
+
+
+class ModelVerificationResult(StrictBaseModel):
+    id: str
+    site_id: str
+    site_name: str = ""
+    protocol_config_id: str
+    credential_id: str
+    model_name: str
+    channel_id: str
+    channel_name: str = ""
+    protocol: str = ""
+    reasoning_effort: str = ""
+    trigger: str = "manual"
+    challenge_count: int = 0
+    decision: str = ""
+    prediction: str = ""
+    prediction_name: str = ""
+    family_prediction: str = ""
+    family_prediction_name: str = ""
+    ranking_score: float | None = None
+    probability: float | None = None
+    probability_status: str = ""
+    used_outputs: int = 0
+    model_like: bool | None = None
+    expected_model: str = ""
+    matches_expected: bool | None = None
+    error_message: str = ""
+    results: list[ModelVerificationCandidate] = Field(default_factory=list)
+    samples: list[ModelVerificationSample] = Field(default_factory=list)
+    detector_built_at: str = ""
+    request_id: str = ""
+    duration_ms: int = 0
+    created_at: str = ""
+
+
+class ModelVerificationPage(StrictBaseModel):
+    items: list[ModelVerificationResult] = Field(default_factory=list)
+    total: int = 0
+    limit: int = 0
+    offset: int = 0
+
+
+class ModelVerificationRun(StrictBaseModel):
+    run_id: str
+    status: str
+    result: ModelVerificationResult | None = None
+    error: str = ""
+
+
+class ModelVerificationLatest(StrictBaseModel):
+    model_name: str
+    protocol_config_id: str
+    credential_id: str
+    channel_id: str
+    trigger: str = "manual"
+    decision: str = ""
+    prediction: str = ""
+    prediction_name: str = ""
+    probability: float | None = None
+    # The probability the verifier gave the model the name claims; the top-1
+    # number answers a different question and must not stand in for it.
+    expected_probability: float | None = None
+    matches_expected: bool | None = None
+    error_message: str = ""
+    created_at: str = ""
+
+
 class PlaygroundTarget(StrictBaseModel):
     channel_id: str = Field(min_length=1)
     model_name: str = Field(min_length=1)
