@@ -713,7 +713,7 @@ export function GroupsScreen() {
       context_window: number | null;
     },
   ) {
-    await apiRequest("/admin/model-prices/" + encodeURIComponent(groupName), {
+    await apiRequest("/admin/model-prices", {
       method: "PUT",
       body: JSON.stringify({
         model_key: groupName,

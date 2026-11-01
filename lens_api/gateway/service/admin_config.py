@@ -81,11 +81,14 @@ async def list_model_prices(
 
 
 async def update_model_price(
-    model_key: str, payload: ModelPriceUpdate, _: Any = Depends(get_current_admin)
+    payload: ModelPriceUpdate, _: Any = Depends(get_current_admin)
 ) -> ModelPriceItem:
-    return await app_state.model_price_repo.upsert_model_price(
-        payload.model_copy(update={"model_key": model_key})
-    )
+    """Upsert by the `model_key` in the body.
+
+    The key can contain `/`, so it must not travel as a path parameter: proxies
+    disagree on whether `%2F` stays encoded, and a decoded key breaks matching.
+    """
+    return await app_state.model_price_repo.upsert_model_price(payload)
 
 
 async def sync_model_prices(
