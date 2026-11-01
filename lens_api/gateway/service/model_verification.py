@@ -598,16 +598,11 @@ async def run_verification(
     else:
         error_message = "No valid answers; every challenge failed"
 
-    # The expected model defaults to the canonical execution group name (or
-    # the channel model name when not overridden): "does the API return what
-    # its canonical model claims" is the question this feature exists to answer.
-    raw_expected = payload.expected_model.strip()
+    # The expected model defaults to the channel model being verified: "does
+    # the API return what its name claims" is the question this feature exists
+    # to answer, so leaving it empty must not silently skip the comparison.
     raw_model_name = str(target["model_name"]).strip()
-    canonical_group_name = group.name.strip()
-    if (not raw_expected or raw_expected == raw_model_name) and canonical_group_name:
-        expected = canonical_group_name
-    else:
-        expected = raw_expected or raw_model_name
+    expected = payload.expected_model.strip() or raw_model_name
     matches_expected: bool | None = None
     if expected and (prediction or prediction_name):
         matches_expected = verification_models_match(

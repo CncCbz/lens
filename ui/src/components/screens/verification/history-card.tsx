@@ -229,7 +229,9 @@ export function VerificationHistoryCard({
                         decision: row.decision,
                         prediction: row.prediction,
                         prediction_name: row.prediction_name,
+                        expected_model: row.expected_model,
                         model_name: row.model_name,
+                        expected_probability: row.expected_probability ?? null,
                         matches_expected: row.matches_expected ?? null,
                       }}
                       thresholds={thresholds}

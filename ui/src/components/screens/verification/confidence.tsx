@@ -36,44 +36,66 @@ export function matchState(matches: boolean | null | undefined): MatchState {
   return "unknown";
 }
 
-const VARIANT_SUFFIX_RE =
-  /-(?:free|paid|online|latest|high|medium|low|minimal|xhigh|max|\d{4}|\d{8})$/i;
+const GATEWAY_SUFFIX_RE =
+  /-(?:free|paid|online|latest|high|medium|low|minimal|xhigh|max)$/i;
+const DATE_SUFFIX_RE = /-(\d{4}|\d{8})$/;
 
-function normalizeModelTokens(value: string): Set<string> {
+type ModelIdentity = {
+  strict: string;
+  base: string;
+  dateSuffix: string;
+};
+
+function extractModelIdentities(value: string): ModelIdentity[] {
   const raw = value.trim().toLowerCase();
-  if (!raw) return new Set();
-  const seeds = new Set<string>([raw]);
+  if (!raw) return [];
+  const seeds: string[] = [];
   if (raw.includes("/")) {
     const tail = raw.slice(raw.lastIndexOf("/") + 1).trim();
-    if (tail) seeds.add(tail);
+    if (tail) seeds.push(tail);
   }
-  const expanded = new Set<string>();
+  seeds.push(raw);
+  const identities: ModelIdentity[] = [];
+  const seen = new Set<string>();
   for (const seed of seeds) {
     let current = seed;
     while (current) {
-      expanded.add(current);
       const stripped = current
-        .replace(VARIANT_SUFFIX_RE, "")
+        .replace(GATEWAY_SUFFIX_RE, "")
         .replace(/^[\s._-]+|[\s._-]+$/g, "");
       if (!stripped || stripped === current) break;
       current = stripped;
     }
+    const strict = current.replace(/[\s._-]+/g, "-").replace(/^-+|-+$/g, "");
+    if (!strict) continue;
+    const dateMatch = DATE_SUFFIX_RE.exec(strict);
+    const dateSuffix = dateMatch ? dateMatch[1] : "";
+    const base = dateMatch
+      ? strict.slice(0, dateMatch.index).replace(/-+$/g, "") || strict
+      : strict;
+    const key = `${strict}|${base}|${dateSuffix}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      identities.push({ strict, base, dateSuffix });
+    }
   }
-  const tokens = new Set<string>();
-  for (const item of expanded) {
-    tokens.add(item);
-    const canonical = item.replace(/[\s._-]+/g, "-").replace(/^-+|-+$/g, "");
-    if (canonical) tokens.add(canonical);
-  }
-  return tokens;
+  return identities;
 }
 
 function modelsMatch(claimed: string, ...candidates: string[]): boolean {
-  const claimedTokens = normalizeModelTokens(claimed);
-  if (claimedTokens.size === 0) return false;
+  const claimedIds = extractModelIdentities(claimed);
+  if (claimedIds.length === 0) return false;
   for (const candidate of candidates) {
-    for (const token of normalizeModelTokens(candidate)) {
-      if (claimedTokens.has(token)) return true;
+    for (const cand of extractModelIdentities(candidate)) {
+      for (const claim of claimedIds) {
+        if (claim.strict === cand.strict) return true;
+        if (
+          claim.base === cand.base &&
+          (!claim.dateSuffix || !cand.dateSuffix)
+        ) {
+          return true;
+        }
+      }
     }
   }
   return false;
@@ -176,7 +198,7 @@ function VerdictTooltipBody({
 }) {
   const state = resolveMatch(verdict);
   const identified = verdict?.prediction_name || verdict?.prediction || "";
-  const claimed = verdict?.expected_model || verdict?.model_name || "";
+  const claimed = verdict?.model_name || verdict?.expected_model || "";
   // The winner's number describes a different model, so each one carries its
   // own so the two are never read as a single confidence.
   const identifiedProbability = verdict?.probability;
@@ -188,15 +210,15 @@ function VerdictTooltipBody({
     tone: string,
   ) => (
     <span className="flex w-full items-baseline justify-between gap-3">
-      <span className="text-background/60">{label}</span>
+      <span className="shrink-0 text-background/60">{label}</span>
       <span className={cn("font-mono", tone)}>{name || "—"}</span>
-      <span className="tabular-nums text-background/80">
+      <span className="shrink-0 tabular-nums text-background/80">
         {formatPercent(probability)}
       </span>
     </span>
   );
   return (
-    <div className="flex w-64 flex-col items-stretch gap-1.5 text-left">
+    <div className="flex w-max min-w-64 max-w-md flex-col items-stretch gap-1.5 text-left">
       <span className={cn("font-medium", MATCH_CLASS[state])}>
         {state === "match"
           ? titleForLocale(locale, "识别模型与名称一致", "Name matches model")

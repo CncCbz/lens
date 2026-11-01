@@ -584,6 +584,7 @@ export type ModelVerificationResult = {
   used_outputs: number;
   model_like?: boolean | null;
   expected_model: string;
+  expected_probability?: number | null;
   matches_expected?: boolean | null;
   error_message: string;
   results: ModelVerificationCandidate[];

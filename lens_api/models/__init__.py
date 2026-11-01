@@ -1408,6 +1408,7 @@ class ModelVerificationResult(StrictBaseModel):
     used_outputs: int = 0
     model_like: bool | None = None
     expected_model: str = ""
+    expected_probability: float | None = None
     matches_expected: bool | None = None
     error_message: str = ""
     results: list[ModelVerificationCandidate] = Field(default_factory=list)

@@ -15,53 +15,72 @@ from ..models import (
     ModelVerificationResult,
     ModelVerificationSample,
 )
-from .entities import (
-    ModelGroupEntity,
-    ModelGroupItemEntity,
-    SiteModelVerificationEntity,
-)
+from .entities import SiteModelVerificationEntity
 
-_VARIANT_SUFFIX_RE = re.compile(
-    r"-(?:free|paid|online|latest|high|medium|low|minimal|xhigh|max|\d{4}|\d{8})$",
+_GATEWAY_SUFFIX_RE = re.compile(
+    r"-(?:free|paid|online|latest|high|medium|low|minimal|xhigh|max)$",
     re.IGNORECASE,
 )
+_DATE_SUFFIX_RE = re.compile(r"-(\d{4}|\d{8})$")
 _SEPARATOR_RE = re.compile(r"[\s._-]+")
 
 
-def normalize_verification_model_tokens(value: str | None) -> set[str]:
+def _extract_model_identities(value: str | None) -> list[tuple[str, str, str]]:
+    """Return (strict_norm, base_norm, date_suffix) tuples for a model name."""
     raw = (value or "").strip().lower()
     if not raw:
-        return set()
-    seeds = {raw}
+        return []
+    seeds: list[str] = []
     if "/" in raw:
         tail = raw.rsplit("/", 1)[-1].strip()
         if tail:
-            seeds.add(tail)
-    expanded: set[str] = set()
-    for seed in list(seeds):
+            seeds.append(tail)
+    seeds.append(raw)
+    identities: list[tuple[str, str, str]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for seed in seeds:
         current = seed
         while current:
-            expanded.add(current)
-            stripped = _VARIANT_SUFFIX_RE.sub("", current).strip("-._ ")
+            stripped = _GATEWAY_SUFFIX_RE.sub("", current).strip("-._ ")
             if not stripped or stripped == current:
                 break
             current = stripped
+        strict = _SEPARATOR_RE.sub("-", current).strip("-")
+        if not strict:
+            continue
+        date_match = _DATE_SUFFIX_RE.search(strict)
+        if date_match:
+            date_suffix = date_match.group(1)
+            base = strict[: date_match.start()].strip("-") or strict
+        else:
+            date_suffix = ""
+            base = strict
+        item = (strict, base, date_suffix)
+        if item not in seen:
+            seen.add(item)
+            identities.append(item)
+    return identities
+
+
+def normalize_verification_model_tokens(value: str | None) -> set[str]:
     tokens: set[str] = set()
-    for item in expanded:
-        tokens.add(item)
-        canonical = _SEPARATOR_RE.sub("-", item).strip("-")
-        if canonical:
-            tokens.add(canonical)
+    for strict, base, _ in _extract_model_identities(value):
+        tokens.add(strict)
+        tokens.add(base)
     return tokens
 
 
 def verification_models_match(claimed: str | None, *candidates: str | None) -> bool:
-    claimed_tokens = normalize_verification_model_tokens(claimed)
-    if not claimed_tokens:
+    claimed_ids = _extract_model_identities(claimed)
+    if not claimed_ids:
         return False
     for candidate in candidates:
-        if normalize_verification_model_tokens(candidate) & claimed_tokens:
-            return True
+        for cand_strict, cand_base, cand_date in _extract_model_identities(candidate):
+            for claim_strict, claim_base, claim_date in claimed_ids:
+                if claim_strict == cand_strict:
+                    return True
+                if claim_base == cand_base and (not claim_date or not cand_date):
+                    return True
     return False
 
 
@@ -110,17 +129,14 @@ def _load_samples(raw: str) -> list[ModelVerificationSample]:
 def _to_result(
     entity: SiteModelVerificationEntity,
     site_name: str = "",
-    expected_model: str = "",
 ) -> ModelVerificationResult:
-    claimed = expected_model.strip() or entity.model_name
+    claimed = entity.model_name
     matches_expected = (
         None if entity.matches_expected is None else bool(entity.matches_expected)
     )
     if entity.prediction or entity.prediction_name:
         matches_expected = verification_models_match(
             claimed, entity.prediction, entity.prediction_name
-        ) or verification_models_match(
-            entity.model_name, entity.prediction, entity.prediction_name
         )
     return ModelVerificationResult(
         id=entity.id,
@@ -131,6 +147,7 @@ def _to_result(
         credential_id=entity.credential_id,
         model_name=entity.model_name,
         expected_model=claimed,
+        expected_probability=_expected_probability(entity.results_json, claimed),
         channel_id=entity.channel_id,
         protocol=entity.protocol,
         reasoning_effort=entity.reasoning_effort,
@@ -172,21 +189,27 @@ def _expected_probability(results_json: str, *claimed_names: str) -> float | Non
         return None
     if not isinstance(rows, list):
         return None
-    wanted_exact = {name.lower() for name in claims}
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        for key in ("model", "display_name"):
-            value = str(row.get(key) or "").lower()
-            if value and value in wanted_exact:
-                probability = row.get("probability")
-                if probability is None:
-                    return None
-                try:
-                    return float(probability)
-                except (TypeError, ValueError):
-                    return None
     for claimed in claims:
+        claimed_ids = _extract_model_identities(claimed)
+        if not claimed_ids:
+            continue
+        strict_dated = {strict for strict, _, date_suffix in claimed_ids if date_suffix}
+        if strict_dated:
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                for key in ("model", "display_name"):
+                    for cand_strict, _, _ in _extract_model_identities(
+                        str(row.get(key) or "")
+                    ):
+                        if cand_strict in strict_dated:
+                            probability = row.get("probability")
+                            if probability is None:
+                                return None
+                            try:
+                                return float(probability)
+                            except (TypeError, ValueError):
+                                return None
         for row in rows:
             if not isinstance(row, dict):
                 continue
@@ -203,34 +226,6 @@ def _expected_probability(results_json: str, *claimed_names: str) -> float | Non
                 except (TypeError, ValueError):
                     return None
     return None
-
-
-async def _load_canonical_group_map(
-    session: AsyncSession,
-) -> dict[tuple[str, str, str], str]:
-    rows = (
-        await session.execute(
-            select(
-                ModelGroupItemEntity.channel_id,
-                ModelGroupItemEntity.credential_id,
-                ModelGroupItemEntity.model_name,
-                ModelGroupEntity.name,
-            )
-            .join(
-                ModelGroupEntity,
-                ModelGroupEntity.id == ModelGroupItemEntity.group_id,
-            )
-            .where(ModelGroupEntity.route_group_id == "")
-            .where(ModelGroupItemEntity.enabled == 1)
-            .order_by(ModelGroupEntity.name.asc())
-        )
-    ).all()
-    mapping: dict[tuple[str, str, str], str] = {}
-    for channel_id, credential_id, model_name, group_name in rows:
-        key = (str(channel_id), str(credential_id), str(model_name))
-        if key not in mapping and str(group_name).strip():
-            mapping[key] = str(group_name).strip()
-    return mapping
 
 
 class VerificationStore:
@@ -341,22 +336,8 @@ class VerificationStore:
         async with self._session_factory() as session:
             entities = (await session.execute(items_stmt)).scalars().all()
             total = int((await session.execute(count_stmt)).scalar_one())
-            group_map = await _load_canonical_group_map(session)
         return ModelVerificationPage(
-            items=[
-                _to_result(
-                    entity,
-                    expected_model=group_map.get(
-                        (
-                            entity.channel_id,
-                            entity.credential_id,
-                            entity.model_name,
-                        ),
-                        "",
-                    ),
-                )
-                for entity in entities
-            ],
+            items=[_to_result(entity) for entity in entities],
             total=total,
             limit=safe_limit,
             offset=safe_offset,
@@ -376,7 +357,6 @@ class VerificationStore:
                 .scalars()
                 .all()
             )
-            group_map = await _load_canonical_group_map(session)
         seen: set[tuple[str, str, str]] = set()
         latest: list[ModelVerificationLatest] = []
         for entity in entities:
@@ -384,13 +364,7 @@ class VerificationStore:
             if key in seen:
                 continue
             seen.add(key)
-            claimed = (
-                group_map.get(
-                    (entity.channel_id, entity.credential_id, entity.model_name),
-                    "",
-                )
-                or entity.model_name
-            )
+            claimed = entity.model_name
             matches_expected = (
                 None
                 if entity.matches_expected is None
@@ -399,8 +373,6 @@ class VerificationStore:
             if entity.prediction or entity.prediction_name:
                 matches_expected = verification_models_match(
                     claimed, entity.prediction, entity.prediction_name
-                ) or verification_models_match(
-                    entity.model_name, entity.prediction, entity.prediction_name
                 )
             latest.append(
                 ModelVerificationLatest(
@@ -417,7 +389,7 @@ class VerificationStore:
                     # Only the claimed name: including the prediction would
                     # resolve back to the winner and defeat the point.
                     expected_probability=_expected_probability(
-                        entity.results_json, claimed, entity.model_name
+                        entity.results_json, claimed
                     ),
                     matches_expected=matches_expected,
                     error_message=entity.error_message,
