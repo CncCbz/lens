@@ -51,6 +51,14 @@ from ..shared import (
 
 _EnsureStatus = Literal["create", "update", "unchanged", "skipped"]
 
+# A route chain (variant -> variant -> ... -> execution group) is walked on every
+# request, so cap it as a guard against cycles written directly to the database.
+_ROUTE_CHAIN_LIMIT = 32
+
+
+def _route_parent_id(group: ModelGroupEntity | ModelGroup) -> str:
+    return (group.route_group_id or "").strip()
+
 
 def _parse_json_object(value: str | None) -> dict[str, Any]:
     try:
@@ -877,15 +885,24 @@ class GroupRepository:
                 .all()
             )
             has_inbound_route_group = bool(inbound_route_groups)
-            if (
-                payload.protocols is not None
-                and has_inbound_route_group
-                and not next_route_group_id
-                and set(current_protocols) - set(next_protocols)
-            ):
-                raise ValueError(
-                    "Execution groups referenced by route groups cannot remove protocols"
-                )
+            if payload.protocols is not None and has_inbound_route_group:
+                # A group with inbound variants may itself be a variant now, so
+                # the coverage check applies to every such group, not only to
+                # execution groups. Losing a protocol here would leave the
+                # dependent variants unsavable afterwards.
+                for child_group in inbound_route_groups:
+                    child_protocols = _parse_group_protocols(child_group)
+                    missing = [
+                        protocol
+                        for protocol in child_protocols
+                        if protocol not in set(next_protocols)
+                    ]
+                    if missing:
+                        missing_str = ", ".join(protocol.value for protocol in missing)
+                        raise ValueError(
+                            "Dependent route group protocols must stay covered: "
+                            f"{child_group.name}: {missing_str}"
+                        )
             current_items = await self._load_group_items(
                 session, [group_id, *[item.id for item in inbound_route_groups]]
             )
@@ -913,6 +930,8 @@ class GroupRepository:
                 exclude_group_id=group_id,
             )
             if route_group is not None and inbound_route_groups:
+                # Variants may themselves be parents now, so the chain is kept as
+                # written; only the protocol coverage of the new target matters.
                 target_protocols = set(_parse_group_protocols(route_group))
                 for child_group in inbound_route_groups:
                     child_protocols = _parse_group_protocols(child_group)
@@ -922,9 +941,6 @@ class GroupRepository:
                         raise ValueError(
                             f"Route target protocols must cover dependent group {child_group.name}: {missing_str}"
                         )
-                    child_group.route_group_id = route_group.id
-                    if not current_items.get(child_group.id) and next_items:
-                        self._replace_group_items(session, child_group.id, next_items)
 
             changes = payload.model_dump(exclude_unset=True)
             for key, value in changes.items():
@@ -1112,6 +1128,48 @@ class GroupRepository:
             await session.delete(entity)
             await session.commit()
 
+    async def _assert_route_chain_is_acyclic(
+        self,
+        session: AsyncSession,
+        route_group: ModelGroupEntity,
+        exclude_group_id: str | None = None,
+    ) -> None:
+        """Reject a parent whose own chain leads back to the group being written."""
+        seen = set() if exclude_group_id is None else {exclude_group_id}
+        current = route_group
+        hops = 0
+        while _route_parent_id(current):
+            parent_id = _route_parent_id(current)
+            if parent_id in seen:
+                raise ValueError("Model group route chain would form a cycle")
+            seen.add(parent_id)
+            parent = await session.get(ModelGroupEntity, parent_id)
+            if parent is None:
+                raise ValueError(f"Route target model group not found: {parent_id}")
+            current = parent
+            hops += 1
+            if hops > _ROUTE_CHAIN_LIMIT:
+                raise ValueError("Model group route chain is too deep")
+
+    async def resolve_route_chain(self, group_id: str) -> list[ModelGroup]:
+        """Return `[group, parent, ..., root]` for the given model group."""
+        async with self._session_factory() as session:
+            entities: list[ModelGroupEntity] = []
+            seen: set[str] = set()
+            current_id = group_id
+            while current_id:
+                if current_id in seen:
+                    raise ValueError("Model group route chain forms a cycle")
+                seen.add(current_id)
+                entity = await session.get(ModelGroupEntity, current_id)
+                if entity is None:
+                    raise KeyError(current_id)
+                entities.append(entity)
+                current_id = _route_parent_id(entity)
+                if len(entities) > _ROUTE_CHAIN_LIMIT:
+                    raise ValueError("Model group route chain is too deep")
+            return await self._hydrate_groups(session, entities)
+
     async def _validate_group_payload(
         self,
         session: AsyncSession,
@@ -1160,8 +1218,8 @@ class GroupRepository:
                     f"Route target protocols must cover source protocols: {missing}"
                 )
             if route_group.route_group_id.strip():
-                raise ValueError(
-                    f"Route target must be an execution group: {route_group.name}"
+                await self._assert_route_chain_is_acyclic(
+                    session, route_group, exclude_group_id
                 )
 
         normalized_items = items or []
@@ -1254,61 +1312,79 @@ class GroupRepository:
     ) -> list[ModelGroup]:
         if not entities:
             return []
-        # Include target execution groups so route groups can inherit
-        # their pi config (and resolve route group names).
-        route_group_ids = [
-            item.route_group_id for item in entities if item.route_group_id.strip()
-        ]
-        existing_ids = {item.id for item in entities}
-        missing_target_ids = sorted(set(route_group_ids) - existing_ids)
+        # Load the whole ancestor chain of every route group so inherited
+        # pricing, pi config and multimodal flags resolve through nested variants.
         all_entities = list(entities)
-        if missing_target_ids:
+        known_ids = {item.id for item in all_entities}
+        pending_ids = sorted(
+            {
+                parent_id
+                for item in all_entities
+                if (parent_id := _route_parent_id(item)) and parent_id not in known_ids
+            }
+        )
+        while pending_ids and len(all_entities) < _ROUTE_CHAIN_LIMIT * 8:
             extra_rows = (
                 (
                     await session.execute(
                         select(ModelGroupEntity).where(
-                            ModelGroupEntity.id.in_(missing_target_ids)
+                            ModelGroupEntity.id.in_(pending_ids)
                         )
                     )
                 )
                 .scalars()
                 .all()
             )
-            all_entities.extend(extra_rows)
+            new_rows = [row for row in extra_rows if row.id not in known_ids]
+            if not new_rows:
+                break
+            all_entities.extend(new_rows)
+            known_ids.update(row.id for row in new_rows)
+            pending_ids = sorted(
+                {
+                    parent_id
+                    for row in new_rows
+                    if (parent_id := _route_parent_id(row))
+                    and parent_id not in known_ids
+                }
+            )
 
+        entity_by_id = {item.id: item for item in all_entities}
         items_by_group = await self._load_group_items(
             session, [item.id for item in all_entities]
         )
-        route_name_by_id: dict[str, str] = {}
-        if route_group_ids:
-            route_rows = (
-                await session.execute(
-                    select(ModelGroupEntity.id, ModelGroupEntity.name).where(
-                        ModelGroupEntity.id.in_(sorted(set(route_group_ids)))
-                    )
-                )
-            ).all()
-            route_name_by_id = {
-                str(group_id): str(group_name) for group_id, group_name in route_rows
-            }
+        route_name_by_id = {
+            group_id: entity.name for group_id, entity in entity_by_id.items()
+        }
         prices_by_key = await self._load_model_prices_by_keys(
             session, [normalize_model_key(item.name) for item in all_entities]
         )
+
+        def chain_prices(entity: ModelGroupEntity) -> ModelPriceEntity | None:
+            own = prices_by_key.get(normalize_model_key(entity.name))
+            if own is not None:
+                return own
+            current = entity
+            hops = 0
+            while (
+                parent_id := _route_parent_id(current)
+            ) and hops < _ROUTE_CHAIN_LIMIT:
+                parent = entity_by_id.get(parent_id)
+                if parent is None:
+                    return None
+                inherited = prices_by_key.get(normalize_model_key(parent.name))
+                if inherited is not None:
+                    return inherited
+                current = parent
+                hops += 1
+            return None
+
         hydrated = [
             self._to_group(
                 item,
                 items_by_group.get(item.id, []),
-                prices_by_key.get(normalize_model_key(item.name))
-                or (
-                    prices_by_key.get(
-                        normalize_model_key(
-                            route_name_by_id.get(item.route_group_id, "")
-                        )
-                    )
-                    if item.route_group_id.strip()
-                    else None
-                ),
-                route_name_by_id.get(item.route_group_id, ""),
+                chain_prices(item),
+                route_name_by_id.get(_route_parent_id(item), ""),
             )
             for item in all_entities
         ]
@@ -1316,25 +1392,33 @@ class GroupRepository:
         for group in hydrated:
             if not group.route_group_id.strip():
                 continue
-            target = groups_by_id.get(group.route_group_id)
-            if target is None:
-                continue
-            if not group.multimodal_resolved and target.multimodal_resolved:
-                group.multimodal_resolved = dict(target.multimodal_resolved)
-            if group.pi_config.strip() or not target.pi_config.strip():
-                continue
-            # Inherit the target config but keep the route group's own
-            # model id/name (it is the model name clients call).
-            try:
-                payload = json.loads(target.pi_config)
-            except ValueError:
-                payload = None
-            if isinstance(payload, dict) and "id" in payload:
-                payload["id"] = group.name
-                payload["name"] = group.name
-                group.pi_config = json.dumps(payload, indent=2, ensure_ascii=False)
-            else:
-                group.pi_config = target.pi_config
+            # Walk up the chain until a variant finds multimodal flags or a pi
+            # config to inherit; the nearest ancestor wins.
+            current = group
+            hops = 0
+            while hops < _ROUTE_CHAIN_LIMIT:
+                target = groups_by_id.get(current.route_group_id.strip())
+                if target is None:
+                    break
+                if not group.multimodal_resolved and target.multimodal_resolved:
+                    group.multimodal_resolved = dict(target.multimodal_resolved)
+                if group.pi_config.strip() or not target.pi_config.strip():
+                    current = target
+                    hops += 1
+                    continue
+                # Inherit the target config but keep the route group's own
+                # model id/name (it is the model name clients call).
+                try:
+                    payload = json.loads(target.pi_config)
+                except ValueError:
+                    payload = None
+                if isinstance(payload, dict) and "id" in payload:
+                    payload["id"] = group.name
+                    payload["name"] = group.name
+                    group.pi_config = json.dumps(payload, indent=2, ensure_ascii=False)
+                else:
+                    group.pi_config = target.pi_config
+                break
         return hydrated
 
     async def _load_model_prices_by_keys(

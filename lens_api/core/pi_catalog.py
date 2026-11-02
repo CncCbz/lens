@@ -559,6 +559,17 @@ def collect_group_models(
         override_id = getattr(group, "name", "") if route_group_id else ""
         if route_group_id:
             target = groups_by_id.get(route_group_id)
+            # Variants can nest, so follow the chain to the nearest group that
+            # actually owns enabled members.
+            hop = 0
+            while target is not None and hop < 32:
+                if getattr(target, "items", []):
+                    break
+                next_id = str(getattr(target, "route_group_id", "") or "").strip()
+                if not next_id:
+                    break
+                target = groups_by_id.get(next_id)
+                hop += 1
             if target is None:
                 continue
         items_source = (

@@ -73,6 +73,8 @@ import {
   protocolBadgeClassName,
   protocolLabel,
   protocolOptions,
+  routeGroupChain,
+  routeGroupRootId,
   type GroupRow,
   type GroupSort,
   type ModelPrefixOption,
@@ -101,6 +103,7 @@ export function GroupsOverview({
   setSelectedModelPrefix,
   isLoading,
   groupsIsError,
+  allGroups,
   visibleGroups,
   busyId,
   cardDragging,
@@ -140,6 +143,7 @@ export function GroupsOverview({
   setSelectedModelPrefix: Dispatch<SetStateAction<SelectedModelPrefix>>;
   isLoading: boolean;
   groupsIsError: boolean;
+  allGroups: GroupRow[];
   visibleGroups: GroupRow[];
   busyId: string | null;
   cardDragging: { groupId: string; index: number } | null;
@@ -183,21 +187,21 @@ export function GroupsOverview({
   const copyModelNameLabel =
     locale === "zh-CN" ? "复制模型名称" : "Copy model name";
 
-  const topLevelIds = new Set(
-    visibleGroups.filter((group) => !group.is_route_group).map((g) => g.id),
+  // Build the chain map from every group: a filtered view may drop an
+  // intermediate ancestor and break the chain.
+  const groupById = new Map<string, ModelGroup>(
+    allGroups.map((group) => [group.id, group]),
   );
-  const variantsByParentId = new Map<string, GroupRow[]>();
+  const variantsByRootId = new Map<string, GroupRow[]>();
   for (const item of visibleGroups) {
-    const parentId = item.route_group_id ?? "";
-    if (item.is_route_group && topLevelIds.has(parentId)) {
-      const list = variantsByParentId.get(parentId) ?? [];
-      list.push(item);
-      variantsByParentId.set(parentId, list);
-    }
+    if (!item.is_route_group) continue;
+    const rootId = routeGroupRootId(item, groupById);
+    const list = variantsByRootId.get(rootId) ?? [];
+    list.push(item);
+    variantsByRootId.set(rootId, list);
   }
   const topLevelGroups = visibleGroups.filter(
-    (item) =>
-      !item.is_route_group || !topLevelIds.has(item.route_group_id ?? ""),
+    (item) => !item.is_route_group || !groupById.has(item.route_group_id ?? ""),
   );
 
   function renderMemberPills(group: GroupRow) {
@@ -341,7 +345,7 @@ export function GroupsOverview({
               <ItemGroup className="gap-3">
                 {topLevelGroups.map((group) => {
                   const GroupAvatar = getModelGroupAvatar(group.name);
-                  const variants = variantsByParentId.get(group.id) ?? [];
+                  const variants = variantsByRootId.get(group.id) ?? [];
                   return (
                     <Item
                       key={group.id}
@@ -509,6 +513,15 @@ export function GroupsOverview({
                             <div className="flex flex-col gap-2.5">
                               {variants.map((variant) => {
                                 const hasCustomOrder = variant.items.length > 0;
+                                const ancestorChain = routeGroupChain(
+                                  variant,
+                                  groupById,
+                                );
+                                const viaLabel = [...ancestorChain]
+                                  .reverse()
+                                  .slice(1)
+                                  .map((parent) => parent.name)
+                                  .join(" → ");
                                 return (
                                   <div
                                     key={variant.id}
@@ -550,6 +563,13 @@ export function GroupsOverview({
                                         >
                                           <Copy />
                                         </Button>
+                                        {viaLabel ? (
+                                          <span className="text-xs text-muted-foreground">
+                                            {locale === "zh-CN"
+                                              ? `经由 ${viaLabel}`
+                                              : `via ${viaLabel}`}
+                                          </span>
+                                        ) : null}
                                         <Badge
                                           variant="outline"
                                           className="px-2 py-0.5 text-[11px]"
@@ -609,6 +629,19 @@ export function GroupsOverview({
                                             />
                                           </>
                                         ) : null}
+                                        <Button
+                                          type="button"
+                                          variant="outline"
+                                          size="sm"
+                                          onClick={() =>
+                                            openCreateVariant(variant)
+                                          }
+                                        >
+                                          <Plus data-icon="inline-start" />
+                                          {locale === "zh-CN"
+                                            ? "派生"
+                                            : "Variant"}
+                                        </Button>
                                         <Button
                                           type="button"
                                           variant="ghost"

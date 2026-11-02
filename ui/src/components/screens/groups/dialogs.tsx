@@ -107,6 +107,8 @@ export function GroupEditorDialog({
   setForm,
   toggleProtocol,
   routeTargetOptions,
+  routeTargetSourceName,
+  routeTargetSourceItems,
   changeRouteTarget,
   changeRouteMemberMode,
   syncMembersFromRouteTarget,
@@ -154,6 +156,8 @@ export function GroupEditorDialog({
   setForm: Dispatch<SetStateAction<FormState>>;
   toggleProtocol: (protocol: ProtocolKind) => void;
   routeTargetOptions: ModelGroup[];
+  routeTargetSourceName: string;
+  routeTargetSourceItems: ModelGroup["items"];
   changeRouteTarget: (routeGroupId: string) => void;
   changeRouteMemberMode: (mode: "inherit" | "custom") => void;
   syncMembersFromRouteTarget: () => void;
@@ -661,9 +665,7 @@ export function GroupEditorDialog({
                         <>
                           当前跟随{" "}
                           <strong className="text-foreground">
-                            {routeTargetOptions.find(
-                              (group) => group.id === form.route_group_id,
-                            )?.name || form.route_group_id}
+                            {routeTargetSourceName || form.route_group_id}
                           </strong>{" "}
                           的渠道与优先级顺序
                         </>
@@ -671,9 +673,7 @@ export function GroupEditorDialog({
                         <>
                           Following channels and priority order of{" "}
                           <strong className="text-foreground">
-                            {routeTargetOptions.find(
-                              (group) => group.id === form.route_group_id,
-                            )?.name || form.route_group_id}
+                            {routeTargetSourceName || form.route_group_id}
                           </strong>
                         </>
                       )}
@@ -1213,9 +1213,7 @@ export function GroupEditorDialog({
                     locale={locale}
                     items={
                       form.route_group_id && form.items.length === 0
-                        ? (routeTargetOptions.find(
-                            (group) => group.id === form.route_group_id,
-                          )?.items ?? [])
+                        ? routeTargetSourceItems
                         : form.items
                     }
                     rules={form.match_overrides}

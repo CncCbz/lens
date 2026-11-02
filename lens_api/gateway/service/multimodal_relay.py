@@ -538,7 +538,7 @@ async def _maybe_relay_multimodal(
     if not grouped["image"] and not grouped["audio"]:
         return body
 
-    resolved_group = plan.resolved_group
+    resolved_group = getattr(plan, "execution_group", None) or plan.resolved_group
     current_index = _last_user_message_index(body, protocol)
     tasks: list[tuple[str, tuple[int, int, dict[str, Any]], str]] = []
     drops: list[tuple[int, int]] = []

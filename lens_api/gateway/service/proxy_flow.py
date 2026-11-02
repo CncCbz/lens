@@ -749,6 +749,17 @@ async def _try_target(
                 match_rules.extend(
                     rule.model_dump() for rule in plan.resolved_group.match_overrides
                 )
+        # Nested chains can put the execution group above the direct parent; its
+        # rules apply last, matching the single-hop "execution group wins" rule.
+        execution_group = plan.execution_group
+        if execution_group is not None and execution_group.id not in {
+            group.id
+            for group in (plan.requested_group, plan.resolved_group)
+            if group is not None
+        }:
+            match_rules.extend(
+                rule.model_dump() for rule in execution_group.match_overrides
+            )
         try:
             upstream_body, match_headers = apply_match_overrides(
                 match_rules,

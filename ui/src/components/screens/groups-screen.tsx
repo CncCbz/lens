@@ -52,6 +52,8 @@ import {
   moveItems,
   protocolBaseUrl,
   protocolConfigIdFromChannelId,
+  routeGroupChain,
+  routeGroupRootId,
   toForm,
   toPayload,
   type CandidateChannelGroup,
@@ -302,20 +304,49 @@ export function GroupsScreen() {
     [channelMap, groups],
   );
 
-  const routeTargetOptions = useMemo(
-    () =>
-      (groups ?? [])
-        .filter(
-          (group) =>
-            form.protocols.every((protocol) =>
-              group.protocols.includes(protocol),
-            ) &&
-            !group.route_group_id &&
-            group.id !== editingId,
-        )
-        .sort((left, right) => left.name.localeCompare(right.name, locale)),
-    [editingId, form.protocols, groups, locale],
+  const groupById = useMemo(
+    () => new Map<string, ModelGroup>((groups ?? []).map((g) => [g.id, g])),
+    [groups],
   );
+
+  const routeTargetOptions = useMemo(() => {
+    const isSelfOrDescendant = (candidate: ModelGroup) => {
+      if (!editingId) return false;
+      const seen = new Set<string>();
+      let cursor: ModelGroup | undefined = candidate;
+      while (cursor && !seen.has(cursor.id)) {
+        if (cursor.id === editingId) return true;
+        seen.add(cursor.id);
+        const parentId = (cursor.route_group_id ?? "").trim();
+        cursor = parentId ? groupById.get(parentId) : undefined;
+      }
+      return false;
+    };
+    return (groups ?? [])
+      .filter(
+        (group) =>
+          form.protocols.every((protocol) =>
+            group.protocols.includes(protocol),
+          ) && !isSelfOrDescendant(group),
+      )
+      .sort((left, right) => left.name.localeCompare(right.name, locale));
+  }, [editingId, form.protocols, groupById, groups, locale]);
+
+  const routeTargetSource = useMemo(() => {
+    const seen = new Set<string>();
+    let cursor = form.route_group_id
+      ? groupById.get(form.route_group_id)
+      : undefined;
+    while (cursor && !seen.has(cursor.id)) {
+      seen.add(cursor.id);
+      if (cursor.items.length > 0) {
+        return { name: cursor.name, items: cursor.items };
+      }
+      const parentId = (cursor.route_group_id ?? "").trim();
+      cursor = parentId ? groupById.get(parentId) : undefined;
+    }
+    return { name: "", items: [] as ModelGroup["items"] };
+  }, [form.route_group_id, groupById]);
 
   const modelPrefixOptions = useMemo(
     () =>
@@ -334,8 +365,7 @@ export function GroupsScreen() {
 
   const visibleGroups = useMemo<GroupRow[]>(() => {
     const keyword = search.trim().toLowerCase();
-    const directMatchedIds = new Set<string>();
-    const parentIdsToInclude = new Set<string>();
+    const activeRootIds = new Set<string>();
     for (const group of groupRows) {
       if (
         effectiveSelectedModelPrefix !== "all" &&
@@ -349,9 +379,13 @@ export function GroupsScreen() {
       if (strategyFilter !== "all" && group.strategy !== strategyFilter)
         continue;
       if (keyword) {
+        const ancestorNames = routeGroupChain(group, groupById).map(
+          (parent) => parent.name,
+        );
         const haystack = [
           group.name,
           group.route_group_name,
+          ...ancestorNames,
           group.channel_summary,
           ...group.channel_names,
           ...group.items.map((item) => item.model_name),
@@ -360,18 +394,12 @@ export function GroupsScreen() {
           .toLowerCase();
         if (!haystack.includes(keyword)) continue;
       }
-      directMatchedIds.add(group.id);
-      const parentId = group.route_group_id ?? "";
-      if (parentId) {
-        parentIdsToInclude.add(parentId);
-      }
+      activeRootIds.add(routeGroupRootId(group, groupById));
     }
-    const filtered = groupRows.filter(
-      (group) =>
-        directMatchedIds.has(group.id) ||
-        parentIdsToInclude.has(group.id) ||
-        (Boolean(group.route_group_id) &&
-          directMatchedIds.has(group.route_group_id ?? "")),
+    // Keep whole families together: a matched variant still shows its root
+    // group, and a matched root still shows every descendant variant.
+    const filtered = groupRows.filter((group) =>
+      activeRootIds.has(routeGroupRootId(group, groupById)),
     );
 
     return [...filtered].sort((left, right) => {
@@ -391,6 +419,7 @@ export function GroupsScreen() {
     });
   }, [
     effectiveSelectedModelPrefix,
+    groupById,
     groupRows,
     locale,
     protocolFilter,
@@ -1471,10 +1500,16 @@ export function GroupsScreen() {
   }
 
   function syncMembersFromRouteTarget() {
-    const target = (groups ?? []).find(
-      (item) => item.id === form.route_group_id,
-    );
-    if (!target) return;
+    // Nested variants inherit from the nearest ancestor that owns members.
+    const seen = new Set<string>();
+    let target = groupById.get(form.route_group_id);
+    while (target && !seen.has(target.id)) {
+      seen.add(target.id);
+      if (target.items.length > 0) break;
+      const parentId = (target.route_group_id ?? "").trim();
+      target = parentId ? groupById.get(parentId) : undefined;
+    }
+    if (!target || target.items.length === 0) return;
     const parentItems = toForm(target).items;
     setForm((current) => {
       if (current.items.length === 0) {
@@ -1604,6 +1639,7 @@ export function GroupsScreen() {
           setSelectedModelPrefix={setSelectedModelPrefix}
           isLoading={isLoading}
           groupsIsError={groupsIsError}
+          allGroups={groupRows}
           visibleGroups={visibleGroups}
           busyId={busyId}
           cardDragging={cardDragging}
@@ -1648,6 +1684,8 @@ export function GroupsScreen() {
             setForm={setForm}
             toggleProtocol={toggleProtocol}
             routeTargetOptions={routeTargetOptions}
+            routeTargetSourceName={routeTargetSource.name}
+            routeTargetSourceItems={routeTargetSource.items}
             changeRouteTarget={changeRouteTarget}
             changeRouteMemberMode={changeRouteMemberMode}
             syncMembersFromRouteTarget={syncMembersFromRouteTarget}

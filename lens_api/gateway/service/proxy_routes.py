@@ -173,6 +173,23 @@ _OPENAI_LIST_PROTOCOLS: frozenset[ProtocolKind] = frozenset(
 _ALL_MODEL_LIST_PROTOCOLS: frozenset[ProtocolKind] = frozenset(ProtocolKind)
 
 
+def _execution_group(
+    group: ModelGroup, group_by_id: dict[str, ModelGroup]
+) -> ModelGroup | None:
+    """Return the nearest group in the route chain that owns members."""
+    current: ModelGroup | None = group
+    seen: set[str] = set()
+    while current is not None and current.id not in seen:
+        seen.add(current.id)
+        if current.items:
+            return current
+        parent_id = (current.route_group_id or "").strip()
+        if not parent_id:
+            return current
+        current = group_by_id.get(parent_id)
+    return None
+
+
 def _filtered_group_names(
     groups: list[ModelGroup],
     gateway_key: GatewayApiKey,
@@ -182,13 +199,7 @@ def _filtered_group_names(
     requested_protocols = frozenset(protocols)
 
     def has_enabled_item(group: ModelGroup) -> bool:
-        target = (
-            group
-            if group.route_group_id and group.items
-            else (
-                group_by_id.get(group.route_group_id) if group.route_group_id else group
-            )
-        )
+        target = _execution_group(group, group_by_id)
         return bool(
             target
             and any(

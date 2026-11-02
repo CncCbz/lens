@@ -594,6 +594,9 @@ class RoutingPlan:
     route_targets: list[RouteTarget] | None
     use_model_matching: bool
     cursor_key: str | None = None
+    # Nearest group in the route chain that actually owns members; the one whose
+    # capability flags and channel list describe what the request really hits.
+    execution_group: ModelGroup | None = None
 
 
 def _router_error_policy_config(value: Any) -> RouterErrorPolicyConfig:

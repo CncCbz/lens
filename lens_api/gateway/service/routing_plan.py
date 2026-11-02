@@ -39,34 +39,36 @@ async def _resolve_routing_plan(
         )
 
     resolved_group = matched_group
+    execution_group = matched_group
     if matched_group.route_group_id.strip():
         try:
-            resolved_group = await app_state.group_repo.get_group(
-                matched_group.route_group_id
-            )
+            chain = await app_state.group_repo.resolve_route_chain(matched_group.id)
         except KeyError as exc:
+            missing_id = exc.args[0] if exc.args else matched_group.route_group_id
+            raise LookupError(
+                f"Route target model group not found: {missing_id}"
+            ) from exc
+        except ValueError as exc:
+            raise LookupError(str(exc)) from exc
+        if len(chain) < 2:
             raise LookupError(
                 f"Route target model group not found: {matched_group.route_group_id}"
-            ) from exc
-        if resolved_group.route_group_id.strip():
-            raise LookupError(
-                f"Route target must be an execution group: {resolved_group.name}"
             )
-        if protocol not in resolved_group.protocols:
+        root_group = chain[-1]
+        resolved_group = chain[1]
+        # The nearest ancestor that carries members executes the request; every
+        # variant above it just renames the model.
+        execution_group = next((item for item in chain if item.items), root_group)
+        if protocol not in execution_group.protocols:
             supported = (
-                ", ".join(item.value for item in resolved_group.protocols) or "none"
+                ", ".join(item.value for item in execution_group.protocols) or "none"
             )
             raise LookupError(
-                f"Route target model group {resolved_group.name} for "
+                f"Route target model group {execution_group.name} for "
                 f"{matched_group.name} does not support protocol={protocol.value}; "
                 f"supported={supported}"
             )
     channel_map = {channel.id: channel for channel in channels}
-    execution_group = (
-        matched_group
-        if matched_group.route_group_id.strip() and matched_group.items
-        else resolved_group
-    )
     route_targets = [
         RouteTarget(
             channel=channel_map[item.channel_id],
@@ -95,6 +97,7 @@ async def _resolve_routing_plan(
         route_targets=route_targets,
         use_model_matching=False,
         cursor_key=f"{protocol.value}:{execution_group.id}",
+        execution_group=execution_group,
     )
 
 

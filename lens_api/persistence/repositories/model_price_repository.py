@@ -37,6 +37,8 @@ class ModelPriceRepository:
                 ModelPriceEntity, normalize_model_key(model_name)
             )
             if entity is None:
+                # Variants nest arbitrarily deep, so walk the whole route chain
+                # and bill with the nearest ancestor that has a price.
                 route_group_id = (
                     await session.execute(
                         select(ModelGroupEntity.route_group_id)
@@ -44,14 +46,20 @@ class ModelPriceRepository:
                         .limit(1)
                     )
                 ).scalar_one_or_none()
-                if route_group_id and str(route_group_id).strip():
+                hops = 0
+                while route_group_id and str(route_group_id).strip() and hops < 32:
                     target_group = await session.get(
                         ModelGroupEntity, str(route_group_id).strip()
                     )
-                    if target_group is not None:
-                        entity = await session.get(
-                            ModelPriceEntity, normalize_model_key(target_group.name)
-                        )
+                    if target_group is None:
+                        break
+                    entity = await session.get(
+                        ModelPriceEntity, normalize_model_key(target_group.name)
+                    )
+                    if entity is not None:
+                        break
+                    route_group_id = target_group.route_group_id
+                    hops += 1
             if entity is None:
                 return 0.0, 0.0, 0.0
 

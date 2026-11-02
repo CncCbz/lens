@@ -131,6 +131,35 @@ export type GroupRow = ModelGroup & {
   is_route_group: boolean;
 };
 
+/** Ancestors of a route group, nearest first; cycles stop the walk. */
+export function routeGroupChain(
+  group: GroupRow,
+  groupById: Map<string, ModelGroup>,
+): ModelGroup[] {
+  const chain: ModelGroup[] = [];
+  const seen = new Set<string>([group.id]);
+  let cursor: ModelGroup = group;
+  while (true) {
+    const parentId = (cursor.route_group_id ?? "").trim();
+    if (!parentId) break;
+    const parent = groupById.get(parentId);
+    if (!parent || seen.has(parent.id)) break;
+    seen.add(parent.id);
+    chain.push(parent);
+    cursor = parent;
+  }
+  return chain;
+}
+
+/** Top-level group a route group ultimately belongs to. */
+export function routeGroupRootId(
+  group: GroupRow,
+  groupById: Map<string, ModelGroup>,
+): string {
+  const chain = routeGroupChain(group, groupById);
+  return chain.length ? chain[chain.length - 1].id : group.id;
+}
+
 export type {
   ModelPrefixOption,
   SelectedModelPrefix,

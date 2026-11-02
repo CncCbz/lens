@@ -326,10 +326,17 @@ class BackupReplacersMixin:
                     raise ValueError(
                         f"Route target protocols must cover source protocols: {missing}"
                     )
-                if route_group.route_group_id:
-                    raise ValueError(
-                        f"Route target must be an execution group: {route_group.name}"
-                    )
+                seen_ids = {group.id}
+                cursor = route_group
+                while cursor is not None and cursor.route_group_id:
+                    if cursor.id in seen_ids:
+                        raise ValueError(
+                            f"Model group route chain forms a cycle: {cursor.name}"
+                        )
+                    seen_ids.add(cursor.id)
+                    cursor = groups_by_id.get(cursor.route_group_id)
+                if len(seen_ids) > 32:
+                    raise ValueError("Model group route chain is too deep")
 
             resolved_items: list[tuple[int, object, str, ProtocolKind]] = []
 
