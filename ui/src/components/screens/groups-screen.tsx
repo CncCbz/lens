@@ -132,6 +132,7 @@ export function GroupsScreen() {
   const [form, setForm] = useState<FormState>(emptyForm);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [savingGroup, setSavingGroup] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<ModelGroup | null>(null);
   const [modelTestForm, setModelTestForm] = useState<ChannelFormState | null>(
@@ -720,7 +721,11 @@ export function GroupsScreen() {
     setDialogOpen(true);
   }
 
-  async function saveGroup(payload: FormState, groupId: string | null) {
+  async function saveGroup(
+    payload: FormState,
+    groupId: string | null,
+    background = false,
+  ) {
     const savedGroup = await apiRequest<ModelGroup>(
       groupId ? "/admin/model-groups/" + groupId : "/admin/model-groups",
       {
@@ -728,7 +733,11 @@ export function GroupsScreen() {
         body: JSON.stringify(toPayload(payload)),
       },
     );
-    await invalidateGroupData();
+    if (background) {
+      void invalidateGroupData();
+    } else {
+      await invalidateGroupData();
+    }
     return savedGroup;
   }
 
@@ -741,6 +750,7 @@ export function GroupsScreen() {
       cache_write_price_per_million: number;
       context_window: number | null;
     },
+    background = false,
   ) {
     await apiRequest("/admin/model-prices", {
       method: "PUT",
@@ -750,6 +760,11 @@ export function GroupsScreen() {
         ...payload,
       }),
     });
+    if (background) {
+      void queryClient.invalidateQueries({ queryKey: ["model-groups"] });
+      void queryClient.invalidateQueries({ queryKey: ["route-preview"] });
+      return;
+    }
     await queryClient.invalidateQueries({ queryKey: ["model-groups"] });
     void queryClient.invalidateQueries({ queryKey: ["route-preview"] });
   }
@@ -818,10 +833,11 @@ export function GroupsScreen() {
       );
       return;
     }
+    setSavingGroup(true);
     try {
       const pricePayload = parsePriceForm(form);
-      const savedGroup = await saveGroup(form, editingId);
-      await saveGroupPrice(savedGroup.name, pricePayload);
+      const savedGroup = await saveGroup(form, editingId, true);
+      await saveGroupPrice(savedGroup.name, pricePayload, true);
       toast.success(
         editingId
           ? locale === "zh-CN"
@@ -841,6 +857,8 @@ export function GroupsScreen() {
           locale === "zh-CN" ? "保存模型组失败" : "Failed to save group",
         ),
       );
+    } finally {
+      setSavingGroup(false);
     }
   }
 
@@ -1680,6 +1698,7 @@ export function GroupsScreen() {
             editingId={editingId}
             locale={locale}
             submit={submit}
+            saving={savingGroup}
             form={form}
             setForm={setForm}
             toggleProtocol={toggleProtocol}

@@ -103,6 +103,7 @@ export function GroupEditorDialog({
   editingId,
   locale,
   submit,
+  saving,
   form,
   setForm,
   toggleProtocol,
@@ -152,6 +153,7 @@ export function GroupEditorDialog({
   editingId: string | null;
   locale: "zh-CN" | "en-US";
   submit: FormEventHandler<HTMLFormElement>;
+  saving: boolean;
   form: FormState;
   setForm: Dispatch<SetStateAction<FormState>>;
   toggleProtocol: (protocol: ProtocolKind) => void;
@@ -362,6 +364,7 @@ export function GroupEditorDialog({
             <Button
               variant="outline"
               type="button"
+              disabled={saving}
               onClick={() => setDialogOpen(false)}
             >
               {locale === "zh-CN" ? "取消" : "Cancel"}
@@ -369,8 +372,12 @@ export function GroupEditorDialog({
             <Button
               type="submit"
               form="group-editor-form"
-              disabled={form.protocols.length === 0}
+              disabled={form.protocols.length === 0 || saving}
             >
+              <RefreshCcw
+                data-icon="inline-start"
+                className={saving ? "animate-spin" : undefined}
+              />
               {editingId
                 ? locale === "zh-CN"
                   ? "保存模型组"
