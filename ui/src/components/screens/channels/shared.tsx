@@ -716,7 +716,8 @@ export function toForm(site: Site, locale: Locale = "zh-CN"): FormState {
           base_url_id: resolveBaseUrlId(baseUrls, protocolConfig.base_url_id),
           credential_id: protocolConfig.credential_id,
           models: Array.from(modelGroups.values()),
-          expanded: true,
+          // Editing an existing channel opens with every combination collapsed.
+          expanded: false,
         };
       },
     ),
@@ -852,31 +853,6 @@ export function toPayload(form: FormState): SitePayload {
       ];
     }),
   };
-}
-
-export function protocolConfigCredentialKeys(
-  protocolConfig: FormProtocolConfig,
-  baseUrlIds: Set<string>,
-) {
-  if (!baseUrlIds.has(protocolConfig.base_url_id)) return [];
-  return [[protocolConfig.base_url_id, protocolConfig.credential_id].join(":")];
-}
-
-export function duplicateProtocolConfigKeys(
-  protocolConfigs: FormProtocolConfig[],
-  baseUrls: Array<{ id: string }>,
-) {
-  const baseUrlIds = new Set(baseUrls.map((item) => item.id));
-  const counts = new Map<string, number>();
-  for (const item of protocolConfigs) {
-    if (protocolConfigEffectiveProtocols(item).length === 0) continue;
-    for (const key of protocolConfigCredentialKeys(item, baseUrlIds)) {
-      counts.set(key, (counts.get(key) ?? 0) + 1);
-    }
-  }
-  return new Set(
-    [...counts.entries()].filter(([, count]) => count > 1).map(([key]) => key),
-  );
 }
 
 export function invalidProtocolBaseUrlCount(form: FormState) {

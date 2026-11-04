@@ -49,7 +49,6 @@ import {
   compactProtocolLabel,
   credentialLabel,
   defaultProtocolConfigName,
-  formBaseUrlsForPayload,
   FormProtocolConfig,
   FormState,
   HeaderItem,
@@ -57,7 +56,6 @@ import {
   MAX_CHANNEL_CONCURRENCY,
   modelSupportedProtocols,
   protocolBadgeClassName,
-  protocolConfigCredentialKeys,
   protocolConfigEffectiveProtocols,
   protocolLabel,
 } from "./shared";
@@ -68,7 +66,6 @@ export function ProtocolConfigItem({
   protocolConfigIndex,
   locale,
   fetchingProtocolConfigIndex,
-  duplicatedProtocolConfigKeys,
   onUpdateProtocolConfig,
   onRemoveProtocolConfig,
   onAddManualModel,
@@ -85,7 +82,6 @@ export function ProtocolConfigItem({
   protocolConfigIndex: number;
   locale: Locale;
   fetchingProtocolConfigIndex: number | null;
-  duplicatedProtocolConfigKeys: Set<string>;
   onUpdateProtocolConfig: (
     index: number,
     patch: Partial<FormProtocolConfig>,
@@ -108,12 +104,6 @@ export function ProtocolConfigItem({
   // key the row can build from what it already has.
   const verdicts = useLatestVerdicts();
   const thresholds = useVerificationThresholds();
-  const submittedBaseUrls = formBaseUrlsForPayload(form);
-  const submittedBaseUrlIds = new Set(submittedBaseUrls.map((item) => item.id));
-  const protocolConfigDuplicated = protocolConfigCredentialKeys(
-    protocolConfig,
-    submittedBaseUrlIds,
-  ).some((key) => duplicatedProtocolConfigKeys.has(key));
   const activeCredentialIds = new Set(
     form.credentials
       .filter((item) => item.enabled && item.api_key.trim())
@@ -351,14 +341,6 @@ export function ProtocolConfigItem({
           </Button>
         </div>
       </div>
-
-      {protocolConfigDuplicated ? (
-        <div className="border-t border-border px-3.5 py-2 text-sm text-destructive">
-          {locale === "zh-CN"
-            ? "地址来源和密钥重复"
-            : "Duplicate Base URL and key"}
-        </div>
-      ) : null}
 
       {protocolConfig.expanded ? (
         <div className="grid border-t border-border lg:grid-cols-[360px_minmax(0,1fr)]">

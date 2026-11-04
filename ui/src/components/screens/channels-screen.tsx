@@ -75,12 +75,10 @@ import {
   createLocalId,
   credentialLabel,
   defaultBaseUrlId,
-  duplicateProtocolConfigKeys,
   emptyForm,
   emptyProtocolConfig,
   FormBaseUrl,
   FormCredential,
-  formBaseUrlsForPayload,
   formHeaders,
   FormProtocolConfig,
   FormState,
@@ -497,11 +495,21 @@ export function ChannelsScreen() {
     statusFilter !== "all",
     protocolFilter !== "all",
   ].filter(Boolean).length;
-  const submittedBaseUrls = useMemo(() => formBaseUrlsForPayload(form), [form]);
-  const duplicatedProtocolConfigKeys = useMemo(
-    () => duplicateProtocolConfigKeys(form.protocolConfigs, submittedBaseUrls),
-    [form.protocolConfigs, submittedBaseUrls],
-  );
+  const duplicatedProtocolConfigNames = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const [index, protocolConfig] of form.protocolConfigs.entries()) {
+      const name = protocolConfigDisplayName(protocolConfig, index, locale)
+        .trim()
+        .toLowerCase();
+      if (!name) continue;
+      counts.set(name, (counts.get(name) ?? 0) + 1);
+    }
+    return new Set(
+      [...counts.entries()]
+        .filter(([, count]) => count > 1)
+        .map(([name]) => name),
+    );
+  }, [form.protocolConfigs, locale]);
   const currentSnapshot = useMemo(
     () => JSON.stringify(toPayload(form)),
     [form],
@@ -775,12 +783,12 @@ export function ChannelsScreen() {
       );
       return false;
     }
-    if (duplicatedProtocolConfigKeys.size) {
-      const message =
+    if (duplicatedProtocolConfigNames.size) {
+      toast.error(
         locale === "zh-CN"
-          ? "同一个渠道内不允许重复地址来源和密钥"
-          : "Duplicate Base URL and key pairs are not allowed in one channel";
-      toast.error(message);
+          ? "组合名称不允许重复"
+          : "Combination names must be unique",
+      );
       return false;
     }
     if (invalidModelProtocolCount(form)) {
@@ -1638,51 +1646,54 @@ export function ChannelsScreen() {
 
   function applyModelSelection(selectedKeys: string[]) {
     if (modelPickerProtocolConfigIndex === null) return;
+    const targetConfig = form.protocolConfigs[modelPickerProtocolConfigIndex];
+    if (!targetConfig) return;
     const selectedModels = availableModels.filter((item) =>
       selectedKeys.includes(genericModelKey(item)),
     );
-    const selectedModelGroups = groupPickerModels(selectedModels);
-    setForm((current) => ({
-      ...current,
-      protocolConfigs: current.protocolConfigs.map(
-        (protocolConfig, protocolConfigIndex) => {
-          if (protocolConfigIndex !== modelPickerProtocolConfigIndex) {
-            return protocolConfig;
-          }
-          const merged = [...protocolConfig.models];
-          const existingModels = new Map(
-            merged.map((model, index) => [genericModelKey(model), index]),
-          );
-          for (const model of selectedModelGroups) {
-            const genericKey = genericModelKey(model);
-            const existingIndex = existingModels.get(genericKey);
-            if (existingIndex !== undefined) {
-              continue;
+    const existingKeys = new Set(
+      targetConfig.models.map((model) => genericModelKey(model)),
+    );
+    const newModels = groupPickerModels(selectedModels).filter(
+      (model) => !existingKeys.has(genericModelKey(model)),
+    );
+    if (newModels.length) {
+      setForm((current) => ({
+        ...current,
+        protocolConfigs: current.protocolConfigs.map(
+          (protocolConfig, protocolConfigIndex) => {
+            if (protocolConfigIndex !== modelPickerProtocolConfigIndex) {
+              return protocolConfig;
             }
-            existingModels.set(genericKey, merged.length);
-            merged.push({
-              id: null,
-              protocols: [],
-              protocolIds: {},
-              credential_id: model.credential_id,
-              model_name: model.model_name,
-              enabled: true,
-            });
-          }
-          return {
-            ...protocolConfig,
-            models: merged,
-            expanded: true,
-          };
-        },
-      ),
-    }));
+            return {
+              ...protocolConfig,
+              models: [
+                ...protocolConfig.models,
+                ...newModels.map((model) => ({
+                  id: null,
+                  protocols: [],
+                  protocolIds: {},
+                  credential_id: model.credential_id,
+                  model_name: model.model_name,
+                  enabled: true,
+                })),
+              ],
+              expanded: true,
+            };
+          },
+        ),
+      }));
+    }
     closeModelPicker();
-    if (selectedModelGroups.length) {
+    if (newModels.length) {
       toast.success(
         locale === "zh-CN"
-          ? `已加入 ${selectedModelGroups.length} 个模型`
-          : `Added ${selectedModelGroups.length} models`,
+          ? `已加入 ${newModels.length} 个模型`
+          : `Added ${newModels.length} models`,
+      );
+    } else {
+      toast.info(
+        locale === "zh-CN" ? "所选模型已存在" : "Selected models already exist",
       );
     }
   }
@@ -1734,7 +1745,14 @@ export function ChannelsScreen() {
         model_name: item.model_name,
       }));
       setAvailableModels(nextAvailableModels);
-      setPickerSelectedModelKeys([]);
+      const existingModelKeys = new Set(
+        protocolConfig.models.map((model) => genericModelKey(model)),
+      );
+      setPickerSelectedModelKeys(
+        pickerModelKeys(nextAvailableModels).filter((key) =>
+          existingModelKeys.has(key),
+        ),
+      );
       setModelPickerProtocolConfigIndex(protocolConfigIndex);
       toast.success(
         locale === "zh-CN"
@@ -2015,7 +2033,6 @@ export function ChannelsScreen() {
             newProtocolConfigName={newProtocolConfigName}
             protocolConfigNameDialogOpen={protocolConfigNameDialogOpen}
             fetchingProtocolConfigIndex={fetchingProtocolConfigIndex}
-            duplicatedProtocolConfigKeys={duplicatedProtocolConfigKeys}
             savingSite={savingSite}
             batchTestOptions={batchTestOptions}
             batchTestingModels={batchTestingModels}
@@ -2172,9 +2189,7 @@ export function ChannelsScreen() {
             }}
             onToggleModel={togglePickerModel}
             onConfirm={() => applyModelSelection(pickerSelectedModelKeys)}
-            onConfirmAll={() =>
-              applyModelSelection(pickerModelKeys(availableModels))
-            }
+            onConfirmAll={(keys) => applyModelSelection(keys)}
             onCancel={closeModelPicker}
           />
         ) : null}

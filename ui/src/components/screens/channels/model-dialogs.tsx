@@ -1291,7 +1291,7 @@ export function ModelPickerDialog({
   onOpenChange: (open: boolean) => void;
   onToggleModel: (key: string) => void;
   onConfirm: () => void;
-  onConfirmAll: () => void;
+  onConfirmAll: (keys: string[]) => void;
   onCancel: () => void;
 }) {
   const [search, setSearch] = useState("");
@@ -1322,8 +1322,10 @@ export function ModelPickerDialog({
               <Button
                 type="button"
                 variant="outline"
-                onClick={onConfirmAll}
-                disabled={!modelGroups.length}
+                onClick={() =>
+                  onConfirmAll(filteredModels.map(genericModelKey))
+                }
+                disabled={!filteredModels.length}
               >
                 {locale === "zh-CN" ? "加入全部模型" : "Add all models"}
               </Button>
@@ -1360,13 +1362,13 @@ export function ModelPickerDialog({
                         variant="outline"
                         size="sm"
                         className={cn(
-                          "max-w-full rounded-full",
+                          "h-auto min-h-8 max-w-full whitespace-normal rounded-full py-1",
                           modelBadgeClassName(checked),
                           checked ? "border-primary text-primary" : "",
                         )}
                         onClick={() => onToggleModel(key)}
                       >
-                        <span className="max-w-[180px] truncate sm:max-w-[220px]">
+                        <span className="text-left break-all">
                           {model.model_name}
                         </span>
                         <span className="text-xs">{checked ? "✓" : "+"}</span>

@@ -1,13 +1,21 @@
 "use client";
 
 import {
+  useEffect,
   useState,
   type Dispatch,
   type FormEvent,
   type FormEventHandler,
   type SetStateAction,
 } from "react";
-import { FolderPlus, Plus, RefreshCcw, Settings, X } from "lucide-react";
+import {
+  FolderPlus,
+  ChevronDown,
+  Plus,
+  RefreshCcw,
+  Settings,
+  X,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { AppDialogContent, Dialog } from "@/components/ui/dialog";
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
@@ -49,7 +57,6 @@ export function ChannelEditorDialog({
   newProtocolConfigName,
   protocolConfigNameDialogOpen,
   fetchingProtocolConfigIndex,
-  duplicatedProtocolConfigKeys,
   savingSite,
   batchTestOptions,
   batchTestingModels,
@@ -92,7 +99,6 @@ export function ChannelEditorDialog({
   newProtocolConfigName: string;
   protocolConfigNameDialogOpen: boolean;
   fetchingProtocolConfigIndex: number | null;
-  duplicatedProtocolConfigKeys: Set<string>;
   savingSite: boolean;
   batchTestOptions: BatchModelTestOption[];
   batchTestingModels: boolean;
@@ -140,6 +146,29 @@ export function ChannelEditorDialog({
   const [paramsCredentialId, setParamsCredentialId] = useState<string | null>(
     null,
   );
+  const [collapsedBaseUrlIds, setCollapsedBaseUrlIds] = useState<string[]>([]);
+
+  // Editing an existing channel starts with every address' keys collapsed; a
+  // new channel keeps them open so the key field stays visible.
+  useEffect(() => {
+    if (!dialogOpen) {
+      setCollapsedBaseUrlIds([]);
+      return;
+    }
+    setCollapsedBaseUrlIds(
+      editingSiteId ? form.base_urls.map((item) => item.id) : [],
+    );
+    // Only re-sync when the dialog opens, not on every form edit.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dialogOpen, editingSiteId]);
+
+  function toggleBaseUrlKeys(baseUrlId: string) {
+    setCollapsedBaseUrlIds((current) =>
+      current.includes(baseUrlId)
+        ? current.filter((id) => id !== baseUrlId)
+        : [...current, baseUrlId],
+    );
+  }
   const paramsCredential = form.credentials.find(
     (item) => item.id === paramsCredentialId,
   );
@@ -264,9 +293,12 @@ export function ChannelEditorDialog({
                         .filter(
                           (item) => item.credential.base_url_id === baseUrl.id,
                         );
+                      const keysExpanded = !collapsedBaseUrlIds.includes(
+                        baseUrl.id,
+                      );
                       return (
                         <div key={baseUrl.id} className="grid gap-3">
-                          <div className="grid min-w-0 gap-3 md:grid-cols-[minmax(0,1.65fr)_minmax(0,0.85fr)_32px_32px] md:items-end">
+                          <div className="grid min-w-0 gap-3 md:grid-cols-[minmax(0,1.65fr)_minmax(0,0.85fr)_32px_32px_32px] md:items-end">
                             <Field>
                               <FieldLabel>
                                 {baseUrlIndexLabel(index, locale)}
@@ -303,6 +335,26 @@ export function ChannelEditorDialog({
                                 }
                               />
                             </div>
+                            <div className="flex h-8 w-8 items-center justify-center">
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7 text-muted-foreground"
+                                aria-expanded={keysExpanded}
+                                disabled={!keys.length}
+                                onClick={() => toggleBaseUrlKeys(baseUrl.id)}
+                              >
+                                <ChevronDown
+                                  size={14}
+                                  className={
+                                    keysExpanded
+                                      ? "transition-transform"
+                                      : "transition-transform -rotate-90"
+                                  }
+                                />
+                              </Button>
+                            </div>
                             <Button
                               type="button"
                               variant="outline"
@@ -314,230 +366,242 @@ export function ChannelEditorDialog({
                               <X size={16} />
                             </Button>
                           </div>
-                          <div className="ml-3 grid gap-3 border-l pl-3">
-                            {keys.map(
-                              ({ credential, credentialIndex }, keyIndex) => {
-                                const balance = balancesByCredentialId.get(
-                                  credential.id,
-                                );
-                                return (
-                                  <div
-                                    key={credential.id}
-                                    className="grid min-w-0 gap-3 md:grid-cols-[minmax(0,1.4fr)_minmax(0,0.7fr)_88px_150px_150px_32px_32px] md:items-end"
-                                  >
-                                    <Field>
-                                      <FieldLabel>
-                                        {locale === "zh-CN"
-                                          ? `密钥 ${index + 1}.${keyIndex + 1}`
-                                          : `Key ${index + 1}.${keyIndex + 1}`}
-                                      </FieldLabel>
-                                      <Input
-                                        value={credential.api_key}
-                                        onChange={(event) =>
-                                          updateCredential(credentialIndex, {
-                                            api_key: event.target.value,
-                                          })
-                                        }
-                                        placeholder="sk-..."
-                                      />
-                                    </Field>
-                                    <Field>
-                                      <FieldLabel>
-                                        {locale === "zh-CN" ? "备注" : "Remark"}
-                                      </FieldLabel>
-                                      <Input
-                                        value={credential.name}
-                                        onChange={(event) =>
-                                          updateCredential(credentialIndex, {
-                                            name: event.target.value,
-                                          })
-                                        }
-                                      />
-                                    </Field>
-                                    <Field>
-                                      <FieldLabel>
-                                        {locale === "zh-CN"
-                                          ? "计费倍率"
-                                          : "Cost Ratio"}
-                                      </FieldLabel>
-                                      <Input
-                                        type="number"
-                                        min="0"
-                                        step="0.01"
-                                        value={credential.cost_multiplier}
-                                        onChange={(event) => {
-                                          const nextValue =
-                                            event.target.valueAsNumber;
-                                          updateCredential(credentialIndex, {
-                                            cost_multiplier: Number.isFinite(
-                                              nextValue,
-                                            )
-                                              ? nextValue
-                                              : 0,
-                                          });
-                                        }}
-                                      />
-                                    </Field>
-                                    <Field>
-                                      <FieldLabel>
-                                        {locale === "zh-CN"
-                                          ? "余额查询方案"
-                                          : "Balance script"}
-                                      </FieldLabel>
-                                      <div className="flex items-center gap-1">
-                                        <Select
-                                          value={
-                                            credential.balance_script_id ||
-                                            "none"
-                                          }
-                                          onValueChange={(value) =>
+                          {keysExpanded ? (
+                            <div className="ml-3 grid gap-3 border-l pl-3">
+                              {keys.map(
+                                ({ credential, credentialIndex }, keyIndex) => {
+                                  const balance = balancesByCredentialId.get(
+                                    credential.id,
+                                  );
+                                  return (
+                                    <div
+                                      key={credential.id}
+                                      className="grid min-w-0 gap-3 md:grid-cols-[minmax(0,1.4fr)_minmax(0,0.7fr)_88px_150px_150px_32px_32px] md:items-end"
+                                    >
+                                      <Field>
+                                        <FieldLabel>
+                                          {locale === "zh-CN"
+                                            ? `密钥 ${index + 1}.${keyIndex + 1}`
+                                            : `Key ${index + 1}.${keyIndex + 1}`}
+                                        </FieldLabel>
+                                        <Input
+                                          value={credential.api_key}
+                                          onChange={(event) =>
                                             updateCredential(credentialIndex, {
-                                              balance_script_id:
-                                                value === "none" ? "" : value,
+                                              api_key: event.target.value,
                                             })
                                           }
-                                        >
-                                          <SelectTrigger className="w-full">
-                                            <SelectValue />
-                                          </SelectTrigger>
-                                          <SelectContent>
-                                            <SelectItem value="none">
-                                              {locale === "zh-CN"
-                                                ? "无"
-                                                : "None"}
-                                            </SelectItem>
-                                            {balanceScripts.map((script) => (
-                                              <SelectItem
-                                                key={script.id}
-                                                value={script.id}
-                                              >
-                                                {script.name}
-                                              </SelectItem>
-                                            ))}
-                                          </SelectContent>
-                                        </Select>
-                                        {balanceScripts.some(
-                                          (script) =>
-                                            script.id ===
-                                              credential.balance_script_id &&
-                                            script.parameters.length > 0,
-                                        ) ? (
-                                          <Button
-                                            type="button"
-                                            variant="outline"
-                                            size="icon"
-                                            className="shrink-0 text-muted-foreground"
-                                            aria-label={
-                                              locale === "zh-CN"
-                                                ? "配置参数"
-                                                : "Configure parameters"
+                                          placeholder="sk-..."
+                                        />
+                                      </Field>
+                                      <Field>
+                                        <FieldLabel>
+                                          {locale === "zh-CN"
+                                            ? "备注"
+                                            : "Remark"}
+                                        </FieldLabel>
+                                        <Input
+                                          value={credential.name}
+                                          onChange={(event) =>
+                                            updateCredential(credentialIndex, {
+                                              name: event.target.value,
+                                            })
+                                          }
+                                        />
+                                      </Field>
+                                      <Field>
+                                        <FieldLabel>
+                                          {locale === "zh-CN"
+                                            ? "计费倍率"
+                                            : "Cost Ratio"}
+                                        </FieldLabel>
+                                        <Input
+                                          type="number"
+                                          min="0"
+                                          step="0.01"
+                                          value={credential.cost_multiplier}
+                                          onChange={(event) => {
+                                            const nextValue =
+                                              event.target.valueAsNumber;
+                                            updateCredential(credentialIndex, {
+                                              cost_multiplier: Number.isFinite(
+                                                nextValue,
+                                              )
+                                                ? nextValue
+                                                : 0,
+                                            });
+                                          }}
+                                        />
+                                      </Field>
+                                      <Field>
+                                        <FieldLabel>
+                                          {locale === "zh-CN"
+                                            ? "余额查询方案"
+                                            : "Balance script"}
+                                        </FieldLabel>
+                                        <div className="flex items-center gap-1">
+                                          <Select
+                                            value={
+                                              credential.balance_script_id ||
+                                              "none"
                                             }
-                                            onClick={() =>
-                                              setParamsCredentialId(
-                                                credential.id,
+                                            onValueChange={(value) =>
+                                              updateCredential(
+                                                credentialIndex,
+                                                {
+                                                  balance_script_id:
+                                                    value === "none"
+                                                      ? ""
+                                                      : value,
+                                                },
                                               )
                                             }
                                           >
-                                            <Settings size={16} />
-                                          </Button>
-                                        ) : null}
-                                      </div>
-                                    </Field>
-                                    <Field>
-                                      <FieldLabel>
-                                        {locale === "zh-CN"
-                                          ? "当前余额"
-                                          : "Balance"}
-                                      </FieldLabel>
-                                      <div className="flex h-8 items-center justify-between rounded-md border px-2 font-mono text-xs">
-                                        <span>
-                                          {balance?.status === "ok"
-                                            ? `${balance.balance} ${balance.currency}`
-                                            : "—"}
-                                        </span>
-                                        <Button
-                                          type="button"
-                                          variant="ghost"
-                                          size="icon-sm"
-                                          disabled={
-                                            !editingSiteId ||
-                                            !credential.balance_script_id ||
-                                            !credential.api_key.trim() ||
-                                            !baseUrl.url.trim() ||
-                                            refreshingCredentialId ===
-                                              credential.id
-                                          }
-                                          onClick={() =>
-                                            onRefreshBalance(credential.id)
-                                          }
-                                        >
-                                          <RefreshCcw
-                                            className={
+                                            <SelectTrigger className="w-full">
+                                              <SelectValue />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                              <SelectItem value="none">
+                                                {locale === "zh-CN"
+                                                  ? "无"
+                                                  : "None"}
+                                              </SelectItem>
+                                              {balanceScripts.map((script) => (
+                                                <SelectItem
+                                                  key={script.id}
+                                                  value={script.id}
+                                                >
+                                                  {script.name}
+                                                </SelectItem>
+                                              ))}
+                                            </SelectContent>
+                                          </Select>
+                                          {balanceScripts.some(
+                                            (script) =>
+                                              script.id ===
+                                                credential.balance_script_id &&
+                                              script.parameters.length > 0,
+                                          ) ? (
+                                            <Button
+                                              type="button"
+                                              variant="outline"
+                                              size="icon"
+                                              className="shrink-0 text-muted-foreground"
+                                              aria-label={
+                                                locale === "zh-CN"
+                                                  ? "配置参数"
+                                                  : "Configure parameters"
+                                              }
+                                              onClick={() =>
+                                                setParamsCredentialId(
+                                                  credential.id,
+                                                )
+                                              }
+                                            >
+                                              <Settings size={16} />
+                                            </Button>
+                                          ) : null}
+                                        </div>
+                                      </Field>
+                                      <Field>
+                                        <FieldLabel>
+                                          {locale === "zh-CN"
+                                            ? "当前余额"
+                                            : "Balance"}
+                                        </FieldLabel>
+                                        <div className="flex h-8 items-center justify-between rounded-md border px-2 font-mono text-xs">
+                                          <span>
+                                            {balance?.status === "ok"
+                                              ? `${balance.balance} ${balance.currency}`
+                                              : "—"}
+                                          </span>
+                                          <Button
+                                            type="button"
+                                            variant="ghost"
+                                            size="icon-sm"
+                                            disabled={
+                                              !editingSiteId ||
+                                              !credential.balance_script_id ||
+                                              !credential.api_key.trim() ||
+                                              !baseUrl.url.trim() ||
                                               refreshingCredentialId ===
-                                              credential.id
-                                                ? "animate-spin"
-                                                : undefined
+                                                credential.id
                                             }
-                                          />
-                                        </Button>
+                                            onClick={() =>
+                                              onRefreshBalance(credential.id)
+                                            }
+                                          >
+                                            <RefreshCcw
+                                              className={
+                                                refreshingCredentialId ===
+                                                credential.id
+                                                  ? "animate-spin"
+                                                  : undefined
+                                              }
+                                            />
+                                          </Button>
+                                        </div>
+                                      </Field>
+                                      <div className="flex h-8 w-8 items-center justify-center">
+                                        <Switch
+                                          checked={credential.enabled}
+                                          onCheckedChange={(checked) =>
+                                            updateCredential(credentialIndex, {
+                                              enabled: checked,
+                                            })
+                                          }
+                                        />
                                       </div>
-                                    </Field>
-                                    <div className="flex h-8 w-8 items-center justify-center">
-                                      <Switch
-                                        checked={credential.enabled}
-                                        onCheckedChange={(checked) =>
-                                          updateCredential(credentialIndex, {
-                                            enabled: checked,
-                                          })
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="icon"
+                                        className="text-muted-foreground"
+                                        disabled={form.credentials.length <= 1}
+                                        onClick={() =>
+                                          removeCredential(credentialIndex)
                                         }
-                                      />
+                                      >
+                                        <X size={16} />
+                                      </Button>
                                     </div>
-                                    <Button
-                                      type="button"
-                                      variant="outline"
-                                      size="icon"
-                                      className="text-muted-foreground"
-                                      disabled={form.credentials.length <= 1}
-                                      onClick={() =>
-                                        removeCredential(credentialIndex)
-                                      }
-                                    >
-                                      <X size={16} />
-                                    </Button>
-                                  </div>
-                                );
-                              },
-                            )}
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              className="w-fit"
-                              onClick={() =>
-                                setForm((current) => ({
-                                  ...current,
-                                  credentials: [
-                                    ...current.credentials,
-                                    {
-                                      id: createLocalId("credential"),
-                                      name: "",
-                                      api_key: "",
-                                      enabled: true,
-                                      cost_multiplier: 1,
-                                      base_url_id: baseUrl.id,
-                                      balance_script_id: "",
-                                      balance_params: {},
-                                    },
-                                  ],
-                                }))
-                              }
-                            >
-                              <Plus data-icon="inline-start" />
-                              {locale === "zh-CN"
-                                ? `为地址 ${index + 1} 添加密钥`
-                                : `Add key to address ${index + 1}`}
-                            </Button>
-                          </div>
+                                  );
+                                },
+                              )}
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="w-fit"
+                                onClick={() => {
+                                  setCollapsedBaseUrlIds((current) =>
+                                    current.filter((id) => id !== baseUrl.id),
+                                  );
+                                  setForm((current) => ({
+                                    ...current,
+                                    credentials: [
+                                      ...current.credentials,
+                                      {
+                                        id: createLocalId("credential"),
+                                        name: "",
+                                        api_key: "",
+                                        enabled: true,
+                                        cost_multiplier: 1,
+                                        base_url_id: baseUrl.id,
+                                        balance_script_id: "",
+                                        balance_params: {},
+                                      },
+                                    ],
+                                  }));
+                                }}
+                              >
+                                <Plus data-icon="inline-start" />
+                                {locale === "zh-CN"
+                                  ? `为地址 ${index + 1} 添加密钥`
+                                  : `Add key to address ${index + 1}`}
+                              </Button>
+                            </div>
+                          ) : null}
                         </div>
                       );
                     })}
@@ -622,9 +686,6 @@ export function ChannelEditorDialog({
                         locale={locale}
                         fetchingProtocolConfigIndex={
                           fetchingProtocolConfigIndex
-                        }
-                        duplicatedProtocolConfigKeys={
-                          duplicatedProtocolConfigKeys
                         }
                         onUpdateProtocolConfig={updateProtocolConfig}
                         onRemoveProtocolConfig={(index) =>

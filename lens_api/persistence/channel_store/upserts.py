@@ -256,7 +256,7 @@ class ChannelUpsertsMixin:
         disabled_credential_ids: set[str],
     ) -> set[str]:
         protocol_config_ids: set[str] = set()
-        protocol_config_keys: set[tuple[str, str]] = set()
+        protocol_config_names: set[str] = set()
         existing_rows = (
             (
                 await session.execute(
@@ -332,17 +332,16 @@ class ChannelUpsertsMixin:
                     "At least one upstream protocol is required for protocol config "
                     f"{protocol_config_id}"
                 )
-            protocol_config_key = (
-                protocol_config.base_url_id,
-                protocol_config.credential_id,
-            )
-            if protocol_config_key in protocol_config_keys:
-                raise ValueError(
-                    "Duplicate protocol config for "
-                    f"base_url_id={protocol_config.base_url_id} "
-                    f"credential_id={protocol_config.credential_id}"
-                )
-            protocol_config_keys.add(protocol_config_key)
+            # Several combinations may reuse the same address and key; only the
+            # combination name has to stay unique inside one channel.
+            normalized_config_name = protocol_config.name.strip().casefold()
+            if normalized_config_name:
+                if normalized_config_name in protocol_config_names:
+                    raise ValueError(
+                        "Duplicate protocol config name: "
+                        f"{protocol_config.name.strip()}"
+                    )
+                protocol_config_names.add(normalized_config_name)
 
             entity = existing_entities.get(protocol_config_id)
             if entity is None:
