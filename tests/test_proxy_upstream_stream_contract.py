@@ -467,10 +467,36 @@ def test_responses_stream_marks_completed_event() -> None:
     assert capture.saw_response_completed is True
 
 
+def test_responses_stream_incomplete_is_terminal_with_usage() -> None:
+    capture = StreamCapture(capture_body=False, completed=True, saw_first_chunk=True)
+    _record_stream_event_payload(
+        ProtocolKind.OPENAI_RESPONSES,
+        capture,
+        {
+            "type": "response.incomplete",
+            "response": {
+                "model": "m",
+                "usage": {
+                    "input_tokens": 3,
+                    "output_tokens": 4,
+                    "total_tokens": 7,
+                },
+            },
+        },
+        0.0,
+    )
+    assert capture.saw_response_completed is True
+    assert capture.total_tokens == 7
+    assert (
+        _describe_stream_capture_issue(ProtocolKind.OPENAI_RESPONSES, capture, None)
+        is None
+    )
+
+
 def test_responses_stream_missing_completed_is_issue_without_body_capture() -> None:
     capture = StreamCapture(capture_body=False, completed=True, saw_first_chunk=True)
     issue = _describe_stream_capture_issue(ProtocolKind.OPENAI_RESPONSES, capture, None)
-    assert issue == "stream ended before response.completed"
+    assert issue == "stream ended before a Responses terminal event"
     result = UpstreamResult(response=Response(), status_code=200)
     assert _stream_log_status_code(result, capture, issue) == 502
     key, policy = resolve_channel_error_policy(_runtime_settings(), "", status_code=502)

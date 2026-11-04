@@ -4,6 +4,7 @@ from .runtime_context import (
     Any,
     Mapping,
     ProtocolKind,
+    RESPONSES_TERMINAL_EVENTS,
     StreamCapture,
     httpx,
     json,
@@ -271,16 +272,16 @@ def _describe_stream_capture_issue(
     if protocol == ProtocolKind.OPENAI_RESPONSES:
         if capture is not None:
             if not capture.saw_response_completed:
-                issues.append("stream ended before response.completed")
+                issues.append("stream ended before a Responses terminal event")
         elif not raw_content:
             issues.append("no stream content captured")
         else:
             payloads = _parse_sse_payloads(raw_content)
-            has_completed = any(
-                payload.get("type") == "response.completed" for payload in payloads
+            has_terminal = any(
+                payload.get("type") in RESPONSES_TERMINAL_EVENTS for payload in payloads
             )
-            if not has_completed:
-                issues.append("stream ended before response.completed")
+            if not has_terminal:
+                issues.append("stream ended before a Responses terminal event")
     elif capture is None or capture.capture_body:
         if not raw_content:
             issues.append("no stream content captured")
@@ -308,7 +309,7 @@ def _extract_usage_from_payload(
     if protocol == ProtocolKind.OPENAI_CHAT:
         return _openai_chat_usage(payload)
     if protocol == ProtocolKind.OPENAI_RESPONSES:
-        if payload.get("type") == "response.completed":
+        if payload.get("type") in RESPONSES_TERMINAL_EVENTS:
             response_payload = _usage_mapping(payload.get("response"))
             return _openai_responses_usage(
                 response_payload,

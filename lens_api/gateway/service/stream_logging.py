@@ -7,6 +7,7 @@ from .runtime_context import (
     GatewayApiKey,
     ProtocolKind,
     RequestLogLifecycleStatus,
+    RESPONSES_TERMINAL_EVENTS,
     RouteTarget,
     StreamCapture,
     UpstreamResult,
@@ -111,6 +112,15 @@ def _responses_stream_payload_has_output(payload: dict[str, Any]) -> bool:
             _has_non_empty_stream_value(payload.get(key))
             for key in ("delta", "text", "partial_json")
         )
+    if payload_type in RESPONSES_TERMINAL_EVENTS:
+        # Some upstreams send no deltas at all and only provide the finished
+        # output on the terminal event.
+        response_payload = payload.get("response")
+        if isinstance(response_payload, dict):
+            output = response_payload.get("output")
+            return isinstance(output, list) and any(
+                isinstance(item, dict) for item in output
+            )
     item = payload.get("item")
     if payload_type == "response.output_item.added" and isinstance(item, dict):
         return item.get("type") == "function_call" and (
@@ -820,7 +830,7 @@ def _record_stream_event_payload(
         _record_chat_stream_finish_reasons(capture, payload)
     if (
         protocol == ProtocolKind.OPENAI_RESPONSES
-        and payload.get("type") == "response.completed"
+        and payload.get("type") in RESPONSES_TERMINAL_EVENTS
     ):
         capture.saw_response_completed = True
     try:

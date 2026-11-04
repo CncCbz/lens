@@ -280,6 +280,12 @@ CRONJOB_SPECS = (
 
 logger = logging.getLogger(__name__)
 
+# A Responses stream can end with any of these; all of them carry the full
+# ``response`` object (status, output, usage, error).
+RESPONSES_TERMINAL_EVENTS = frozenset(
+    {"response.completed", "response.incomplete", "response.failed"}
+)
+
 INTEGER_SETTING_KEYS = {
     SETTING_RELAY_LOG_KEEP_PERIOD,
     SETTING_CIRCUIT_BREAKER_THRESHOLD,

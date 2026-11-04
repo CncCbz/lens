@@ -1,17 +1,129 @@
 from __future__ import annotations
 
+from collections.abc import Collection, Mapping
 import time
 import uuid
 
 from .runtime_context import (
     Any,
     ProtocolKind,
+    RESPONSES_TERMINAL_EVENTS,
     deepcopy,
     json,
 )
 from ..converters._chat_stream import ChatToolCalls
 from .payload_serialization import _dump_log_json
 from .usage import _parse_ndjson_payloads, _parse_sse_payloads
+
+_CHAT_TEXT_DELTA_KEYS = frozenset(
+    {"content", "reasoning_content", "reasoning", "refusal"}
+)
+_CHAT_LIST_DELTA_KEYS = frozenset({"content", "annotations"})
+_CHAT_AUDIO_TEXT_KEYS = frozenset({"data", "transcript"})
+
+
+def _merge_latest_keys(
+    target: dict[str, Any],
+    source: Mapping[str, Any],
+    *,
+    skip: Collection[str] = (),
+) -> None:
+    """Overlay ``source`` onto ``target`` while keeping every upstream key.
+
+    Stream chunks resend stable metadata (``id``, ``model``, provider extras)
+    and carry the newest value of fields that appear only once (``usage``), so
+    the latest non-null value wins. Unknown keys are kept, never dropped.
+    """
+    for key, value in source.items():
+        if key in skip or value is None:
+            continue
+        target[key] = deepcopy(value)
+
+
+def _merge_chat_message_delta(
+    message: dict[str, Any], delta: Mapping[str, Any]
+) -> None:
+    for key, value in delta.items():
+        if value is None or key == "tool_calls":
+            continue
+        if key == "role":
+            message["role"] = value
+            continue
+        current = message.get(key)
+        if key in _CHAT_TEXT_DELTA_KEYS and isinstance(value, str):
+            message[key] = f"{current}{value}" if isinstance(current, str) else value
+            continue
+        if key in _CHAT_LIST_DELTA_KEYS and isinstance(value, list):
+            message[key] = [
+                *(current if isinstance(current, list) else []),
+                *deepcopy(value),
+            ]
+            continue
+        if key == "audio" and isinstance(value, Mapping):
+            audio = current if isinstance(current, dict) else {}
+            message["audio"] = audio
+            for audio_key, audio_value in value.items():
+                if audio_value is None:
+                    continue
+                previous = audio.get(audio_key)
+                if audio_key in _CHAT_AUDIO_TEXT_KEYS and isinstance(audio_value, str):
+                    audio[audio_key] = (
+                        f"{previous}{audio_value}"
+                        if isinstance(previous, str)
+                        else audio_value
+                    )
+                else:
+                    audio[audio_key] = deepcopy(audio_value)
+            continue
+        if key == "function_call" and isinstance(value, Mapping):
+            function_call = current if isinstance(current, dict) else {}
+            message["function_call"] = function_call
+            _merge_latest_keys(function_call, value, skip={"arguments"})
+            if isinstance(value.get("arguments"), str):
+                function_call["arguments"] = (
+                    f"{function_call.get('arguments') or ''}{value['arguments']}"
+                )
+            continue
+        message[key] = deepcopy(value)
+
+
+def _merge_chat_tool_call_deltas(
+    target: dict[int, dict[str, Any]], tool_calls: Any
+) -> None:
+    if not isinstance(tool_calls, list):
+        return
+    for tool_call in tool_calls:
+        if not isinstance(tool_call, Mapping):
+            continue
+        index = _coerce_openai_output_index(tool_call.get("index"), default=0) or 0
+        entry = target.setdefault(index, {})
+        _merge_latest_keys(entry, tool_call, skip={"index", "function"})
+        function = tool_call.get("function")
+        if not isinstance(function, Mapping):
+            continue
+        target_function = entry.get("function")
+        if not isinstance(target_function, dict):
+            target_function = {}
+            entry["function"] = target_function
+        _merge_latest_keys(target_function, function, skip={"arguments"})
+        if isinstance(function.get("arguments"), str):
+            target_function["arguments"] = (
+                f"{target_function.get('arguments') or ''}" f"{function['arguments']}"
+            )
+
+
+def _merge_chat_logprobs(target: dict[str, Any], logprobs: Any) -> None:
+    if not isinstance(logprobs, Mapping):
+        return
+    for key, value in logprobs.items():
+        current = target.get(key)
+        if isinstance(value, list):
+            target[key] = [
+                *(current if isinstance(current, list) else []),
+                *deepcopy(value),
+            ]
+        elif value is not None:
+            target[key] = deepcopy(value)
 
 
 def _distill_stream_response_content(
@@ -44,14 +156,14 @@ def _distill_stream_response_content(
     if protocol == ProtocolKind.OPENAI_RESPONSES:
         payloads = _parse_sse_payloads(raw_content)
         for payload in reversed(payloads):
-            if payload.get("type") != "response.completed":
+            if payload.get("type") not in RESPONSES_TERMINAL_EVENTS:
                 continue
             response_payload = payload.get("response")
             if isinstance(response_payload, dict):
-                compact_payload = _compact_openai_response_payload(
-                    _restore_openai_response_output(response_payload, payloads)
+                return _dump_log_json(
+                    _restore_openai_response_payload(response_payload, payloads),
+                    log_output=log_output,
                 )
-                return _dump_log_json(compact_payload, log_output=log_output)
         if allow_incomplete:
             partial = _restore_incomplete_openai_response(payloads)
             if partial is not None:
@@ -87,105 +199,88 @@ def _restore_openai_chat_stream(
 ) -> dict[str, Any] | None:
     if not payloads:
         return None
-    model: Any = None
-    resp_id: Any = None
-    created: Any = None
-    usage: Any = None
-    finish_reason_seen = False
+    top_level: dict[str, Any] = {}
     choices: dict[int, dict[str, Any]] = {}
+    messages: dict[int, dict[str, Any]] = {}
     tool_calls: dict[int, dict[int, dict[str, Any]]] = {}
+    logprobs: dict[int, dict[str, Any]] = {}
+    finished_choices: set[int] = set()
     normalizer = ChatToolCalls()
 
     for payload in payloads:
         if not isinstance(payload, dict):
             continue
         payload = normalizer.normalize_payload(payload)
-        model = payload.get("model") or model
-        resp_id = payload.get("id") or resp_id
-        created = payload.get("created") or created
-        if isinstance(payload.get("usage"), dict):
-            usage = payload["usage"]
-        for choice in payload.get("choices", []):
+        # "object" is pinned to "chat.completion" below: chunks announce
+        # "chat.completion.chunk".
+        _merge_latest_keys(top_level, payload, skip={"choices", "object"})
+        for choice in payload.get("choices") or []:
             if not isinstance(choice, dict):
                 continue
             idx = _coerce_openai_output_index(choice.get("index"), default=0) or 0
-            entry = choices.setdefault(
-                idx,
-                {
-                    "message": {"role": "assistant", "content": ""},
-                    "finish_reason": None,
-                },
+            entry = choices.setdefault(idx, {})
+            _merge_latest_keys(
+                entry, choice, skip={"delta", "message", "logprobs", "index"}
             )
+            if isinstance(choice.get("logprobs"), Mapping):
+                _merge_chat_logprobs(logprobs.setdefault(idx, {}), choice["logprobs"])
             finish_reason = choice.get("finish_reason")
             if finish_reason:
-                finish_reason_seen = True
+                finished_choices.add(idx)
                 entry["finish_reason"] = finish_reason
             delta = choice.get("delta") or {}
-            if not isinstance(delta, dict):
-                continue
-            content = delta.get("content")
-            if isinstance(content, str):
-                entry["message"]["content"] += content
-            reasoning = delta.get("reasoning_content") or delta.get("reasoning")
-            if isinstance(reasoning, str) and reasoning:
-                entry["message"]["reasoning_content"] = (
-                    entry["message"].get("reasoning_content", "") + reasoning
+            if isinstance(delta, dict):
+                _merge_chat_message_delta(messages.setdefault(idx, {}), delta)
+                _merge_chat_tool_call_deltas(
+                    tool_calls.setdefault(idx, {}), delta.get("tool_calls")
                 )
-            for tc in delta.get("tool_calls") or []:
-                if not isinstance(tc, dict):
-                    continue
-                tci = _coerce_openai_output_index(tc.get("index"), default=0) or 0
-                tc_entry = tool_calls.setdefault(idx, {}).setdefault(
-                    tci,
-                    {
-                        "id": "",
-                        "type": "function",
-                        "function": {"name": "", "arguments": ""},
-                    },
-                )
-                if tc.get("id"):
-                    tc_entry["id"] = tc["id"]
-                func = tc.get("function")
-                if isinstance(func, dict):
-                    if func.get("name"):
-                        tc_entry["function"]["name"] = func["name"]
-                    if isinstance(func.get("arguments"), str):
-                        tc_entry["function"]["arguments"] += func["arguments"]
 
-    if not finish_reason_seen and not (allow_incomplete and choices):
+    # Every started choice has to report a finish_reason: a partial multi-choice
+    # stream is not a complete response.
+    complete = bool(choices) and set(choices) <= finished_choices
+    if not complete and not (allow_incomplete and choices):
         return _stream_error_payload(payloads) if allow_incomplete else None
 
     restored_choices: list[dict[str, Any]] = []
     for idx in sorted(choices):
         entry = choices[idx]
-        tc_map = tool_calls.get(idx, {})
+        entry["index"] = idx
+        message = messages.setdefault(idx, {})
+        message.setdefault("role", "assistant")
+        message.setdefault("content", "")
+        tc_map = tool_calls.get(idx) or {}
         if tc_map:
             ordered_tool_calls: list[dict[str, Any]] = []
             for tci in sorted(tc_map):
                 tc = tc_map[tci]
+                function = tc.get("function")
+                if isinstance(function, dict):
+                    function.setdefault("name", "")
+                    function.setdefault("arguments", "")
                 if not allow_incomplete:
-                    try:
-                        json.loads(tc["function"]["arguments"])
-                    except json.JSONDecodeError as exc:
-                        raise ValueError("Invalid tool call arguments JSON") from exc
+                    arguments = tc.get("function", {}).get("arguments")
+                    if isinstance(arguments, str) and arguments:
+                        try:
+                            json.loads(arguments)
+                        except json.JSONDecodeError as exc:
+                            raise ValueError(
+                                "Invalid tool call arguments JSON"
+                            ) from exc
                 ordered_tool_calls.append(tc)
-            entry["message"]["tool_calls"] = ordered_tool_calls
-        restored_choices.append(
-            {
-                "index": idx,
-                "message": entry["message"],
-                "finish_reason": entry["finish_reason"],
-            }
-        )
+            message["tool_calls"] = ordered_tool_calls
+        entry["message"] = message
+        if logprobs.get(idx):
+            entry["logprobs"] = logprobs[idx]
+        entry.setdefault("finish_reason", None)
+        restored_choices.append(entry)
 
-    return {
-        "id": resp_id or f"chatcmpl-{uuid.uuid4().hex[:24]}",
-        "object": "chat.completion",
-        "created": created or int(time.time()),
-        "model": model or "",
-        "choices": restored_choices,
-        "usage": usage or {},
-    }
+    restored = {"object": "chat.completion", **top_level}
+    restored.setdefault("id", f"chatcmpl-{uuid.uuid4().hex[:24]}")
+    restored.setdefault("created", int(time.time()))
+    restored.setdefault("model", "")
+    restored.setdefault("usage", {})
+    restored["choices"] = restored_choices
+    return restored
 
 
 def _stream_error_payload(payloads: list[dict[str, Any]]) -> dict[str, Any] | None:
@@ -202,40 +297,41 @@ def _restore_gemini_stream(
 ) -> dict[str, Any] | None:
     if not payloads:
         return None
-    model: Any = None
-    usage: Any = None
-    finish_seen = False
+    top_level: dict[str, Any] = {}
+    finished_candidates: set[int] = set()
     candidates: dict[int, dict[str, Any]] = {}
 
     for payload in payloads:
         if not isinstance(payload, dict):
             continue
-        model = payload.get("modelVersion") or payload.get("model") or model
-        if isinstance(payload.get("usageMetadata"), dict):
-            usage = payload["usageMetadata"]
-        for cand in payload.get("candidates", []):
+        _merge_latest_keys(top_level, payload, skip={"candidates"})
+        for cand in payload.get("candidates") or []:
             if not isinstance(cand, dict):
                 continue
             idx = _coerce_openai_output_index(cand.get("index"), default=0) or 0
-            entry = candidates.setdefault(
-                idx, {"content": {"role": "model", "parts": []}, "index": idx}
-            )
-            content = cand.get("content")
-            if isinstance(content, dict):
-                for part in content.get("parts", []) or []:
-                    if isinstance(part, dict):
-                        entry["content"]["parts"].append(deepcopy(part))
+            entry = candidates.setdefault(idx, {})
+            _merge_latest_keys(entry, cand, skip={"content"})
             if cand.get("finishReason"):
-                finish_seen = True
-                entry["finishReason"] = cand["finishReason"]
+                finished_candidates.add(idx)
+            content = cand.get("content")
+            if not isinstance(content, dict):
+                continue
+            target = entry.setdefault("content", {})
+            for key, value in content.items():
+                if key == "parts" and isinstance(value, list):
+                    parts = target.setdefault("parts", [])
+                    parts.extend(deepcopy(part) for part in value)
+                elif value is not None:
+                    target[key] = deepcopy(value)
 
-    if not finish_seen and not (allow_incomplete and candidates):
+    complete = bool(candidates) and set(candidates) <= finished_candidates
+    if not complete and not (allow_incomplete and candidates):
         return None
-    return {
-        "candidates": [candidates[i] for i in sorted(candidates)],
-        "usageMetadata": usage or {},
-        "modelVersion": model or "",
-    }
+    restored = dict(top_level)
+    restored["candidates"] = [candidates[i] for i in sorted(candidates)]
+    restored.setdefault("modelVersion", "")
+    restored.setdefault("usageMetadata", {})
+    return restored
 
 
 def _restore_anthropic_stream_message(
@@ -280,13 +376,20 @@ def _restore_anthropic_stream_message(
             delta = payload.get("delta")
             if index is None or not isinstance(delta, dict):
                 continue
-            content = message.get("content")
-            if not isinstance(content, list) or index >= len(content):
-                continue
+            delta_type = str(delta.get("type") or "")
+            content = message.setdefault("content", [])
+            if not isinstance(content, list):
+                content = []
+                message["content"] = content
+            while len(content) <= index:
+                content.append(None)
             block = content[index]
             if not isinstance(block, dict):
-                continue
-            delta_type = str(delta.get("type") or "")
+                # Anthropic-compatible upstreams sometimes skip
+                # content_block_start; materialize the block instead of
+                # dropping every following delta.
+                block = _anthropic_block_stub(delta_type)
+                content[index] = block
             if delta_type == "text_delta":
                 block["text"] = f"{block.get('text') or ''}{delta.get('text') or ''}"
             elif delta_type == "thinking_delta":
@@ -301,6 +404,25 @@ def _restore_anthropic_stream_message(
                 input_buffers[index] = (
                     f"{input_buffers.get(index, '')}{delta.get('partial_json') or ''}"
                 )
+            elif delta_type == "citations_delta":
+                citation = delta.get("citation")
+                if isinstance(citation, dict):
+                    block.setdefault("citations", []).append(deepcopy(citation))
+            else:
+                # Unknown delta types keep every field: strings append, lists
+                # extend, anything else takes the latest value.
+                for key, value in delta.items():
+                    if key == "type" or value is None:
+                        continue
+                    current = block.get(key)
+                    if isinstance(value, str):
+                        block[key] = (
+                            f"{current}{value}" if isinstance(current, str) else value
+                        )
+                    elif isinstance(value, list) and isinstance(current, list):
+                        block[key] = [*current, *deepcopy(value)]
+                    else:
+                        block[key] = deepcopy(value)
             continue
 
         if payload_type == "content_block_stop":
@@ -335,6 +457,16 @@ def _restore_anthropic_stream_message(
     if isinstance(content, list):
         message["content"] = [item for item in content if item is not None]
     return message
+
+
+def _anthropic_block_stub(delta_type: str) -> dict[str, Any]:
+    if delta_type in {"thinking_delta", "signature_delta"}:
+        return {"type": "thinking", "thinking": "", "signature": ""}
+    if delta_type == "input_json_delta":
+        return {"type": "tool_use", "id": "", "name": "", "input": {}}
+    if delta_type == "citations_delta":
+        return {"type": "text", "text": "", "citations": []}
+    return {"type": "text", "text": ""}
 
 
 def _finalize_anthropic_tool_use_input(
@@ -377,24 +509,22 @@ def _finalize_anthropic_tool_use_input(
     block["input"] = parsed_input
 
 
-def _compact_openai_response_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    compact: dict[str, Any] = {}
-    for key in (
-        "id",
-        "object",
-        "model",
-        "status",
-        "created_at",
-        "completed_at",
-        "error",
-        "incomplete_details",
-        "output",
-        "usage",
-    ):
-        value = payload.get(key)
-        if value is not None:
-            compact[key] = value
-    return compact
+def _restore_openai_response_payload(
+    response_payload: dict[str, Any],
+    payloads: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Keep every upstream response field; only fill in a missing ``output``."""
+    restored = deepcopy(response_payload)
+    existing_output = restored.get("output")
+    if isinstance(existing_output, list) and existing_output:
+        return restored
+
+    rebuilt_output = _rebuild_openai_response_output(payloads)
+    if rebuilt_output:
+        restored["output"] = rebuilt_output
+    elif not isinstance(existing_output, list):
+        restored["output"] = []
+    return restored
 
 
 def _restore_incomplete_openai_response(
@@ -408,7 +538,7 @@ def _restore_incomplete_openai_response(
     rebuilt_output = _rebuild_openai_response_output(payloads)
     if response_payload is None and not rebuilt_output:
         return _stream_error_payload(payloads)
-    base = dict(response_payload or {})
+    base = deepcopy(response_payload) if response_payload is not None else {}
     existing_output = base.get("output")
     if rebuilt_output and (
         not isinstance(existing_output, list) or not existing_output
@@ -417,24 +547,7 @@ def _restore_incomplete_openai_response(
     elif "output" not in base:
         base["output"] = []
     base.setdefault("status", "incomplete")
-    return _compact_openai_response_payload(base)
-
-
-def _restore_openai_response_output(
-    response_payload: dict[str, Any],
-    payloads: list[dict[str, Any]],
-) -> dict[str, Any]:
-    existing_output = response_payload.get("output")
-    if isinstance(existing_output, list) and existing_output:
-        return response_payload
-
-    rebuilt_output = _rebuild_openai_response_output(payloads)
-    if not rebuilt_output:
-        return response_payload
-
-    restored_payload = dict(response_payload)
-    restored_payload["output"] = rebuilt_output
-    return restored_payload
+    return base
 
 
 def _rebuild_openai_response_output(

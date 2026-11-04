@@ -13,6 +13,7 @@ _BASE64_CHARS = frozenset(
 _BASE64_PAYLOAD_KEYS = frozenset({"b64_json", "image_base64"})
 _MIME_KEYS = frozenset({"media_type", "mime_type", "mimetype"})
 _OMITTED_PLACEHOLDER = "<omitted>"
+_OMIT_KEEP_KEYS = frozenset({"role"})
 _INPUT_PAYLOAD_KEYS = frozenset(
     {
         "messages",
@@ -38,6 +39,19 @@ def _dump_json(value: Any) -> str | None:
         return _json_body_bytes(value).decode("utf-8")
     except (TypeError, ValueError):
         return None
+
+
+def _omit_generated_fields(value: dict[str, Any]) -> dict[str, Any]:
+    """Mask every value except structural keys when output logging is off.
+
+    Stream distillation keeps upstream keys it does not model, and any of them
+    can carry generated text (provider reasoning, audio parts, extras), so the
+    mask cannot be a fixed key list. Keys are kept, values are not.
+    """
+    return {
+        key: (item if key in _OMIT_KEEP_KEYS else _OMITTED_PLACEHOLDER)
+        for key, item in value.items()
+    }
 
 
 def _filter_payload_content(
@@ -67,28 +81,9 @@ def _filter_payload_content(
                 if isinstance(item, dict):
                     c = dict(item)
                     if "message" in c and isinstance(c["message"], dict):
-                        m = dict(c["message"])
-                        m["content"] = _OMITTED_PLACEHOLDER
-                        if "reasoning_content" in m:
-                            m["reasoning_content"] = _OMITTED_PLACEHOLDER
-                        if "reasoning" in m:
-                            m["reasoning"] = _OMITTED_PLACEHOLDER
-                        if "tool_calls" in m:
-                            m["tool_calls"] = _OMITTED_PLACEHOLDER
-                        if "refusal" in m and m["refusal"] is not None:
-                            m["refusal"] = _OMITTED_PLACEHOLDER
-                        c["message"] = m
+                        c["message"] = _omit_generated_fields(c["message"])
                     elif "delta" in c and isinstance(c["delta"], dict):
-                        d = dict(c["delta"])
-                        if "content" in d and d["content"] is not None:
-                            d["content"] = _OMITTED_PLACEHOLDER
-                        if "reasoning_content" in d:
-                            d["reasoning_content"] = _OMITTED_PLACEHOLDER
-                        if "reasoning" in d:
-                            d["reasoning"] = _OMITTED_PLACEHOLDER
-                        if "tool_calls" in d:
-                            d["tool_calls"] = _OMITTED_PLACEHOLDER
-                        c["delta"] = d
+                        c["delta"] = _omit_generated_fields(c["delta"])
                     elif "text" in c:
                         c["text"] = _OMITTED_PLACEHOLDER
                     new_choices.append(c)
