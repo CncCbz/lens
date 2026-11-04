@@ -212,7 +212,8 @@ def test_dump_log_json_output_filtering() -> None:
     }
     dumped_anthropic = _dump_log_json(anthropic_response, log_output=False)
     assert dumped_anthropic is not None
-    assert '"content":"<omitted>"' in dumped_anthropic
+    assert '"content":[{"type":"text","text":"<omitted>"}]' in dumped_anthropic
+    assert '"stop_reason":"end_turn"' in dumped_anthropic
     assert "claude output text" not in dumped_anthropic
 
 
@@ -239,7 +240,9 @@ def test_dump_log_json_gemini_and_responses() -> None:
     }
     dumped_gemini_resp = _dump_log_json(gemini_resp, log_output=False)
     assert dumped_gemini_resp is not None
-    assert '"content":"<omitted>"' in dumped_gemini_resp
+    assert '"content":{"parts":[{"text":"<omitted>"}],"role":"model"}' in (
+        dumped_gemini_resp
+    )
     assert "gemini answer" not in dumped_gemini_resp
     assert '"totalTokenCount":10' in dumped_gemini_resp
 
@@ -250,8 +253,37 @@ def test_dump_log_json_gemini_and_responses() -> None:
     }
     dumped_responses_resp = _dump_log_json(responses_resp, log_output=False)
     assert dumped_responses_resp is not None
-    assert '"output":"<omitted>"' in dumped_responses_resp
+    assert '"output":[{"type":"message","content":"<omitted>"}]' in (
+        dumped_responses_resp
+    )
     assert '"status":"completed"' in dumped_responses_resp
+
+
+def test_dump_log_json_output_filtering_keeps_structural_fields() -> None:
+    payload = {
+        "id": "resp_1",
+        "status": "completed",
+        "provider_metadata": {"trace": "t-1"},
+        "output": [
+            {
+                "type": "function_call",
+                "id": "fc_1",
+                "call_id": "call_1",
+                "name": "lookup",
+                "arguments": '{"q":"secret query"}',
+            }
+        ],
+        "usage": {"total_tokens": 3},
+    }
+    dumped = _dump_log_json(payload, log_output=False)
+    assert dumped is not None
+    assert '"name":"lookup"' in dumped
+    assert '"call_id":"call_1"' in dumped
+    assert '"type":"function_call"' in dumped
+    assert '"arguments":"<omitted>"' in dumped
+    assert '"provider_metadata":{"trace":"t-1"}' in dumped
+    assert '"total_tokens":3' in dumped
+    assert "secret query" not in dumped
 
 
 def test_dump_log_json_preserves_error_responses() -> None:
@@ -643,7 +675,8 @@ def test_incomplete_stream_log_omits_output_without_raw_sse() -> None:
         assert not body.lstrip().startswith("data:")
         assert '"content":"<omitted>"' in body
         assert '"reasoning_content":"<omitted>"' in body
-        assert '"tool_calls":"<omitted>"' in body
+        assert '"tool_calls":[{"id":"call_1","type":"function"' in body
+        assert '"arguments":"<omitted>"' in body
         assert "secret partial output" not in body
         assert "secret reasoning" not in body
         assert "secret-tool-arg" not in body

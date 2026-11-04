@@ -13,7 +13,27 @@ _BASE64_CHARS = frozenset(
 _BASE64_PAYLOAD_KEYS = frozenset({"b64_json", "image_base64"})
 _MIME_KEYS = frozenset({"media_type", "mime_type", "mimetype"})
 _OMITTED_PLACEHOLDER = "<omitted>"
-_OMIT_KEEP_KEYS = frozenset({"role"})
+# Generated text lives in these keys; everything else in a message/block is
+# structural (role, id, type, name, status, annotations) and stays visible.
+_OMIT_TEXT_KEYS = frozenset(
+    {
+        "content",
+        "reasoning",
+        "reasoning_content",
+        "refusal",
+        "thinking",
+        "thought",
+        "text",
+        "arguments",
+        "partial_json",
+        "input",
+        "args",
+        "summary",
+        "transcript",
+    }
+)
+_OMIT_AUDIO_KEYS = frozenset({"data", "transcript"})
+_OMIT_OUTPUT_TEXT_KEYS = frozenset({"arguments", "summary", "text", "input", "result"})
 _INPUT_PAYLOAD_KEYS = frozenset(
     {
         "messages",
@@ -42,16 +62,151 @@ def _dump_json(value: Any) -> str | None:
 
 
 def _omit_generated_fields(value: dict[str, Any]) -> dict[str, Any]:
-    """Mask every value except structural keys when output logging is off.
+    """Mask generated text in a message/delta while keeping structural fields.
 
-    Stream distillation keeps upstream keys it does not model, and any of them
-    can carry generated text (provider reasoning, audio parts, extras), so the
-    mask cannot be a fixed key list. Keys are kept, values are not.
+    Only keys that carry model output are replaced; ids, roles, tool names,
+    statuses and unknown provider metadata keep their values so the log stays
+    readable when output logging is off.
     """
-    return {
-        key: (item if key in _OMIT_KEEP_KEYS else _OMITTED_PLACEHOLDER)
-        for key, item in value.items()
-    }
+    masked: dict[str, Any] = {}
+    for key, item in value.items():
+        if key in _OMIT_TEXT_KEYS:
+            masked[key] = _OMITTED_PLACEHOLDER
+        elif key == "audio" and isinstance(item, dict):
+            masked[key] = {
+                audio_key: (
+                    _OMITTED_PLACEHOLDER
+                    if audio_key in _OMIT_AUDIO_KEYS
+                    else audio_value
+                )
+                for audio_key, audio_value in item.items()
+            }
+        elif key in {"function", "function_call"} and isinstance(item, dict):
+            masked[key] = _omit_generated_fields(item)
+        elif key == "tool_calls" and isinstance(item, list):
+            masked[key] = [
+                _omit_generated_fields(entry) if isinstance(entry, dict) else entry
+                for entry in item
+            ]
+        else:
+            masked[key] = item
+    return masked
+
+
+def _omit_output_item(item: dict[str, Any]) -> dict[str, Any]:
+    """Keep a Responses output item's shape, mask the model output inside it."""
+    masked: dict[str, Any] = {}
+    for key, item_value in item.items():
+        if key == "content" or key in _OMIT_OUTPUT_TEXT_KEYS:
+            masked[key] = _OMITTED_PLACEHOLDER
+        else:
+            masked[key] = item_value
+    return masked
+
+
+def _omit_candidate_content(content: dict[str, Any]) -> dict[str, Any]:
+    """Keep Gemini parts as blocks, mask the generated text/args in each part."""
+    parts = content.get("parts")
+    if not isinstance(parts, list):
+        return _omit_generated_fields(content)
+    masked = dict(content)
+    masked["parts"] = [
+        _omit_part(part) if isinstance(part, dict) else part for part in parts
+    ]
+    return masked
+
+
+def _omit_part(part: dict[str, Any]) -> dict[str, Any]:
+    masked = dict(part)
+    if "text" in masked:
+        masked["text"] = _OMITTED_PLACEHOLDER
+    function_call = masked.get("functionCall")
+    if isinstance(function_call, dict) and "args" in function_call:
+        masked["functionCall"] = {**function_call, "args": _OMITTED_PLACEHOLDER}
+    return masked
+
+
+def _omit_output_value(output: Any) -> Any:
+    if not isinstance(output, list):
+        return _OMITTED_PLACEHOLDER
+    return [
+        _omit_output_item(item) if isinstance(item, dict) else item for item in output
+    ]
+
+
+def _omit_response_output(payload: dict[str, Any]) -> dict[str, Any]:
+    """Mask generated output inside an upstream/client response payload."""
+    filtered = dict(payload)
+
+    choices = filtered.get("choices")
+    if isinstance(choices, list):
+        new_choices = []
+        for item in choices:
+            if not isinstance(item, dict):
+                new_choices.append(item)
+                continue
+            choice = dict(item)
+            for key in ("message", "delta"):
+                if isinstance(choice.get(key), dict):
+                    choice[key] = _omit_generated_fields(choice[key])
+            if "text" in choice:
+                choice["text"] = _OMITTED_PLACEHOLDER
+            new_choices.append(choice)
+        filtered["choices"] = new_choices
+
+    if isinstance(filtered.get("message"), dict):
+        filtered["message"] = _omit_generated_fields(filtered["message"])
+
+    if isinstance(filtered.get("content"), list):
+        filtered["content"] = [
+            _omit_generated_fields(block) if isinstance(block, dict) else block
+            for block in filtered["content"]
+        ]
+    elif "content" in filtered:
+        filtered["content"] = _OMITTED_PLACEHOLDER
+
+    candidates = filtered.get("candidates")
+    if isinstance(candidates, list):
+        new_candidates = []
+        for item in candidates:
+            if not isinstance(item, dict):
+                new_candidates.append(item)
+                continue
+            cand = dict(item)
+            if isinstance(cand.get("content"), dict):
+                cand["content"] = _omit_candidate_content(cand["content"])
+            elif "content" in cand:
+                cand["content"] = _OMITTED_PLACEHOLDER
+            new_candidates.append(cand)
+        filtered["candidates"] = new_candidates
+
+    if "output" in filtered:
+        filtered["output"] = _omit_output_value(filtered["output"])
+
+    response = filtered.get("response")
+    if isinstance(response, dict):
+        inner = dict(response)
+        if "output" in inner:
+            inner["output"] = _omit_output_value(inner["output"])
+        filtered["response"] = inner
+
+    if isinstance(filtered.get("item"), dict):
+        filtered["item"] = _omit_output_item(filtered["item"])
+
+    if isinstance(filtered.get("content_block"), dict):
+        filtered["content_block"] = _omit_generated_fields(filtered["content_block"])
+
+    delta = filtered.get("delta")
+    if isinstance(delta, dict):
+        filtered["delta"] = _omit_generated_fields(delta)
+    elif "delta" in filtered:
+        filtered["delta"] = _OMITTED_PLACEHOLDER
+
+    for key in ("text", "arguments", "partial_json", "summary"):
+        if key in filtered:
+            filtered[key] = _OMITTED_PLACEHOLDER
+
+    return filtered
 
 
 def _filter_payload_content(
@@ -75,39 +230,7 @@ def _filter_payload_content(
                 filtered[k] = _OMITTED_PLACEHOLDER
 
     if not log_output:
-        if "choices" in filtered and isinstance(filtered["choices"], list):
-            new_choices = []
-            for item in filtered["choices"]:
-                if isinstance(item, dict):
-                    c = dict(item)
-                    if "message" in c and isinstance(c["message"], dict):
-                        c["message"] = _omit_generated_fields(c["message"])
-                    elif "delta" in c and isinstance(c["delta"], dict):
-                        c["delta"] = _omit_generated_fields(c["delta"])
-                    elif "text" in c:
-                        c["text"] = _OMITTED_PLACEHOLDER
-                    new_choices.append(c)
-                else:
-                    new_choices.append(item)
-            filtered["choices"] = new_choices
-
-        if "content" in filtered and isinstance(filtered["content"], list):
-            filtered["content"] = _OMITTED_PLACEHOLDER
-
-        if "candidates" in filtered and isinstance(filtered["candidates"], list):
-            new_candidates = []
-            for item in filtered["candidates"]:
-                if isinstance(item, dict):
-                    cand = dict(item)
-                    if "content" in cand:
-                        cand["content"] = _OMITTED_PLACEHOLDER
-                    new_candidates.append(cand)
-                else:
-                    new_candidates.append(item)
-            filtered["candidates"] = new_candidates
-
-        if "output" in filtered:
-            filtered["output"] = _OMITTED_PLACEHOLDER
+        filtered = _omit_response_output(filtered)
 
     return filtered
 
