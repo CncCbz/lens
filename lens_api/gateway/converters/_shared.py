@@ -525,7 +525,19 @@ def chat_tool_calls_to_anthropic_content(
 def responses_input_to_chat_messages(
     input_items: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
+    messages, _, _ = _responses_input_to_chat_parts(input_items)
+    return messages
+
+
+def _responses_input_to_chat_parts(
+    input_items: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], str | None]:
+    """Split Responses input items into Chat messages, embedded tool
+    definitions (additional_tools / tool_search_output items), and the
+    latest configuration_update reasoning effort, if any."""
     result: list[dict[str, Any]] = []
+    embedded_tools: list[dict[str, Any]] = []
+    configuration_effort: str | None = None
     pending_tool_calls: list[dict[str, Any]] = []
 
     def flush_pending_tool_calls() -> None:
@@ -545,6 +557,24 @@ def responses_input_to_chat_messages(
             role = "system"
         content = item.get("content")
         item_type = item.get("type")
+
+        # Codex/pi agents embed tool definitions in additional_tools items and
+        # mid-turn thinking-level changes in configuration_update items. Neither
+        # carries conversational content, so they must not become messages.
+        if item_type in ("additional_tools", "tool_search_output"):
+            tools = item.get("tools")
+            if isinstance(tools, list):
+                embedded_tools.extend(tools)
+            continue
+        if item_type == "tool_search_call":
+            continue
+        if item_type == "configuration_update":
+            reasoning = item.get("reasoning")
+            if isinstance(reasoning, dict):
+                effort = _clean_thinking_effort(reasoning.get("effort"))
+                if effort:
+                    configuration_effort = effort
+            continue
 
         if item_type == "function_call_output":
             flush_pending_tool_calls()
@@ -608,11 +638,14 @@ def responses_input_to_chat_messages(
                 result.append(message)
             continue
 
-        if role or content is not None:
+        # Typed items (reasoning replay, custom_tool_call_output, ...) and
+        # unknown item types carry no Chat-representable content; skip them
+        # instead of emitting placeholder messages with null content.
+        if not item_type and content is not None:
             result.append({"role": role or "user", "content": content})
 
     flush_pending_tool_calls()
-    return result
+    return result, embedded_tools, configuration_effort
 
 
 def responses_tools_to_chat_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:

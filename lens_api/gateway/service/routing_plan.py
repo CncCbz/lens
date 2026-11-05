@@ -133,6 +133,24 @@ def _extract_request_reasoning_effort(*bodies: Mapping[str, Any] | None) -> str 
         if not isinstance(body, Mapping):
             continue
 
+        # pi/Codex Responses clients keep the top-level reasoning.effort fixed
+        # and carry the real level in configuration_update input items; the
+        # last one wins, like upstreams apply it. Check them before the
+        # top-level fields so the in-band value cannot shadow the real level.
+        input_val = body.get("input")
+        if isinstance(input_val, list):
+            for item in reversed(input_val):
+                if not isinstance(item, Mapping):
+                    continue
+                if item.get("type") != "configuration_update":
+                    continue
+                item_reasoning = item.get("reasoning")
+                if not isinstance(item_reasoning, Mapping):
+                    continue
+                effort = _clean_reasoning_effort(item_reasoning.get("effort"))
+                if effort:
+                    return effort
+
         for key in (
             "reasoning_effort",
             "reasoningEffort",

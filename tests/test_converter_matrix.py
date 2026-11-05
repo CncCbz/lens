@@ -1443,6 +1443,134 @@ def test_responses_to_chat_keeps_reasoning_effort() -> None:
     assert chat["reasoning_effort"] == "high"
 
 
+def test_responses_to_chat_reads_configuration_update_and_additional_tools() -> None:
+    # pi/Codex clients keep the top-level reasoning.effort fixed for prompt
+    # caching and carry the real level plus tool definitions in input items.
+    chat = responses_request_to_chat(
+        {
+            "model": "m",
+            "input": [
+                {
+                    "type": "additional_tools",
+                    "role": "developer",
+                    "tools": [
+                        {
+                            "type": "function",
+                            "name": "read",
+                            "description": "Read a file",
+                            "parameters": {"type": "object", "properties": {}},
+                        }
+                    ],
+                },
+                {
+                    "role": "developer",
+                    "content": [{"type": "input_text", "text": "be helpful"}],
+                },
+                {"role": "user", "content": [{"type": "input_text", "text": "hi"}]},
+                {"type": "configuration_update", "reasoning": {"effort": "xhigh"}},
+            ],
+            "reasoning": {"effort": "medium", "summary": "auto"},
+        }
+    )
+    # additional_tools/configuration_update items must not become messages.
+    assert [m["role"] for m in chat["messages"]] == ["system", "user"]
+    assert chat["messages"][0]["content"] == "be helpful"
+    # Tool definitions merged into top-level tools.
+    assert [t["function"]["name"] for t in chat["tools"]] == ["read"]
+    # The configuration_update effort overrides the fixed top-level effort.
+    assert chat["reasoning_effort"] == "xhigh"
+
+
+def test_responses_to_chat_unknown_typed_items_do_not_become_messages() -> None:
+    chat = responses_request_to_chat(
+        {
+            "model": "m",
+            "input": [
+                {"role": "user", "content": [{"type": "input_text", "text": "hi"}]},
+                {"type": "reasoning", "content": []},
+                {"type": "custom_tool_call_output", "call_id": "c_1", "output": "o"},
+                {"vendor_field": 1},
+                {"role": "user"},
+            ],
+        }
+    )
+    assert [m["role"] for m in chat["messages"]] == ["user"]
+
+
+def test_responses_to_chat_last_configuration_update_wins() -> None:
+    chat = responses_request_to_chat(
+        {
+            "model": "m",
+            "input": [
+                {"role": "user", "content": [{"type": "input_text", "text": "hi"}]},
+                {"type": "configuration_update", "reasoning": {"effort": "xhigh"}},
+                {"type": "configuration_update", "reasoning": {"effort": "low"}},
+            ],
+            "reasoning": {"effort": "medium"},
+        }
+    )
+    assert chat["reasoning_effort"] == "low"
+
+
+def test_responses_to_chat_strips_responses_only_fields() -> None:
+    chat = responses_request_to_chat(
+        {
+            "model": "m",
+            "input": [
+                {"role": "user", "content": [{"type": "input_text", "text": "hi"}]}
+            ],
+            "include": ["reasoning.encrypted_content"],
+            "client_metadata": {"x-codex-installation-id": "install-1"},
+            "prompt_cache_key": "session-123",
+        }
+    )
+    # Chat upstreams reject the Responses-only fields; cache routing keys survive.
+    assert "include" not in chat
+    assert "client_metadata" not in chat
+    assert chat["prompt_cache_key"] == "session-123"
+
+
+def test_responses_to_chat_embedded_tools_do_not_replace_top_level() -> None:
+    chat = responses_request_to_chat(
+        {
+            "model": "m",
+            "input": [
+                {
+                    "type": "additional_tools",
+                    "tools": [
+                        {
+                            "type": "function",
+                            "name": "read",
+                            "description": "updated",
+                            "parameters": {"type": "object", "properties": {}},
+                        }
+                    ],
+                },
+                {"role": "user", "content": [{"type": "input_text", "text": "hi"}]},
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "name": "read",
+                    "description": "old",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+                {
+                    "type": "function",
+                    "name": "bash",
+                    "description": "Run bash",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            ],
+        }
+    )
+    names = [t["function"]["name"] for t in chat["tools"]]
+    assert sorted(names) == ["bash", "read"]
+    by_name = {t["function"]["name"]: t for t in chat["tools"]}
+    # additional_tools items cannot replace a top-level tool definition.
+    assert by_name["read"]["function"]["description"] == "old"
+
+
 def test_chat_to_gemini_reasoning_effort_maps_to_thinking_budget() -> None:
     gemini = chat_request_to_gemini(
         {

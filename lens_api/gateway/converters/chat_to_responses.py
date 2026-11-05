@@ -10,8 +10,8 @@ from ._shared import (
     _clean_thinking_effort,
     _copy_cache_control,
     _parse_sse_stream,
+    _responses_input_to_chat_parts,
     format_sse_event,
-    responses_input_to_chat_messages,
     responses_tools_to_chat_tools,
 )
 
@@ -28,8 +28,6 @@ _RESPONSES_CACHE_AND_ROUTING_KEYS = (
     "prompt_cache_retention",
     "safety_identifier",
     "service_tier",
-    "include",
-    "client_metadata",
     "parallel_tool_calls",
     "truncation",
     "max_tool_calls",
@@ -48,11 +46,16 @@ def responses_request_to_chat(body: dict[str, Any]) -> dict[str, Any]:
     if instructions:
         messages.append({"role": "system", "content": instructions})
 
+    embedded_tools: list[dict[str, Any]] = []
+    configuration_effort: str | None = None
     input_val = body.get("input", [])
     if isinstance(input_val, str):
         messages.append({"role": "user", "content": input_val})
     elif isinstance(input_val, list):
-        messages.extend(responses_input_to_chat_messages(input_val))
+        input_messages, embedded_tools, configuration_effort = (
+            _responses_input_to_chat_parts(input_val)
+        )
+        messages.extend(input_messages)
     chat["messages"] = messages
 
     if "max_output_tokens" in body:
@@ -63,6 +66,15 @@ def responses_request_to_chat(body: dict[str, Any]) -> dict[str, Any]:
 
     if "tools" in body:
         chat["tools"] = responses_tools_to_chat_tools(body["tools"])
+    if embedded_tools:
+        # additional_tools items accumulate and replace same-name definitions
+        # among themselves, but cannot replace a top-level tool (pi semantics).
+        merged = responses_tools_to_chat_tools(embedded_tools)
+        if merged:
+            by_name = {(t.get("function") or {}).get("name", ""): t for t in merged}
+            for tool in chat.get("tools") or []:
+                by_name[(tool.get("function") or {}).get("name", "")] = tool
+            chat["tools"] = list(by_name.values())
     if "tool_choice" in body:
         chat["tool_choice"] = body["tool_choice"]
     for key in _RESPONSES_CACHE_AND_ROUTING_KEYS:
@@ -74,6 +86,11 @@ def responses_request_to_chat(body: dict[str, Any]) -> dict[str, Any]:
         effort = _clean_thinking_effort(reasoning.get("effort"))
         if effort:
             chat["reasoning_effort"] = effort
+    # pi keeps the top-level reasoning.effort fixed (medium) for prompt-cache
+    # stability and signals the real level via configuration_update items; the
+    # in-band value wins for the converted request.
+    if configuration_effort:
+        chat["reasoning_effort"] = configuration_effort
 
     return chat
 
@@ -175,6 +192,8 @@ def chat_request_to_responses(
         "metadata",
         "store",
         "user",
+        "include",
+        "client_metadata",
         *_RESPONSES_CACHE_AND_ROUTING_KEYS,
     ):
         if key in body:

@@ -5,6 +5,7 @@ from lens_api.core.match_overrides import (
 )
 from lens_api.gateway.converters import convert_request, needs_conversion
 from lens_api.gateway.service.routing_plan import (
+    _extract_request_reasoning_effort,
     _prepare_upstream_body,
 )
 from lens_api.gateway.upstreams import build_upstream_headers
@@ -511,3 +512,28 @@ def test_action_model_rejected_on_validate() -> None:
         assert "model cannot be overridden" in str(exc)
     else:
         raise AssertionError("model override should be rejected")
+
+
+def test_extract_request_reasoning_effort_reads_configuration_update() -> None:
+    # pi/Codex Responses clients pin the top-level reasoning.effort and carry
+    # the real level in configuration_update input items.
+    body = {
+        "model": "m",
+        "input": [
+            {"type": "additional_tools", "tools": []},
+            {"role": "user", "content": "hi"},
+            {"type": "configuration_update", "reasoning": {"effort": "xhigh"}},
+        ],
+        "reasoning": {"effort": "medium", "summary": "auto"},
+    }
+    assert _extract_request_reasoning_effort(body) == "xhigh"
+
+    # The last configuration_update item wins.
+    body["input"].append(
+        {"type": "configuration_update", "reasoning": {"effort": "low"}}
+    )
+    assert _extract_request_reasoning_effort(body) == "low"
+
+    # Without configuration_update items the top-level effort is used.
+    plain = {"reasoning": {"effort": "high"}, "input": "hi"}
+    assert _extract_request_reasoning_effort(plain) == "high"
