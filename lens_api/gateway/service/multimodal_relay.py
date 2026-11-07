@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from .runtime_context import (
@@ -28,6 +29,8 @@ from .upstream_http import (
     _format_transport_error,
     _resolve_http_client,
 )
+
+logger = logging.getLogger(__name__)
 
 _CHAT_MEDIA_KINDS = ("image", "audio")
 _RELAY_CONTEXT_LIMIT = 4000
@@ -213,43 +216,45 @@ def _last_user_message_index(
     return last_user if last_user is not None else last_dict
 
 
-def _replace_block(
+def _apply_media_results(
     body: dict[str, Any],
     protocol: ProtocolKind,
-    message_index: int,
-    content_index: int,
-    replacement: dict[str, Any],
+    replacements: dict[tuple[int, int], dict[str, Any]],
+    drops: set[tuple[int, int]],
 ) -> None:
-    messages = body.get(_message_container_key(protocol))
-    if not isinstance(messages, list) or message_index >= len(messages):
-        return
-    message = messages[message_index]
-    if not isinstance(message, dict):
-        return
-    content = message.get("content")
-    if not isinstance(content, list) or content_index >= len(content):
-        return
-    content[content_index] = replacement
+    """Replace relayed media blocks and drop the ones that could not be relayed.
 
-
-def _drop_block(
-    body: dict[str, Any],
-    protocol: ProtocolKind,
-    message_index: int,
-    content_index: int,
-) -> None:
+    Indices refer to the original body, so both edits happen in one descending
+    pass per message to keep later indices valid.
+    """
     messages = body.get(_message_container_key(protocol))
-    if not isinstance(messages, list) or message_index >= len(messages):
+    if not isinstance(messages, list):
         return
-    message = messages[message_index]
-    if not isinstance(message, dict):
-        return
-    content = message.get("content")
-    if not isinstance(content, list) or content_index >= len(content):
-        return
-    del content[content_index]
-    if not content:
-        message["content"] = ""
+    message_indices = {index for index, _ in replacements} | {
+        index for index, _ in drops
+    }
+    for message_index in sorted(message_indices, reverse=True):
+        if message_index >= len(messages):
+            continue
+        message = messages[message_index]
+        if not isinstance(message, dict):
+            continue
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+        content_indices = {
+            index for owner, index in replacements if owner == message_index
+        } | {index for owner, index in drops if owner == message_index}
+        for content_index in sorted(content_indices, reverse=True):
+            if content_index >= len(content):
+                continue
+            key = (message_index, content_index)
+            if key in drops:
+                del content[content_index]
+                if not content:
+                    message["content"] = ""
+            else:
+                content[content_index] = replacements[key]
 
 
 def _media_request_body(
@@ -367,19 +372,38 @@ async def _call_helper_group(
     deadline: Any,
     log_ctx: Any,
 ) -> str:
-    helper_group = await app_state.group_repo.get_group(helper_group_id)
-    plan = await _resolve_routing_plan(
-        ProtocolKind.OPENAI_CHAT, helper_group.name, channels
-    )
+    try:
+        helper_group = await app_state.group_repo.get_group(helper_group_id)
+    except KeyError as exc:
+        raise UpstreamRequestError(
+            status_code=502,
+            detail=f"Multimodal relay {kind} group not found: {helper_group_id}",
+            router_status_code=None,
+        ) from exc
+    try:
+        plan = await _resolve_routing_plan(
+            ProtocolKind.OPENAI_CHAT, helper_group.name, channels
+        )
+    except LookupError as exc:
+        raise UpstreamRequestError(
+            status_code=502,
+            detail=(
+                f"Multimodal relay {kind} group {helper_group.name} is unusable: {exc}"
+            ),
+            router_status_code=None,
+        ) from exc
     last_error: str | None = None
     for target in plan.route_targets:
         channel = target.channel
         attempt_started_at = perf_counter()
+        request_url: str | None = None
         request_headers: str | None = None
         request_body: str | None = None
         response_headers: str | None = None
         response_body: str | None = None
         attempt_status: int | None = None
+        attempt_error: str | None = None
+        relay_text = ""
         try:
             body = _media_request_body(
                 target.model_name, kind, block, protocol, message_context
@@ -397,6 +421,7 @@ async def _call_helper_group(
                 settings,
                 credential_id=target.credential_id,
             )
+            request_url = str(upstream.url)
             request_headers = json.dumps(dict(upstream.headers), ensure_ascii=True)
             request_body = json.dumps(upstream.json_body, ensure_ascii=True)
             proxy_url = resolve_upstream_proxy_url(channel, global_proxy_url)
@@ -412,80 +437,68 @@ async def _call_helper_group(
                     )
 
                 remaining = deadline.remaining_seconds()
-                if remaining is not None and remaining > 0:
+                if remaining is not None and remaining <= 0:
+                    raise TimeoutError(
+                        "request deadline exhausted before the relay call"
+                    )
+                if remaining is not None:
                     async with asyncio.timeout(remaining):
                         response = await _send()
                 else:
                     response = await _send()
-                try:
-                    response.raise_for_status()
-                except httpx.HTTPStatusError as exc:
-                    await exc.response.aread()
-                    attempt_status = exc.response.status_code
-                    response_headers = json.dumps(
-                        dict(exc.response.headers), ensure_ascii=True
-                    )
-                    response_body = exc.response.content.decode(
-                        "utf-8", errors="replace"
-                    )
-                    last_error = _format_http_response_error(exc.response)
-                    continue
+                attempt_status = response.status_code
                 content = await response.aread()
-                attempt_status = 200
                 response_headers = json.dumps(dict(response.headers), ensure_ascii=True)
                 response_body = content.decode("utf-8", errors="replace")
+                if attempt_status >= 300:
+                    attempt_error = _format_http_response_error(response)
+                elif needs_conversion(ProtocolKind.OPENAI_CHAT, channel.protocol):
+                    converted = json.loads(
+                        convert_response(
+                            ProtocolKind.OPENAI_CHAT,
+                            channel.protocol,
+                            content,
+                            body.get("model", ""),
+                        )
+                    )
+                    relay_text = _extract_chat_text(converted).strip()
+                else:
+                    relay_text = _extract_chat_text(json.loads(content)).strip()
+                if attempt_status < 300 and not relay_text:
+                    attempt_error = "Empty helper response"
             finally:
                 if close_client:
                     await client.aclose()
-            if needs_conversion(ProtocolKind.OPENAI_CHAT, channel.protocol):
-                converted = json.loads(
-                    convert_response(
-                        ProtocolKind.OPENAI_CHAT,
-                        channel.protocol,
-                        content,
-                        body.get("model", ""),
-                    )
-                )
-            else:
-                converted = json.loads(content)
-            text = _extract_chat_text(converted)
-            if text.strip():
-                _append_relay_attempt(
-                    log_ctx,
-                    channel,
-                    target,
-                    kind,
-                    attempt_status,
-                    True,
-                    last_error,
-                    request_headers,
-                    str(upstream.url),
-                    request_body,
-                    response_headers,
-                    response_body,
-                    attempt_started_at,
-                )
-                return text.strip()
-            last_error = "Empty helper response"
         except UpstreamRequestError as exc:
-            last_error = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
-        except (httpx.HTTPError, ValueError, TimeoutError) as exc:
-            last_error = _format_transport_error(exc, "")
+            attempt_error = (
+                exc.detail if isinstance(exc.detail, str) else str(exc.detail)
+            )
+        except httpx.HTTPError as exc:
+            attempt_error = _format_transport_error(exc, request_url or "")
+        except TimeoutError:
+            attempt_error = f"Multimodal relay timed out for {kind}"
+        except ValueError as exc:
+            attempt_error = f"Invalid helper response: {exc}"
+        except Exception as exc:  # noqa: BLE001 - one attempt row per target
+            attempt_error = f"{type(exc).__name__}: {exc}"
         _append_relay_attempt(
             log_ctx,
             channel,
             target,
             kind,
             attempt_status,
-            False,
-            last_error,
+            bool(relay_text),
+            attempt_error,
             request_headers,
-            str(upstream.url),
+            request_url,
             request_body,
             response_headers,
             response_body,
             attempt_started_at,
         )
+        if relay_text:
+            return relay_text
+        last_error = attempt_error or last_error
     raise UpstreamRequestError(
         status_code=502,
         detail=f"Multimodal relay failed for {kind}: {last_error or 'all targets failed'}",
@@ -559,10 +572,9 @@ async def _maybe_relay_multimodal(
     if not tasks and not drops:
         return body
 
-    relayed = deepcopy(body)
-    for message_index, content_index in sorted(drops, reverse=True):
-        _drop_block(relayed, protocol, message_index, content_index)
     if not tasks:
+        relayed = deepcopy(body)
+        _apply_media_results(relayed, protocol, {}, set(drops))
         return relayed
 
     results = await asyncio.gather(
@@ -583,20 +595,27 @@ async def _maybe_relay_multimodal(
         return_exceptions=True,
     )
 
-    for (kind, (message_index, content_index, _), _), description in zip(
+    replacements: dict[tuple[int, int], dict[str, Any]] = {}
+    dropped = set(drops)
+    for (kind, (message_index, content_index, _), _), result in zip(
         tasks, results, strict=True
     ):
-        if isinstance(description, BaseException):
-            raise UpstreamRequestError(
-                status_code=502,
-                detail=f"Multimodal relay failed for {kind}",
-                router_status_code=None,
-            ) from description
-        _replace_block(
-            relayed,
-            protocol,
-            message_index,
-            content_index,
-            _text_block(f"[{kind}: {description}]", protocol),
+        if isinstance(result, BaseException):
+            # Degrade instead of failing the whole request: the media block turns
+            # into a text marker, so the text-only model still gets the request.
+            logger.warning(
+                "Multimodal relay failed for %s, replacing the block with text: %s",
+                kind,
+                result,
+            )
+            replacements[(message_index, content_index)] = _text_block(
+                f"[{kind}: unavailable]", protocol
+            )
+            continue
+        replacements[(message_index, content_index)] = _text_block(
+            f"[{kind}: {result}]", protocol
         )
+
+    relayed = deepcopy(body)
+    _apply_media_results(relayed, protocol, replacements, dropped)
     return relayed
