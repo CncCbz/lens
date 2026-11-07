@@ -109,14 +109,63 @@ async def test_relay_failure_degrades_to_text(
         deadline=None,
     )
 
-    # Both the stale image and the current image are handled: the stale one is
-    # dropped, the unrelayable current one becomes a text marker so the
-    # downstream model still sees the turn and no empty content is left behind.
+    # The stale image is dropped, the unrelayable current image becomes a text
+    # marker carrying the reason, so the downstream model still sees the turn and
+    # no empty content is left behind.
     assert relayed["messages"][0]["content"] == [{"type": "text", "text": "old"}]
-    assert relayed["messages"][1]["content"] == [
-        {"type": "text", "text": "[image: unavailable]"},
-        {"type": "text", "text": "now"},
-    ]
+    marker, text = relayed["messages"][1]["content"]
+    assert text == {"type": "text", "text": "now"}
+    assert marker["text"].startswith("[image: unavailable (")
+    assert "helper upstream exploded" in marker["text"]
+
+
+@pytest.mark.asyncio
+async def test_helper_group_without_chat_protocol_still_relays(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: list[ProtocolKind] = []
+
+    async def _fake_plan(protocol: ProtocolKind, *_args: object) -> SimpleNamespace:
+        seen.append(protocol)
+        if protocol == ProtocolKind.OPENAI_CHAT:
+            raise LookupError("does not support protocol=openai_chat")
+        return SimpleNamespace(name="image-helper")
+
+    monkeypatch.setattr(relay, "_resolve_routing_plan", _fake_plan)
+
+    plan = await relay._resolve_helper_plan(
+        SimpleNamespace(
+            name="image-helper",
+            protocols=[ProtocolKind.OPENAI_CHAT, ProtocolKind.ANTHROPIC],
+        ),
+        "image",
+        [],
+    )
+
+    assert plan.name == "image-helper"
+    assert seen == [ProtocolKind.OPENAI_CHAT, ProtocolKind.ANTHROPIC]
+
+    # A responses-only helper group resolves directly on its own protocol.
+    seen.clear()
+    monkeypatch.setattr(
+        relay,
+        "_resolve_routing_plan",
+        lambda protocol, *_args: _resolved(protocol, seen),
+    )
+    plan = await relay._resolve_helper_plan(
+        SimpleNamespace(name="image-helper", protocols=[ProtocolKind.OPENAI_RESPONSES]),
+        "image",
+        [],
+    )
+    assert plan.name == "image-helper"
+    assert seen == [ProtocolKind.OPENAI_RESPONSES]
+
+
+async def _resolved(
+    protocol: ProtocolKind, seen: list[ProtocolKind]
+) -> SimpleNamespace:
+    seen.append(protocol)
+    return SimpleNamespace(name="image-helper")
 
 
 @pytest.mark.asyncio
@@ -137,7 +186,9 @@ async def test_helper_failure_is_logged_as_attempt(
             return None
 
     async def _fake_get_group(_group_id: str) -> SimpleNamespace:
-        return SimpleNamespace(name="image-helper")
+        return SimpleNamespace(
+            name="image-helper", protocols=[ProtocolKind.OPENAI_CHAT]
+        )
 
     async def _fake_plan(*_args: object, **_kwargs: object) -> SimpleNamespace:
         return SimpleNamespace(

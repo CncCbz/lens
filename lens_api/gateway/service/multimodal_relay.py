@@ -34,6 +34,23 @@ logger = logging.getLogger(__name__)
 
 _CHAT_MEDIA_KINDS = ("image", "audio")
 _RELAY_CONTEXT_LIMIT = 4000
+_REASON_LIMIT = 200
+
+# The helper request is always built as an OPENAI_CHAT body and converted to the
+# target channel, so the helper group only has to support any one of these.
+MEDIA_RELAY_PROTOCOLS = (
+    ProtocolKind.OPENAI_CHAT,
+    ProtocolKind.OPENAI_RESPONSES,
+    ProtocolKind.ANTHROPIC,
+    ProtocolKind.GEMINI,
+)
+
+
+def group_relay_capable(group: Any) -> bool:
+    """Whether a group can serve as a media relay helper at all."""
+    protocols = getattr(group, "protocols", None) or ()
+    return any(item in protocols for item in MEDIA_RELAY_PROTOCOLS)
+
 
 _RELAY_SYSTEM_PROMPTS = {
     "image": (
@@ -360,6 +377,53 @@ def _append_relay_attempt(
     )
 
 
+def _reason_text(exc: BaseException) -> str:
+    """One-line, bounded failure reason safe to expose to the client."""
+    if isinstance(exc, UpstreamRequestError):
+        detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
+    else:
+        detail = f"{type(exc).__name__}: {exc}"
+    return " ".join(detail.split())[:_REASON_LIMIT]
+
+
+async def _resolve_helper_plan(
+    helper_group: Any, kind: str, channels: list[ChannelConfig]
+) -> Any:
+    """Resolve the helper group with a protocol it actually supports.
+
+    The relay always speaks OPENAI_CHAT towards the channel, so the group just
+    has to expose one chat-convertible protocol; forcing OPENAI_CHAT made any
+    helper group built only on responses/anthropic/gemini channels unusable.
+    """
+    supported = [
+        item for item in MEDIA_RELAY_PROTOCOLS if item in helper_group.protocols
+    ]
+    if not supported:
+        listed = ", ".join(item.value for item in helper_group.protocols) or "none"
+        raise UpstreamRequestError(
+            status_code=502,
+            detail=(
+                f"Multimodal relay {kind} group {helper_group.name} supports no "
+                f"chat protocol; supported={listed}"
+            ),
+            router_status_code=None,
+        )
+    last_error: LookupError | None = None
+    for candidate in supported:
+        try:
+            return await _resolve_routing_plan(candidate, helper_group.name, channels)
+        except LookupError as exc:
+            last_error = exc
+    raise UpstreamRequestError(
+        status_code=502,
+        detail=(
+            f"Multimodal relay {kind} group {helper_group.name} is unusable: "
+            f"{last_error}"
+        ),
+        router_status_code=None,
+    )
+
+
 async def _call_helper_group(
     *,
     channels: list[ChannelConfig],
@@ -380,18 +444,7 @@ async def _call_helper_group(
             detail=f"Multimodal relay {kind} group not found: {helper_group_id}",
             router_status_code=None,
         ) from exc
-    try:
-        plan = await _resolve_routing_plan(
-            ProtocolKind.OPENAI_CHAT, helper_group.name, channels
-        )
-    except LookupError as exc:
-        raise UpstreamRequestError(
-            status_code=502,
-            detail=(
-                f"Multimodal relay {kind} group {helper_group.name} is unusable: {exc}"
-            ),
-            router_status_code=None,
-        ) from exc
+    plan = await _resolve_helper_plan(helper_group, kind, channels)
     last_error: str | None = None
     for target in plan.route_targets:
         channel = target.channel
@@ -602,14 +655,15 @@ async def _maybe_relay_multimodal(
     ):
         if isinstance(result, BaseException):
             # Degrade instead of failing the whole request: the media block turns
-            # into a text marker, so the text-only model still gets the request.
+            # into a text marker carrying the reason, so the text-only model and
+            # the user both see why the media is missing.
             logger.warning(
                 "Multimodal relay failed for %s, replacing the block with text: %s",
                 kind,
                 result,
             )
             replacements[(message_index, content_index)] = _text_block(
-                f"[{kind}: unavailable]", protocol
+                f"[{kind}: unavailable ({_reason_text(result)})]", protocol
             )
             continue
         replacements[(message_index, content_index)] = _text_block(

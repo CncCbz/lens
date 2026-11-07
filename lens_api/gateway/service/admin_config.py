@@ -61,6 +61,7 @@ from .runtime_context import (
 )
 from .tasks import _sync_group_prices
 from .auth import get_current_admin
+from .multimodal_relay import group_relay_capable
 from .proxy_routes import build_gateway_pi_config
 
 
@@ -293,6 +294,15 @@ def _relay_group_supports(group: ModelGroup, kind: str) -> bool:
     return False
 
 
+def _relay_group_usable(group: ModelGroup, kind: str) -> bool:
+    """Capability plus the protocol the relay needs to reach the group."""
+    return (
+        not group.route_group_id.strip()
+        and _relay_group_supports(group, kind)
+        and group_relay_capable(group)
+    )
+
+
 async def _load_multimodal_relay_config() -> MultimodalRelayConfig:
     runtime = await app_state.settings_repo.get_runtime_settings()
     groups = await app_state.group_repo.list_groups()
@@ -308,14 +318,10 @@ async def _load_multimodal_relay_config() -> MultimodalRelayConfig:
         image_group_name=image_group.name if image_group else "",
         audio_group_name=audio_group.name if audio_group else "",
         image_group_valid=bool(
-            image_group
-            and not image_group.route_group_id.strip()
-            and _relay_group_supports(image_group, "image")
+            image_group and _relay_group_usable(image_group, "image")
         ),
         audio_group_valid=bool(
-            audio_group
-            and not audio_group.route_group_id.strip()
-            and _relay_group_supports(audio_group, "audio")
+            audio_group and _relay_group_usable(audio_group, "audio")
         ),
         groups=[
             MultimodalRelayGroupStatus(
@@ -389,6 +395,11 @@ async def update_multimodal_relay_config(
         if not _relay_group_supports(group, kind):
             raise ValueError(
                 f"Multimodal relay {kind} group {group.name} does not support {kind}"
+            )
+        if not group_relay_capable(group):
+            raise ValueError(
+                f"Multimodal relay {kind} group {group.name} has no chat, responses, "
+                "anthropic or gemini protocol enabled"
             )
     await app_state.settings_repo.upsert_settings(
         [
