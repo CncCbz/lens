@@ -62,7 +62,7 @@ from .routing_plan import (
     _elapsed_ms,
     _extract_request_reasoning_effort,
     _final_upstream_failure,
-    _is_deepseek_thinking_target,
+    _should_replay_reasoning,
     _prepare_upstream_body,
     _resolve_routing_plan,
 )
@@ -699,9 +699,7 @@ async def _try_target(
                 channel.protocol,
                 body,
                 target.model_name,
-                preserve_reasoning=_is_deepseek_thinking_target(
-                    channel, target.model_name
-                ),
+                preserve_reasoning=_should_replay_reasoning(channel, target.model_name),
             )
         except ValueError as exc:
             return await _record_target_failure(

@@ -122,9 +122,16 @@ async def _build_sse_to_json_result(
     if client_protocol is not None and needs_conversion(
         client_protocol, channel.protocol
     ):
-        content = convert_response(
-            client_protocol, channel.protocol, content, original_model
-        )
+        try:
+            content = convert_response(
+                client_protocol, channel.protocol, content, original_model
+            )
+        except ValueError as exc:
+            raise UpstreamRequestError(
+                status_code=502,
+                detail=f"Invalid upstream response: {exc}",
+                router_status_code=502,
+            ) from exc
 
     upstream_response_headers = _passthrough_headers(response.headers)
     response_headers = dict(upstream_response_headers)
@@ -360,9 +367,16 @@ async def _build_json_result(
     if client_protocol is not None and needs_conversion(
         client_protocol, channel.protocol
     ):
-        content = convert_response(
-            client_protocol, channel.protocol, content, body.get("model", "")
-        )
+        try:
+            content = convert_response(
+                client_protocol, channel.protocol, content, body.get("model", "")
+            )
+        except ValueError as exc:
+            raise UpstreamRequestError(
+                status_code=502,
+                detail=f"Invalid upstream response: {exc}",
+                router_status_code=502,
+            ) from exc
 
     cost = await _safe_estimate_cost(
         pricing_group_name,

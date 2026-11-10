@@ -132,6 +132,63 @@ def _request_to_chat(
     return _TO_CHAT_REQUEST[protocol](body)
 
 
+def _chat_request_without_provider_metadata(
+    body: dict[str, Any], *, preserve_reasoning: bool
+) -> dict[str, Any]:
+    messages = body.get("messages")
+    if not isinstance(messages, list):
+        return body
+    cleaned: list[Any] = []
+    for message in messages:
+        if not isinstance(message, dict):
+            cleaned.append(message)
+            continue
+        message = dict(message)
+        for key in (
+            "_responses_reasoning_items",
+            "_gemini_text_parts",
+            "reasoning_blocks",
+            "reasoning_signature",
+            "reasoning_redacted",
+            "is_error",
+        ):
+            message.pop(key, None)
+        if not preserve_reasoning:
+            message.pop("reasoning_content", None)
+            message.pop("reasoning", None)
+        content = message.get("content")
+        if isinstance(content, list):
+            message["content"] = [
+                (
+                    {
+                        key: value
+                        for key, value in part.items()
+                        if key not in {"thought", "thoughtSignature"}
+                    }
+                    if isinstance(part, dict)
+                    else part
+                )
+                for part in content
+                if not isinstance(part, dict) or part.get("thought") is not True
+            ]
+        tool_calls = message.get("tool_calls")
+        if isinstance(tool_calls, list):
+            message["tool_calls"] = [
+                (
+                    {
+                        key: value
+                        for key, value in call.items()
+                        if key != "thoughtSignature"
+                    }
+                    if isinstance(call, dict)
+                    else call
+                )
+                for call in tool_calls
+            ]
+        cleaned.append(message)
+    return {**body, "messages": cleaned}
+
+
 def convert_request(
     client_protocol: ProtocolKind,
     channel_protocol: ProtocolKind,
@@ -140,6 +197,8 @@ def convert_request(
     preserve_reasoning: bool = False,
 ) -> dict[str, Any]:
     _ensure_chat_protocol_pair(client_protocol, channel_protocol)
+    if target_model:
+        body = {**body, "model": target_model}
     if client_protocol == channel_protocol:
         result = (
             normalize_openai_chat_request(body)
@@ -147,7 +206,10 @@ def convert_request(
             else dict(body)
         )
     elif channel_protocol == ProtocolKind.OPENAI_CHAT:
-        result = _request_to_chat(client_protocol, body, preserve_reasoning)
+        result = _chat_request_without_provider_metadata(
+            _request_to_chat(client_protocol, body, preserve_reasoning),
+            preserve_reasoning=preserve_reasoning,
+        )
     elif client_protocol == ProtocolKind.OPENAI_CHAT:
         result = (
             chat_request_to_responses(body, preserve_reasoning=preserve_reasoning)
@@ -156,6 +218,7 @@ def convert_request(
         )
     else:
         chat_body = _request_to_chat(client_protocol, body, preserve_reasoning)
+        chat_body["model"] = body.get("model") or ""
         result = (
             chat_request_to_responses(chat_body, preserve_reasoning=preserve_reasoning)
             if channel_protocol == ProtocolKind.OPENAI_RESPONSES

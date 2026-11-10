@@ -520,7 +520,7 @@ def test_chat_stream_parser_drains_after_done_marker() -> None:
                     "choices": [
                         {
                             "delta": {"role": "assistant"},
-                            "finish_reason": None,
+                            "finish_reason": "stop",
                         }
                     ]
                 }

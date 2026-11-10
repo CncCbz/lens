@@ -9,6 +9,7 @@ import httpx
 import pytest
 
 from lens_api.core.config import Settings
+from lens_api.gateway.converters import convert_request
 from lens_api.gateway.service.proxy_upstream import (
     _build_json_result,
     _build_sse_to_json_result,
@@ -19,6 +20,7 @@ from starlette.responses import Response
 
 from lens_api.gateway.service.runtime_context import (
     StreamCapture,
+    UpstreamRequestError,
     UpstreamResult,
     _RequestDeadline,
     resolve_channel_error_policy,
@@ -188,6 +190,281 @@ def test_sse_to_json_converts_protocol_to_client() -> None:
 # ---------------------------------------------------------------------------
 # _build_json_result (normal non-stream JSON path)
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "source", [ProtocolKind.OPENAI_RESPONSES, ProtocolKind.ANTHROPIC]
+)
+def test_cross_protocol_pivot_keeps_target_model_capabilities(
+    source: ProtocolKind,
+) -> None:
+    assistant = {
+        "role": "assistant",
+        "content": [{"type": "tool_use", "id": "call_1", "name": "f", "input": {}}],
+    }
+    body = {"model": "alias", "reasoning_effort": "high"}
+    if source == ProtocolKind.ANTHROPIC:
+        body.update(
+            {
+                "messages": [{"role": "user", "content": "go"}, assistant],
+                "thinking": {"type": "enabled", "budget_tokens": 16384},
+            }
+        )
+    else:
+        body.update(
+            {
+                "input": [
+                    {
+                        "type": "function_call",
+                        "call_id": "call_1",
+                        "name": "f",
+                        "arguments": "{}",
+                    }
+                ],
+                "reasoning": {"effort": "high"},
+            }
+        )
+    result = convert_request(source, ProtocolKind.GEMINI, body, "gemini-3-pro-preview")
+    assert result["generationConfig"]["thinkingConfig"]["thinkingLevel"] == "HIGH"
+    parts = [part for item in result["contents"] for part in item["parts"]]
+    assert (
+        next(part["functionCall"] for part in parts if "functionCall" in part)["id"]
+        == "call_1"
+    )
+    assert body["model"] == "alias"
+
+
+@pytest.mark.parametrize("preserve_reasoning", [False, True])
+def test_gemini_metadata_is_removed_from_chat_wire(preserve_reasoning: bool) -> None:
+    body = {
+        "model": "gemini-3-pro-preview",
+        "contents": [
+            {
+                "role": "model",
+                "parts": [
+                    {
+                        "thought": True,
+                        "text": "thinking",
+                        "thoughtSignature": "sig-thought",
+                    },
+                    {"text": "answer", "thoughtSignature": "sig-text"},
+                    {
+                        "functionCall": {"id": "call_1", "name": "f", "args": {}},
+                        "thoughtSignature": "sig-tool",
+                    },
+                ],
+            },
+            {
+                "role": "user",
+                "parts": [
+                    {
+                        "functionResponse": {
+                            "id": "call_1",
+                            "name": "f",
+                            "response": {"error": "failed"},
+                        }
+                    }
+                ],
+            },
+        ],
+    }
+    result = convert_request(
+        ProtocolKind.GEMINI,
+        ProtocolKind.OPENAI_CHAT,
+        body,
+        target_model="deepseek-reasoner" if preserve_reasoning else "gpt-test",
+        preserve_reasoning=preserve_reasoning,
+    )
+    message = result["messages"][0]
+    assert ("reasoning_content" in message) is preserve_reasoning
+    assert "thoughtSignature" not in json.dumps(result)
+    assert "thought" not in json.dumps(message.get("content"))
+    assert "is_error" not in result["messages"][1]
+    assert body["contents"][0]["parts"][0]["thoughtSignature"] == "sig-thought"
+
+
+def test_native_responses_metadata_stays_off_chat_upstream_wire() -> None:
+    body = {
+        "model": "public-alias",
+        "input": [
+            {
+                "type": "reasoning",
+                "id": "rs_1",
+                "summary": [],
+                "encrypted_content": "opaque",
+            },
+            {
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": "answer"}],
+            },
+            {"role": "user", "content": "next"},
+        ],
+    }
+    result = convert_request(
+        ProtocolKind.OPENAI_RESPONSES,
+        ProtocolKind.OPENAI_CHAT,
+        body,
+        target_model="gpt-test",
+        preserve_reasoning=True,
+    )
+    assert result["model"] == "gpt-test"
+    assert body["model"] == "public-alias"
+    assert result["messages"][0]["content"] == "answer"
+    assert all(
+        "_responses_reasoning_items" not in message for message in result["messages"]
+    )
+
+
+_GEMINI_FAILURE_REASONS = (
+    "OTHER",
+    "FINISH_REASON_UNSPECIFIED",
+    "MALFORMED_FUNCTION_CALL",
+    "UNEXPECTED_TOOL_CALL",
+    "TOO_MANY_TOOL_CALLS",
+    "LANGUAGE",
+    "NO_IMAGE",
+    "IMAGE_OTHER",
+    "UNKNOWN_EXPLICIT_REASON",
+)
+
+
+@pytest.mark.parametrize("finish_reason", _GEMINI_FAILURE_REASONS)
+@pytest.mark.parametrize("mode", ["json", "sse_to_json", "stream"])
+def test_gemini_failure_with_function_call_never_succeeds(
+    finish_reason: str, mode: str
+) -> None:
+    channel = _channel(ProtocolKind.GEMINI)
+    candidate = {
+        "index": 0,
+        "content": {
+            "role": "model",
+            "parts": [{"functionCall": {"name": "lookup", "args": {}}}],
+        },
+        "finishReason": finish_reason,
+    }
+    payload = {"modelVersion": "gemini-test", "candidates": [candidate]}
+    if mode == "json":
+        content = json.dumps(payload).encode()
+    else:
+        call_payload = {
+            "modelVersion": "gemini-test",
+            "candidates": [
+                {
+                    key: value
+                    for key, value in candidate.items()
+                    if key != "finishReason"
+                }
+            ],
+        }
+        terminal_payload = {"candidates": [{"index": 0, "finishReason": finish_reason}]}
+        content = (
+            f"data: {json.dumps(call_payload)}\n\n"
+            f"data: {json.dumps(terminal_payload)}\n\n"
+        ).encode()
+    response = httpx.Response(
+        200,
+        headers={
+            "content-type": (
+                "application/json" if mode == "json" else "text/event-stream"
+            )
+        },
+        content=content,
+        request=httpx.Request("POST", "https://provider.example/generateContent"),
+    )
+    chunks: list[bytes] = []
+
+    async def run() -> None:
+        if mode == "stream":
+            result = await _build_stream_result(
+                response,
+                channel,
+                ProtocolKind.OPENAI_CHAT,
+                {"model": "gemini-test", "stream": True},
+                None,
+                time.perf_counter(),
+                False,
+                deadline=_deadline(),
+            )
+            async for chunk in result.response.body_iterator:
+                chunks.append(chunk)
+        elif mode == "sse_to_json":
+            await _build_sse_to_json_result(
+                response,
+                channel,
+                ProtocolKind.OPENAI_CHAT,
+                "gemini-test",
+                None,
+                None,
+                False,
+            )
+        else:
+            await _build_json_result(
+                response,
+                channel,
+                ProtocolKind.OPENAI_CHAT,
+                {"model": "gemini-test"},
+                None,
+                None,
+                False,
+            )
+
+    if mode == "stream":
+        with pytest.raises(ValueError, match=finish_reason):
+            asyncio.run(run())
+        events = [
+            json.loads(line[6:])
+            for line in b"".join(chunks).splitlines()
+            if line.startswith(b"data: ") and line != b"data: [DONE]"
+        ]
+        assert any(event["choices"][0]["delta"].get("tool_calls") for event in events)
+        assert all(event["choices"][0]["finish_reason"] is None for event in events)
+        assert b"data: [DONE]" not in b"".join(chunks)
+    else:
+        with pytest.raises(UpstreamRequestError, match=finish_reason) as exc_info:
+            asyncio.run(run())
+        assert exc_info.value.status_code == 502
+        assert exc_info.value.router_status_code == 502
+
+
+@pytest.mark.parametrize("upstream_sse", [False, True])
+def test_response_conversion_failure_is_an_upstream_502(upstream_sse: bool) -> None:
+    channel = _channel(ProtocolKind.OPENAI_CHAT)
+    response = httpx.Response(
+        200,
+        headers={
+            "content-type": "text/event-stream" if upstream_sse else "application/json"
+        },
+        content=_chat_sse_body() if upstream_sse else _chat_json_body(),
+        request=httpx.Request("POST", "https://provider.example/v1/chat/completions"),
+    )
+    with (
+        patch(
+            "lens_api.gateway.service.proxy_upstream.convert_response",
+            side_effect=ValueError("provider reported a failed completion"),
+        ),
+        pytest.raises(UpstreamRequestError) as exc_info,
+    ):
+        if upstream_sse:
+            asyncio.run(
+                _build_sse_to_json_result(
+                    response, channel, ProtocolKind.ANTHROPIC, "m", None, None, False
+                )
+            )
+        else:
+            asyncio.run(
+                _build_json_result(
+                    response,
+                    channel,
+                    ProtocolKind.ANTHROPIC,
+                    {"model": "m"},
+                    None,
+                    None,
+                    False,
+                )
+            )
+    assert exc_info.value.status_code == 502
+    assert exc_info.value.router_status_code == 502
+    assert "provider reported a failed completion" in exc_info.value.detail
 
 
 def test_build_json_result_reads_body_with_aread() -> None:

@@ -215,6 +215,17 @@ def _is_deepseek_thinking_target(channel: ChannelConfig, model_name: Any) -> boo
     )
 
 
+def _should_replay_reasoning(channel: ChannelConfig, model_name: Any) -> bool:
+    """Allow converters to retain reasoning for provider-specific reconstruction.
+
+    Each converter decides which retained fields can be replayed. This flag
+    does not establish that historical reasoning came from the target model.
+    """
+    if _is_deepseek_thinking_target(channel, model_name):
+        return True
+    return channel.protocol != ProtocolKind.OPENAI_CHAT
+
+
 def _is_deepseek_base_url(base_url: str) -> bool:
     host = (urlsplit(base_url).hostname or "").lower()
     return host == "api.deepseek.com"

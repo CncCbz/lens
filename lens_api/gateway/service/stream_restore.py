@@ -87,6 +87,33 @@ def _merge_chat_message_delta(
         message[key] = deepcopy(value)
 
 
+def _chat_delta_text_parts(delta: Mapping[str, Any]) -> list[dict[str, Any]]:
+    original = delta.get("_gemini_text_parts")
+    if isinstance(original, list):
+        return deepcopy(original)
+
+    parts: list[dict[str, Any]] = []
+    reasoning = delta.get("reasoning_content") or delta.get("reasoning")
+    if isinstance(reasoning, str) and reasoning:
+        parts.append({"text": reasoning, "thought": True})
+    content = delta.get("content")
+    if isinstance(content, str):
+        if content:
+            parts.append({"text": content})
+    elif isinstance(content, list):
+        for item in content:
+            if isinstance(item, str):
+                parts.append({"text": item})
+            elif (
+                isinstance(item, Mapping)
+                and item.get("type") in {"text", "input_text", "output_text"}
+                and item.get("thought") is not True
+                and isinstance(item.get("text"), str)
+            ):
+                parts.append({"text": item["text"]})
+    return parts
+
+
 def _merge_chat_tool_call_deltas(
     target: dict[int, dict[str, Any]], tool_calls: Any
 ) -> None:
@@ -202,6 +229,8 @@ def _restore_openai_chat_stream(
     top_level: dict[str, Any] = {}
     choices: dict[int, dict[str, Any]] = {}
     messages: dict[int, dict[str, Any]] = {}
+    text_parts: dict[int, list[dict[str, Any]]] = {}
+    choices_with_text_metadata: set[int] = set()
     tool_calls: dict[int, dict[int, dict[str, Any]]] = {}
     logprobs: dict[int, dict[str, Any]] = {}
     finished_choices: set[int] = set()
@@ -230,6 +259,9 @@ def _restore_openai_chat_stream(
                 entry["finish_reason"] = finish_reason
             delta = choice.get("delta") or {}
             if isinstance(delta, dict):
+                text_parts.setdefault(idx, []).extend(_chat_delta_text_parts(delta))
+                if isinstance(delta.get("_gemini_text_parts"), list):
+                    choices_with_text_metadata.add(idx)
                 _merge_chat_message_delta(messages.setdefault(idx, {}), delta)
                 _merge_chat_tool_call_deltas(
                     tool_calls.setdefault(idx, {}), delta.get("tool_calls")
@@ -248,6 +280,8 @@ def _restore_openai_chat_stream(
         message = messages.setdefault(idx, {})
         message.setdefault("role", "assistant")
         message.setdefault("content", "")
+        if idx in choices_with_text_metadata:
+            message["_gemini_text_parts"] = text_parts[idx]
         tc_map = tool_calls.get(idx) or {}
         if tc_map:
             ordered_tool_calls: list[dict[str, Any]] = []
