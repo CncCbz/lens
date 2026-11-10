@@ -806,10 +806,12 @@ class BackupReplacersMixin:
                     ),
                     attempt_count=len(item.attempts),
                     reasoning_effort=(
-                        RequestLogChannelResolutionMixin._extract_reasoning_effort(
+                        # Prefer the attempt, which holds the effort the
+                        # gateway resolved; request_content may be input-stripped.
+                        _restored_attempt_field(item.attempts, "reasoning_effort")
+                        or RequestLogChannelResolutionMixin._extract_reasoning_effort(
                             item.request_content
                         )
-                        or _restored_attempt_field(item.attempts, "reasoning_effort")
                     ),
                     primary_credential_id=_restored_attempt_field(
                         item.attempts, "credential_id"

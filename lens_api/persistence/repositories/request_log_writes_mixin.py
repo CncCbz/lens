@@ -531,10 +531,13 @@ class RequestLogWriteMixin:
                 attempts_json=json.dumps(attempts or [], ensure_ascii=True),
                 attempt_count=len(attempts or []),
                 reasoning_effort=(
-                    self._extract_reasoning_effort(request_content)
-                    or self._clean_reasoning_effort(
+                    # The attempt carries the effort the gateway actually
+                    # resolved; request_content may have its input stripped by
+                    # log filtering, which hides configuration_update items.
+                    self._clean_reasoning_effort(
                         _primary_attempt_field(attempts, "reasoning_effort")
                     )
+                    or self._extract_reasoning_effort(request_content)
                 ),
                 primary_credential_id=_primary_attempt_field(attempts, "credential_id"),
                 primary_credential_name=_primary_attempt_field(
@@ -697,11 +700,9 @@ class RequestLogWriteMixin:
                 entity.upstream_protocol = upstream_protocol
             entity.attempts_json = json.dumps(attempts or [], ensure_ascii=True)
             entity.attempt_count = len(attempts or [])
-            entity.reasoning_effort = self._extract_reasoning_effort(
-                request_content
-            ) or self._clean_reasoning_effort(
+            entity.reasoning_effort = self._clean_reasoning_effort(
                 _primary_attempt_field(attempts, "reasoning_effort")
-            )
+            ) or self._extract_reasoning_effort(request_content)
             entity.error_message = error_message
             entity.stats_archived = (
                 0 if lifecycle_value in REQUEST_LOG_TERMINAL_STATUSES else 1

@@ -179,6 +179,24 @@ class RequestLogChannelResolutionMixin:
         if not isinstance(payload, dict):
             return None
 
+        # pi/Codex Responses clients pin the top-level reasoning.effort and
+        # carry the real level in configuration_update input items; the last
+        # one wins, like upstreams apply it. Check them first so the pinned
+        # top-level value cannot shadow it.
+        input_val = payload.get("input")
+        if isinstance(input_val, list):
+            for item in reversed(input_val):
+                if not isinstance(item, dict):
+                    continue
+                if item.get("type") != "configuration_update":
+                    continue
+                item_reasoning = item.get("reasoning")
+                if not isinstance(item_reasoning, dict):
+                    continue
+                effort = cls._clean_reasoning_effort(item_reasoning.get("effort"))
+                if effort:
+                    return effort
+
         for key in (
             "reasoning_effort",
             "reasoningEffort",

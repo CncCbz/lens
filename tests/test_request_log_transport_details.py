@@ -43,12 +43,23 @@ async def test_request_log_transport_details_roundtrip(postgres_url: str) -> Non
         await session.commit()
         await session.refresh(entity)
 
-        assert entity.client_request_content == '{"model":"deepseek-v4-flash","messages":[]}'
-        assert entity.upstream_request_content == '{"model":"deepseek-v4-flash","input":[]}'
-        assert entity.upstream_response_headers == '{"content-type":"text/event-stream"}'
+        assert (
+            entity.client_request_content
+            == '{"model":"deepseek-v4-flash","messages":[]}'
+        )
+        assert (
+            entity.upstream_request_content
+            == '{"model":"deepseek-v4-flash","input":[]}'
+        )
+        assert (
+            entity.upstream_response_headers == '{"content-type":"text/event-stream"}'
+        )
         assert entity.upstream_response_content == '{"type":"response.completed"}'
         assert entity.upstream_response_distilled == '{"object":"response"}'
-        assert entity.client_response_raw_content == 'data: {"object":"chat.completion.chunk"}'
+        assert (
+            entity.client_response_raw_content
+            == 'data: {"object":"chat.completion.chunk"}'
+        )
         assert entity.client_response_headers == '{"content-type":"text/event-stream"}'
         assert entity.upstream_protocol == "openai_responses"
 
@@ -69,3 +80,40 @@ async def test_request_log_transport_details_roundtrip(postgres_url: str) -> Non
         assert "secret" not in (detail.upstream_response_headers or "")
 
     await engine.dispose()
+
+
+def test_extract_reasoning_effort_reads_configuration_update() -> None:
+    # pi/Codex Responses clients pin the top-level reasoning.effort at "medium"
+    # for prompt-cache stability and carry the real level in configuration_update
+    # input items. Without this, the request log shows "medium" for an xhigh turn.
+    import json
+
+    body = {
+        "model": "gpt-6.1-sol",
+        "input": [
+            {"type": "additional_tools", "tools": []},
+            {"role": "user", "content": "hi"},
+            {"type": "configuration_update", "reasoning": {"effort": "xhigh"}},
+        ],
+        "reasoning": {"effort": "medium", "summary": "auto"},
+    }
+    content = json.dumps(body)
+    assert (
+        RequestLogChannelResolutionMixin._extract_reasoning_effort(content) == "xhigh"
+    )
+
+    # The last configuration_update item wins.
+    body["input"].append(
+        {"type": "configuration_update", "reasoning": {"effort": "low"}}
+    )
+    assert (
+        RequestLogChannelResolutionMixin._extract_reasoning_effort(json.dumps(body))
+        == "low"
+    )
+
+    # Without configuration_update items the top-level effort is used.
+    plain = {"reasoning": {"effort": "high"}, "input": "hi"}
+    assert (
+        RequestLogChannelResolutionMixin._extract_reasoning_effort(json.dumps(plain))
+        == "high"
+    )
