@@ -1228,76 +1228,70 @@ export function GroupEditorDialog({
                       setForm((current) => ({ ...current, match_overrides }))
                     }
                   />
-                  {!form.route_group_id ? (
-                    <>
-                      <Separator />
-                      <div className="flex flex-col gap-3">
-                        <div className="flex items-center gap-2 text-base font-semibold text-foreground">
-                          {locale === "zh-CN"
-                            ? "多模态能力"
-                            : "Multimodal capability"}
-                          <Badge
-                            variant={
-                              form.multimodal !== "auto"
-                                ? "default"
-                                : "secondary"
-                            }
-                          >
-                            {locale === "zh-CN"
-                              ? form.multimodal !== "auto"
-                                ? "手动"
-                                : "自动"
-                              : form.multimodal !== "auto"
-                                ? "Manual"
-                                : "Auto"}
-                          </Badge>
-                        </div>
-                        <SegmentedControl
-                          value={form.multimodal === "auto" ? "auto" : "manual"}
-                          onValueChange={(value) =>
-                            setForm((current) => ({
-                              ...current,
-                              multimodal:
-                                value === "auto"
-                                  ? "auto"
-                                  : current.multimodal === "auto"
-                                    ? "manual"
-                                    : current.multimodal,
-                            }))
-                          }
-                          options={[
-                            {
-                              value: "auto",
-                              label: locale === "zh-CN" ? "自动获取" : "Auto",
-                            },
-                            {
-                              value: "manual",
-                              label: locale === "zh-CN" ? "手动设置" : "Manual",
-                            },
-                          ]}
-                        />
-                        <ModalityToggleRow
-                          value={
-                            form.multimodal === "auto"
-                              ? form.autodetected_modalities
-                              : form.multimodal_overrides
-                          }
-                          onChange={(next) =>
-                            setForm((current) => ({
-                              ...current,
-                              multimodal_overrides: next,
-                            }))
-                          }
-                          disabled={form.multimodal === "auto"}
-                        />
-                        <p className="text-sm text-muted-foreground">
-                          {locale === "zh-CN"
-                            ? "按下的图标表示该组支持对应模态；自动模式下按 models.dev 同步结果判定，手动设置优先"
-                            : "Pressed icons mark supported modalities; auto mode follows models.dev sync, manual overrides it"}
-                        </p>
-                      </div>
-                    </>
-                  ) : null}
+                  <Separator />
+                  <div className="flex flex-col gap-3">
+                    <div className="flex items-center gap-2 text-base font-semibold text-foreground">
+                      {locale === "zh-CN"
+                        ? "多模态能力"
+                        : "Multimodal capability"}
+                      <Badge
+                        variant={
+                          form.multimodal !== "auto" ? "default" : "secondary"
+                        }
+                      >
+                        {locale === "zh-CN"
+                          ? form.multimodal !== "auto"
+                            ? "手动"
+                            : "自动"
+                          : form.multimodal !== "auto"
+                            ? "Manual"
+                            : "Auto"}
+                      </Badge>
+                    </div>
+                    <SegmentedControl
+                      value={form.multimodal === "auto" ? "auto" : "manual"}
+                      onValueChange={(value) =>
+                        setForm((current) => ({
+                          ...current,
+                          multimodal:
+                            value === "auto"
+                              ? "auto"
+                              : current.multimodal === "auto"
+                                ? "manual"
+                                : current.multimodal,
+                        }))
+                      }
+                      options={[
+                        {
+                          value: "auto",
+                          label: locale === "zh-CN" ? "自动获取" : "Auto",
+                        },
+                        {
+                          value: "manual",
+                          label: locale === "zh-CN" ? "手动设置" : "Manual",
+                        },
+                      ]}
+                    />
+                    <ModalityToggleRow
+                      value={
+                        form.multimodal === "auto"
+                          ? form.autodetected_modalities
+                          : form.multimodal_overrides
+                      }
+                      onChange={(next) =>
+                        setForm((current) => ({
+                          ...current,
+                          multimodal_overrides: next,
+                        }))
+                      }
+                      disabled={form.multimodal === "auto"}
+                    />
+                    <p className="text-sm text-muted-foreground">
+                      {locale === "zh-CN"
+                        ? "按下的图标表示该组支持对应模态；自动模式下按 models.dev 同步结果判定，手动设置优先"
+                        : "Pressed icons mark supported modalities; auto mode follows models.dev sync, manual overrides it"}
+                    </p>
+                  </div>
                   <Separator />
                   <div className="flex flex-col gap-3">
                     <div className="flex items-center gap-2 text-base font-semibold text-foreground">

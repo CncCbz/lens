@@ -67,6 +67,13 @@ export function MultimodalRelayScreen() {
     () => (config?.groups ?? []).filter((group) => !group.route_group_id),
     [config],
   );
+  const groupNameById = useMemo(
+    () =>
+      new Map(
+        (config?.groups ?? []).map((group) => [group.group_id, group.name]),
+      ),
+    [config],
+  );
   const imageGroups = useMemo(
     () => executionGroups.filter((group) => group.effective_supports_image),
     [executionGroups],
@@ -78,14 +85,16 @@ export function MultimodalRelayScreen() {
 
   const imageRelayConfigured = Boolean(value?.image_group_id);
   const audioRelayConfigured = Boolean(value?.audio_group_id);
+  // Route variants run their own capability check when they carry members, so
+  // they degrade independently of the group they derive from.
   const affectedGroups = useMemo(
     () =>
-      executionGroups.filter(
+      (config?.groups ?? []).filter(
         (group) =>
           (imageRelayConfigured && !group.effective_supports_image) ||
           (audioRelayConfigured && !group.effective_supports_audio),
       ),
-    [executionGroups, imageRelayConfigured, audioRelayConfigured],
+    [config, imageRelayConfigured, audioRelayConfigured],
   );
 
   function patch(update: Partial<MultimodalRelayUpdate>) {
@@ -335,6 +344,15 @@ export function MultimodalRelayScreen() {
                 <div className="flex min-w-0 flex-col gap-1.5">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="text-sm font-medium">{group.name}</span>
+                    {group.route_group_id ? (
+                      <span className="text-xs text-muted-foreground">
+                        {titleForLocale(
+                          locale,
+                          `经由 ${groupNameById.get(group.route_group_id) ?? ""}`,
+                          `via ${groupNameById.get(group.route_group_id) ?? ""}`,
+                        )}
+                      </span>
+                    ) : null}
                     <ModalityIcons
                       modalities={group.effective_modalities}
                       className="gap-1.5"
