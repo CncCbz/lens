@@ -1393,29 +1393,36 @@ class GroupRepository:
         for group in hydrated:
             if not group.route_group_id.strip():
                 continue
-            # Walk up the chain until a variant finds multimodal flags or a pi
-            # config to inherit; the nearest ancestor wins.
+            # Inherited multimodal config and inherited pi config have
+            # independent stop conditions, so each walks the chain on its own:
+            # sharing one loop made a variant with its own pi config swallow
+            # the multimodal config of every ancestor above it.
+            if not multimodal_modes.is_explicit(group):
+                current = group
+                hops = 0
+                while hops < _ROUTE_CHAIN_LIMIT:
+                    target = groups_by_id.get(current.route_group_id.strip())
+                    if target is None:
+                        break
+                    if not group.multimodal_resolved and target.multimodal_resolved:
+                        group.multimodal_resolved = dict(target.multimodal_resolved)
+                    if multimodal_modes.is_explicit(target):
+                        group.multimodal_inherited_from = target.name
+                        group.multimodal_effective = multimodal_modes.inherited_mode(
+                            target
+                        )
+                        group.multimodal_effective_overrides = (
+                            multimodal_modes.inherited_overrides(target)
+                        )
+                        break
+                    current = target
+                    hops += 1
             current = group
             hops = 0
-            # A variant that declares no multimodal config of its own follows the
-            # nearest ancestor that does; one that declares one keeps it.
-            inherit_multimodal = not multimodal_modes.is_explicit(group)
             while hops < _ROUTE_CHAIN_LIMIT:
                 target = groups_by_id.get(current.route_group_id.strip())
                 if target is None:
                     break
-                if not group.multimodal_resolved and target.multimodal_resolved:
-                    group.multimodal_resolved = dict(target.multimodal_resolved)
-                if inherit_multimodal and multimodal_modes.is_explicit(target):
-                    group.multimodal_effective = target.multimodal or (
-                        multimodal_modes.AUTO
-                    )
-                    overrides = target.multimodal_overrides
-                    group.multimodal_effective_overrides = (
-                        dict(overrides) if isinstance(overrides, dict) else {}
-                    )
-                    group.multimodal_inherited_from = target.name
-                    inherit_multimodal = False
                 if group.pi_config.strip() or not target.pi_config.strip():
                     current = target
                     hops += 1

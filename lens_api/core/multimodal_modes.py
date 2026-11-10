@@ -34,6 +34,17 @@ def _effective_overrides(group: Any) -> Mapping[str, bool] | None:
     return overrides if isinstance(overrides, Mapping) else None
 
 
+def inherited_mode(group: Any) -> Any:
+    """Mode a descendant should adopt from this group."""
+    return getattr(group, "multimodal", AUTO) or AUTO
+
+
+def inherited_overrides(group: Any) -> dict[str, bool]:
+    """Overrides a descendant should adopt from this group."""
+    overrides = getattr(group, "multimodal_overrides", None)
+    return dict(overrides) if isinstance(overrides, Mapping) else {}
+
+
 def supports_media(group: Any, kind: str) -> bool:
     """Whether one group can handle a media kind natively."""
     if group is None:
