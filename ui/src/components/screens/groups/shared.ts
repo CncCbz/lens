@@ -71,6 +71,10 @@ export type FormState = {
   multimodal: ModelGroupMultimodalMode;
   multimodal_overrides: Record<string, boolean>;
   autodetected_modalities: Record<string, boolean>;
+  /** Effective config of the ancestor this variant inherits from, if any. */
+  inherited_multimodal: ModelGroupMultimodalMode | null;
+  inherited_multimodal_overrides: Record<string, boolean> | null;
+  inherited_from: string;
   input_price_per_million: string;
   output_price_per_million: string;
   cache_read_price_per_million: string;
@@ -179,6 +183,9 @@ export const emptyForm: FormState = {
   multimodal: "auto",
   multimodal_overrides: {},
   autodetected_modalities: {},
+  inherited_multimodal: null,
+  inherited_multimodal_overrides: null,
+  inherited_from: "",
   input_price_per_million: "0",
   output_price_per_million: "0",
   cache_read_price_per_million: "0",
@@ -623,6 +630,10 @@ export function toForm(group: ModelGroup): FormState {
     multimodal: group.multimodal ?? "auto",
     multimodal_overrides: group.multimodal_overrides ?? {},
     autodetected_modalities: group.multimodal_resolved ?? {},
+    inherited_multimodal: group.multimodal_effective ?? null,
+    inherited_multimodal_overrides:
+      group.multimodal_effective_overrides ?? null,
+    inherited_from: group.multimodal_inherited_from ?? "",
     input_price_per_million: String(group.input_price_per_million),
     output_price_per_million: String(group.output_price_per_million),
     cache_read_price_per_million: String(group.cache_read_price_per_million),

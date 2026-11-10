@@ -21,6 +21,8 @@ from urllib.parse import urlsplit
 
 import httpx
 
+from ..core import multimodal_modes
+
 logger = logging.getLogger(__name__)
 
 PI_MODELS_LIST_URL = "https://pi.dev/models"
@@ -420,22 +422,7 @@ def resolve_provider_for_model(
 
 def group_supports_media(group: object | None, kind: str) -> bool:
     """Effective capability of a model group for one media kind."""
-    if group is None:
-        return False
-    mode = getattr(group, "multimodal", "auto")
-    if mode == "on":
-        return True
-    if mode == "off":
-        return False
-    if mode == "manual":
-        overrides = getattr(group, "multimodal_overrides", None)
-        if isinstance(overrides, dict):
-            return bool(overrides.get(kind))
-        return False
-    resolved = getattr(group, "multimodal_resolved", None)
-    if isinstance(resolved, dict):
-        return bool(resolved.get(kind))
-    return False
+    return multimodal_modes.supports_media(group, kind)
 
 
 def apply_media_inputs(

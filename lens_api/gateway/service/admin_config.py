@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 
+from ...core import multimodal_modes
 from .runtime_context import (
     Any,
     BOOLEAN_SETTING_KEYS,
@@ -278,20 +279,7 @@ async def update_settings(
 
 
 def _relay_group_supports(group: ModelGroup, kind: str) -> bool:
-    mode = getattr(group, "multimodal", ModelGroupMultimodalMode.AUTO)
-    if mode == ModelGroupMultimodalMode.ON:
-        return True
-    if mode == ModelGroupMultimodalMode.OFF:
-        return False
-    if mode == ModelGroupMultimodalMode.MANUAL:
-        overrides = getattr(group, "multimodal_overrides", None)
-        if isinstance(overrides, dict):
-            return bool(overrides.get(kind))
-        return False
-    resolved = getattr(group, "multimodal_resolved", None)
-    if isinstance(resolved, dict):
-        return bool(resolved.get(kind))
-    return False
+    return multimodal_modes.supports_media(group, kind)
 
 
 def _relay_group_usable(group: ModelGroup, kind: str) -> bool:
@@ -330,6 +318,9 @@ async def _load_multimodal_relay_config() -> MultimodalRelayConfig:
                 route_group_id=group.route_group_id,
                 multimodal=group.multimodal,
                 multimodal_overrides=group.multimodal_overrides,
+                multimodal_effective=group.multimodal_effective,
+                multimodal_effective_overrides=group.multimodal_effective_overrides,
+                multimodal_inherited_from=group.multimodal_inherited_from,
                 effective_modalities=group.effective_modalities,
                 supports_image=bool((group.multimodal_resolved or {}).get("image")),
                 supports_audio=bool((group.multimodal_resolved or {}).get("audio")),

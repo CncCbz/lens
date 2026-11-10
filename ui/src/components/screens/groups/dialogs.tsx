@@ -1242,10 +1242,14 @@ export function GroupEditorDialog({
                         {locale === "zh-CN"
                           ? form.multimodal !== "auto"
                             ? "手动"
-                            : "自动"
+                            : form.inherited_from
+                              ? `继承 ${form.inherited_from}`
+                              : "自动"
                           : form.multimodal !== "auto"
                             ? "Manual"
-                            : "Auto"}
+                            : form.inherited_from
+                              ? `Inherited from ${form.inherited_from}`
+                              : "Auto"}
                       </Badge>
                     </div>
                     <SegmentedControl
@@ -1259,6 +1263,10 @@ export function GroupEditorDialog({
                               : current.multimodal === "auto"
                                 ? "manual"
                                 : current.multimodal,
+                          // Going back to auto means "inherit again", so drop the
+                          // explicit overrides that would otherwise keep it pinned.
+                          multimodal_overrides:
+                            value === "auto" ? {} : current.multimodal_overrides,
                         }))
                       }
                       options={[
@@ -1275,21 +1283,43 @@ export function GroupEditorDialog({
                     <ModalityToggleRow
                       value={
                         form.multimodal === "auto"
-                          ? form.autodetected_modalities
+                          ? form.inherited_multimodal === "manual"
+                            ? (form.inherited_multimodal_overrides ??
+                              form.autodetected_modalities)
+                            : form.inherited_multimodal === "on"
+                              ? {
+                                  text: true,
+                                  image: true,
+                                  video: true,
+                                  pdf: true,
+                                  audio: true,
+                                }
+                              : form.inherited_multimodal === "off"
+                                ? {}
+                                : form.autodetected_modalities
                           : form.multimodal_overrides
                       }
                       onChange={(next) =>
                         setForm((current) => ({
                           ...current,
+                          multimodal: "manual",
                           multimodal_overrides: next,
                         }))
                       }
-                      disabled={form.multimodal === "auto"}
+                      disabled={false}
                     />
                     <p className="text-sm text-muted-foreground">
                       {locale === "zh-CN"
-                        ? "按下的图标表示该组支持对应模态；自动模式下按 models.dev 同步结果判定，手动设置优先"
-                        : "Pressed icons mark supported modalities; auto mode follows models.dev sync, manual overrides it"}
+                        ? form.multimodal === "auto"
+                          ? form.inherited_from
+                            ? `未单独设置时沿用 ${form.inherited_from} 的多模态配置；改动此处的模态将改为单独设置`
+                            : "自动模式下按 models.dev 同步结果判定"
+                          : "按下的图标表示该组支持对应模态；手动设置优先于自动判定"
+                        : form.multimodal === "auto"
+                          ? form.inherited_from
+                            ? `Follows ${form.inherited_from} until changed here; editing a modality makes it explicit`
+                            : "Auto mode follows models.dev sync"
+                          : "Pressed icons mark supported modalities; manual overrides auto detection"}
                     </p>
                   </div>
                   <Separator />

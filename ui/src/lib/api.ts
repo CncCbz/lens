@@ -106,6 +106,9 @@ export type ModelGroup = {
   multimodal: ModelGroupMultimodalMode;
   multimodal_resolved: Record<string, boolean>;
   multimodal_overrides: Record<string, boolean>;
+  multimodal_effective?: ModelGroupMultimodalMode | null;
+  multimodal_effective_overrides?: Record<string, boolean> | null;
+  multimodal_inherited_from?: string;
   effective_modalities: string[];
 };
 
@@ -117,6 +120,9 @@ export type MultimodalRelayGroupStatus = {
   route_group_id: string;
   multimodal: ModelGroupMultimodalMode;
   multimodal_overrides: Record<string, boolean>;
+  multimodal_effective?: ModelGroupMultimodalMode | null;
+  multimodal_effective_overrides?: Record<string, boolean> | null;
+  multimodal_inherited_from?: string;
   effective_modalities: string[];
   supports_image: boolean;
   supports_audio: boolean;

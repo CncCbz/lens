@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from ...core import multimodal_modes
 from .runtime_context import (
     AttemptLog,
     ChannelConfig,
@@ -164,20 +165,7 @@ def _group_media_blocks(
 
 def _group_supports_kind(group: Any, kind: str) -> bool:
     """Effective capability of a model group for one media kind."""
-    mode = getattr(group, "multimodal", ModelGroupMultimodalMode.AUTO)
-    if mode == ModelGroupMultimodalMode.ON:
-        return True
-    if mode == ModelGroupMultimodalMode.OFF:
-        return False
-    if mode == ModelGroupMultimodalMode.MANUAL:
-        overrides = getattr(group, "multimodal_overrides", None)
-        if isinstance(overrides, dict):
-            return bool(overrides.get(kind))
-        return False
-    resolved = getattr(group, "multimodal_resolved", None)
-    if isinstance(resolved, dict):
-        return bool(resolved.get(kind))
-    return False
+    return multimodal_modes.supports_media(group, kind)
 
 
 def _text_block(text: str, protocol: ProtocolKind) -> dict[str, Any]:

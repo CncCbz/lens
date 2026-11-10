@@ -16,6 +16,7 @@ from pydantic import (
     model_validator,
 )
 
+from ..core import multimodal_modes
 from ..core.match_overrides import (
     absorb_legacy_group_overrides,
     validate_action_path,
@@ -57,20 +58,7 @@ def _normalize_unique_str_list(values: list[str]) -> list[str]:
 
 def resolve_effective_modalities(group: "ModelGroup") -> list[str]:
     """Modalities a group effectively supports, honoring manual overrides."""
-    mode = getattr(group, "multimodal", ModelGroupMultimodalMode.AUTO)
-    if mode == ModelGroupMultimodalMode.ON:
-        return list(_ALL_MODALITIES)
-    if mode == ModelGroupMultimodalMode.OFF:
-        return []
-    if mode == ModelGroupMultimodalMode.MANUAL:
-        overrides = getattr(group, "multimodal_overrides", None)
-        if isinstance(overrides, dict):
-            return [modality for modality, supported in overrides.items() if supported]
-        return []
-    resolved = getattr(group, "multimodal_resolved", None)
-    if isinstance(resolved, dict):
-        return [modality for modality, supported in resolved.items() if supported]
-    return []
+    return multimodal_modes.effective_modalities(group)
 
 
 def normalize_base_url(value: Any) -> Any:
@@ -863,6 +851,11 @@ class ModelGroup(StrictBaseModel):
     multimodal: ModelGroupMultimodalMode = ModelGroupMultimodalMode.AUTO
     multimodal_resolved: dict[str, bool] = Field(default_factory=dict)
     multimodal_overrides: dict[str, bool] = Field(default_factory=dict)
+    # Resolved by the repository for route variants that inherit their
+    # capability from an ancestor instead of declaring their own.
+    multimodal_effective: ModelGroupMultimodalMode | None = None
+    multimodal_effective_overrides: dict[str, bool] | None = None
+    multimodal_inherited_from: str = ""
 
     @computed_field
     @property
@@ -1500,6 +1493,9 @@ class MultimodalRelayGroupStatus(StrictBaseModel):
     route_group_id: str = ""
     multimodal: ModelGroupMultimodalMode
     multimodal_overrides: dict[str, bool] = Field(default_factory=dict)
+    multimodal_effective: ModelGroupMultimodalMode | None = None
+    multimodal_effective_overrides: dict[str, bool] | None = None
+    multimodal_inherited_from: str = ""
     effective_modalities: list[str] = Field(default_factory=list)
     supports_image: bool
     supports_audio: bool
