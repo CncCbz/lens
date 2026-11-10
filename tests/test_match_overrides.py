@@ -1,15 +1,27 @@
+import json
+from copy import deepcopy
+
+import pytest
+
 from lens_api.core.match_overrides import (
     MatchOverrideError,
     apply_match_overrides,
     param_override_to_match_rule,
 )
 from lens_api.gateway.converters import convert_request, needs_conversion
+from lens_api.gateway.service.proxy_upstream import _prepare_channel_request
 from lens_api.gateway.service.routing_plan import (
     _extract_request_reasoning_effort,
     _prepare_upstream_body,
 )
 from lens_api.gateway.upstreams import build_upstream_headers
-from lens_api.models import MatchAction, MatchOverrideRule, ProtocolKind
+from lens_api.models import (
+    ChannelConfig,
+    ChannelKeyItem,
+    MatchAction,
+    MatchOverrideRule,
+    ProtocolKind,
+)
 
 
 def _pipeline(
@@ -537,3 +549,195 @@ def test_extract_request_reasoning_effort_reads_configuration_update() -> None:
     # Without configuration_update items the top-level effort is used.
     plain = {"reasoning": {"effort": "high"}, "input": "hi"}
     assert _extract_request_reasoning_effort(plain) == "high"
+
+
+@pytest.fixture
+def native_responses_body() -> dict:
+    return {
+        "model": "m",
+        "reasoning": {"effort": "medium", "summary": "auto", "extra": {"keep": True}},
+        "input": [
+            {"role": "user", "content": [{"type": "input_text", "text": "hi"}]},
+            {"type": "reasoning", "encrypted_content": "opaque", "summary": []},
+            {
+                "type": "additional_tools",
+                "tools": [
+                    {
+                        "type": "function",
+                        "name": "embedded",
+                        "parameters": {"type": "object"},
+                    }
+                ],
+            },
+            {
+                "type": "function_call",
+                "call_id": "call_1",
+                "name": "native",
+                "arguments": "{}",
+            },
+            {"type": "function_call_output", "call_id": "call_1", "output": "ok"},
+            {"type": "configuration_update", "reasoning": {"effort": "xhigh"}},
+        ],
+        "tools": [
+            {
+                "type": "function",
+                "name": "native",
+                "parameters": {"type": "object"},
+                "strict": True,
+            },
+            {
+                "type": "custom",
+                "name": "grammar",
+                "format": {
+                    "type": "grammar",
+                    "syntax": "lark",
+                    "definition": 'start: "ok"',
+                },
+            },
+        ],
+        "include": ["reasoning.encrypted_content"],
+        "text": {"format": {"type": "text"}},
+        "metadata": {"keep": "value"},
+        "store": False,
+    }
+
+
+@pytest.mark.parametrize("override", [None, "low"])
+def test_native_responses_pipeline_serializes_configuration_effort(
+    native_responses_body: dict, override: str | None
+) -> None:
+    original = deepcopy(native_responses_body)
+    rules = (
+        []
+        if override is None
+        else [
+            {
+                "if": {"path": "body.reasoning.effort", "op": "is", "value": "xhigh"},
+                "then": [{"path": "body.reasoning.effort", "value": override}],
+            }
+        ]
+    )
+    payload, _ = _pipeline(
+        client_protocol=ProtocolKind.OPENAI_RESPONSES,
+        channel_protocol=ProtocolKind.OPENAI_RESPONSES,
+        channel_id="responses",
+        body=native_responses_body,
+        rules=rules,
+    )
+    channel = ChannelConfig(
+        id="responses",
+        name="Responses",
+        protocol=ProtocolKind.OPENAI_RESPONSES,
+        base_url="https://provider.example",
+        api_key="test-key",
+        keys=[ChannelKeyItem(id="test-key", key="test-key")],
+    )
+    upstream, body_bytes, _ = _prepare_channel_request(
+        channel,
+        payload,
+        credential_id=None,
+        user_agent=None,
+        forwarded_headers=None,
+        model_group_headers=(),
+        log_body_enabled=False,
+    )
+    expected = deepcopy(original)
+    expected["reasoning"]["effort"] = override or "xhigh"
+    assert json.loads(body_bytes) == expected
+    assert upstream.url.endswith("/responses")
+    assert native_responses_body == original
+    payload["input"][1]["encrypted_content"] = "changed"
+    payload["reasoning"]["extra"]["keep"] = False
+    assert native_responses_body == original
+
+
+@pytest.mark.parametrize("direct", [False, True])
+@pytest.mark.parametrize(
+    "updates, expected",
+    [
+        ([], "xhigh"),
+        ([{"reasoning": {"effort": "low"}}], "low"),
+        ([{"reasoning": {"effort": " HIGH "}}], "high"),
+        (
+            [
+                {},
+                {"reasoning": None},
+                {"reasoning": {}},
+                {"reasoning": {"effort": None}},
+                {"reasoning": {"effort": "invalid"}},
+                {"reasoning": {"effort": 123}},
+            ],
+            "xhigh",
+        ),
+        (
+            [{"reasoning": {"effort": "low"}}, {"reasoning": {"effort": "invalid"}}],
+            "low",
+        ),
+    ],
+)
+def test_native_responses_last_valid_configuration_effort(
+    native_responses_body: dict, direct: bool, updates: list[dict], expected: str
+) -> None:
+    native_responses_body["input"].extend(
+        {"type": "configuration_update", **update} for update in updates
+    )
+    original = deepcopy(native_responses_body)
+    result = (
+        convert_request(
+            ProtocolKind.OPENAI_RESPONSES,
+            ProtocolKind.OPENAI_RESPONSES,
+            native_responses_body,
+        )
+        if direct
+        else _prepare_upstream_body(
+            ProtocolKind.OPENAI_RESPONSES, native_responses_body, None
+        )
+    )
+    wanted = deepcopy(original)
+    wanted["reasoning"]["effort"] = expected
+    assert result == wanted
+    assert result is not native_responses_body
+    assert result["reasoning"] is not native_responses_body["reasoning"]
+    assert native_responses_body == original
+
+
+@pytest.mark.parametrize("direct", [False, True])
+@pytest.mark.parametrize("with_updates", [False, True])
+@pytest.mark.parametrize(
+    "reasoning", [None, {}, {"effort": "medium", "summary": "auto"}]
+)
+def test_native_responses_without_valid_updates_unchanged(
+    direct: bool, with_updates: bool, reasoning: dict | None
+) -> None:
+    body = {
+        "model": "m",
+        "input": [
+            {"type": "configuration_update", "reasoning": {"effort": "invalid"}},
+            {"type": "configuration_update", "reasoning": {}},
+        ],
+    }
+    if not with_updates:
+        body["input"] = []
+    if reasoning is not None:
+        body["reasoning"] = reasoning
+    original = deepcopy(body)
+    result = (
+        convert_request(
+            ProtocolKind.OPENAI_RESPONSES, ProtocolKind.OPENAI_RESPONSES, body
+        )
+        if direct
+        else _prepare_upstream_body(ProtocolKind.OPENAI_RESPONSES, body, None)
+    )
+    assert result == original
+    assert body == original
+
+
+def test_responses_configuration_effort_still_converts_to_chat(
+    native_responses_body: dict,
+) -> None:
+    original = deepcopy(native_responses_body)
+    result = convert_request(
+        ProtocolKind.OPENAI_RESPONSES, ProtocolKind.OPENAI_CHAT, native_responses_body
+    )
+    assert result["reasoning_effort"] == "xhigh"
+    assert native_responses_body == original

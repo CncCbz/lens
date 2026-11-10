@@ -44,6 +44,27 @@ _RESPONSES_CACHE_AND_ROUTING_KEYS = (
 # the body, so only _RESPONSES_CACHE_AND_ROUTING_KEYS are copied through.
 
 
+def normalize_openai_responses_request(body: dict[str, Any]) -> dict[str, Any]:
+    payload = dict(body)
+    input_items = body.get("input")
+    if isinstance(input_items, list):
+        for item in reversed(input_items):
+            if not isinstance(item, dict) or item.get("type") != "configuration_update":
+                continue
+            reasoning = item.get("reasoning")
+            if not isinstance(reasoning, dict):
+                continue
+            effort = _clean_thinking_effort(reasoning.get("effort"))
+            if effort:
+                root_reasoning = body.get("reasoning")
+                payload["reasoning"] = {
+                    **(root_reasoning if isinstance(root_reasoning, dict) else {}),
+                    "effort": effort,
+                }
+                break
+    return payload
+
+
 def responses_request_to_chat(body: dict[str, Any]) -> dict[str, Any]:
     chat: dict[str, Any] = {}
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from ..converters.chat_to_responses import normalize_openai_responses_request
 from ..converters.openai_chat_compat import normalize_openai_chat_request
 from .runtime_context import (
     Any,
@@ -107,8 +108,10 @@ def _prepare_upstream_body(
     payload = deepcopy(body)
     if protocol == ProtocolKind.OPENAI_CHAT:
         payload = normalize_openai_chat_request(payload)
-    elif protocol == ProtocolKind.OPENAI_RESPONSES and "input" in payload:
-        payload["input"] = _normalize_openai_responses_input(payload.get("input"))
+    elif protocol == ProtocolKind.OPENAI_RESPONSES:
+        payload = normalize_openai_responses_request(payload)
+        if "input" in payload:
+            payload["input"] = _normalize_openai_responses_input(payload.get("input"))
     if not target_model_name:
         return payload
     payload["model"] = target_model_name

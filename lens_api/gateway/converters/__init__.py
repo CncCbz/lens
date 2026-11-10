@@ -24,6 +24,7 @@ from .chat_to_responses import (
     chat_request_to_responses,
     chat_response_to_responses,
     chat_stream_to_responses_stream,
+    normalize_openai_responses_request,
     responses_request_to_chat,
     responses_response_to_chat,
     responses_stream_to_chat_stream,
@@ -200,11 +201,12 @@ def convert_request(
     if target_model:
         body = {**body, "model": target_model}
     if client_protocol == channel_protocol:
-        result = (
-            normalize_openai_chat_request(body)
-            if client_protocol == ProtocolKind.OPENAI_CHAT
-            else dict(body)
-        )
+        if client_protocol == ProtocolKind.OPENAI_CHAT:
+            result = normalize_openai_chat_request(body)
+        elif client_protocol == ProtocolKind.OPENAI_RESPONSES:
+            result = normalize_openai_responses_request(body)
+        else:
+            result = dict(body)
     elif channel_protocol == ProtocolKind.OPENAI_CHAT:
         result = _chat_request_without_provider_metadata(
             _request_to_chat(client_protocol, body, preserve_reasoning),
