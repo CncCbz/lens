@@ -146,6 +146,7 @@ from .proxy_routes import (
     proxy_openai_image_edits,
     proxy_openai_image_generations,
     proxy_openai_responses,
+    proxy_provider_request,
     proxy_rerank,
 )
 

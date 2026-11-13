@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import codecs
+
+from ...core.protocol_reachability import wire_protocol
+
 from .runtime_context import (
     Any,
     AsyncIterator,
@@ -41,6 +45,40 @@ from .stream_types import parse_chat_stream_payload, parse_anthropic_stream_payl
 
 
 def _stream_payload_has_output(protocol: ProtocolKind, payload: dict[str, Any]) -> bool:
+    if protocol == ProtocolKind.MISTRAL_CONVERSATIONS:
+        from ..converters.provider_variants import mistral_response_to_chat
+
+        choices = payload.get("choices")
+        if isinstance(choices, list):
+            projected = mistral_response_to_chat(
+                {
+                    "choices": [
+                        {"message": choice.get("delta", {})}
+                        for choice in choices
+                        if isinstance(choice, dict)
+                    ]
+                }
+            )
+            return _chat_stream_payload_has_output(
+                {
+                    "choices": [
+                        {"delta": choice["message"]} for choice in projected["choices"]
+                    ]
+                }
+            )
+    protocol = wire_protocol(protocol)
+    if protocol == ProtocolKind.PI_MESSAGES:
+        return payload.get("type") in {
+            "text_delta",
+            "thinking_delta",
+            "toolcall_start",
+            "toolcall_delta",
+        } and bool(payload.get("delta") or payload.get("toolName"))
+    if protocol == ProtocolKind.BEDROCK_CONVERSE_STREAM:
+        delta = payload.get("contentBlockDelta") or payload.get("contentBlockStart")
+        return isinstance(delta, dict) and bool(
+            delta.get("delta") or delta.get("start")
+        )
     if protocol == ProtocolKind.OPENAI_CHAT:
         return _chat_stream_payload_has_output(payload)
     if protocol == ProtocolKind.OPENAI_RESPONSES:
@@ -650,6 +688,7 @@ async def _stream_upstream_iterator(
 ) -> AsyncIterator[bytes]:
     deadline = capture.deadline
     assert deadline is not None
+    decoder = codecs.getincrementaldecoder("utf-8")()
     try:
         iterator = response.aiter_bytes().__aiter__()
         while True:
@@ -663,12 +702,17 @@ async def _stream_upstream_iterator(
                 break
             if not chunk:
                 continue
-            text = chunk.decode("utf-8", errors="replace")
+            text = decoder.decode(chunk)
             if text:
                 _capture_stream_event_chunk(protocol, capture, text, stream_started_at)
                 if capture.capture_body:
                     capture.response_content_chunks.append(text)
             yield chunk
+        tail = decoder.decode(b"", final=True)
+        if tail:
+            _capture_stream_event_chunk(protocol, capture, tail, stream_started_at)
+            if capture.capture_body:
+                capture.response_content_chunks.append(tail)
         _flush_stream_event_buffer(protocol, capture, stream_started_at)
         capture.completed = True
     except asyncio.CancelledError:
@@ -687,6 +731,10 @@ async def _stream_upstream_iterator(
     except TimeoutError as exc:
         capture.error_status_code = 504
         capture.errors.append(str(exc).strip() or deadline.message())
+    except ValueError as exc:
+        capture.error_status_code = 502
+        capture.errors.append(f"Invalid upstream stream: {exc}")
+        raise
     except httpx.HTTPError as exc:
         capture.error_status_code = 502
         capture.errors.append(f"stream failed: {type(exc).__name__}: {exc}")
@@ -718,12 +766,16 @@ async def _next_stream_chunk(
 async def _capture_converted_stream_iterator(
     raw_iterator: AsyncIterator[bytes], capture: StreamCapture
 ) -> AsyncIterator[bytes]:
+    decoder = codecs.getincrementaldecoder("utf-8")()
     try:
         async for chunk in raw_iterator:
-            text = chunk.decode("utf-8", errors="replace")
+            text = decoder.decode(chunk)
             if text and capture.capture_body:
                 capture.client_response_content_chunks.append(text)
             yield chunk
+        tail = decoder.decode(b"", final=True)
+        if tail and capture.capture_body:
+            capture.client_response_content_chunks.append(tail)
     except asyncio.CancelledError:
         await _cancel_stream_capture(capture, "client disconnected")
         raise
@@ -764,6 +816,7 @@ def _flush_stream_event_buffer(
 
 
 def _stream_event_format(protocol: ProtocolKind, capture: StreamCapture) -> str:
+    protocol = wire_protocol(protocol)
     if protocol != ProtocolKind.GEMINI:
         return "sse"
     if capture.event_format is not None:
@@ -826,6 +879,31 @@ def _record_stream_event_payload(
 ) -> None:
     if not capture.saw_first_chunk and _stream_payload_has_output(protocol, payload):
         _mark_stream_first_chunk(capture, stream_started_at)
+    protocol = wire_protocol(protocol)
+    if protocol == ProtocolKind.PI_MESSAGES:
+        if payload.get("type") == "done":
+            capture.saw_response_completed = True
+            if payload.get("reason") not in {"stop", "length", "toolUse"}:
+                capture.errors.append(
+                    f"pi-messages stream terminated: {payload.get('reason')}"
+                )
+        elif payload.get("type") == "error":
+            capture.errors.append(
+                str(
+                    payload.get("errorMessage")
+                    or payload.get("message")
+                    or payload.get("error")
+                    or "pi-messages stream error"
+                )
+            )
+    elif protocol == ProtocolKind.BEDROCK_CONVERSE_STREAM:
+        if isinstance(payload.get("messageStop"), dict):
+            capture.saw_response_completed = True
+            reason = payload["messageStop"].get("stopReason")
+            if reason in {"malformed_model_output", "malformed_tool_use"}:
+                capture.errors.append(f"Bedrock stream terminated: {reason}")
+        if any(key.endswith("Exception") for key in payload):
+            capture.errors.append(f"Bedrock stream error: {payload}")
     if protocol == ProtocolKind.OPENAI_CHAT:
         _record_chat_stream_finish_reasons(capture, payload)
     if (

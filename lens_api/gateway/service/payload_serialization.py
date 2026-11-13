@@ -43,10 +43,13 @@ _INPUT_PAYLOAD_KEYS = frozenset(
         "system",
         "systemInstruction",
         "instructions",
+        "context",
+        "state",
+        "assets",
     }
 )
 _TOOLS_PAYLOAD_KEYS = frozenset(
-    {"tools", "tool_choice", "toolConfig", "functions", "function_call"}
+    {"tools", "tool_choice", "toolConfig", "functions", "function_call", "questions"}
 )
 
 
@@ -206,6 +209,26 @@ def _omit_response_output(payload: dict[str, Any]) -> dict[str, Any]:
         if key in filtered:
             filtered[key] = _OMITTED_PLACEHOLDER
 
+    for key in ("contentBlockStart", "contentBlockDelta"):
+        block_event = filtered.get(key)
+        if isinstance(block_event, dict):
+            event = dict(block_event)
+            for field in ("start", "delta"):
+                block = event.get(field)
+                if isinstance(block, dict):
+                    block = _omit_generated_fields(block)
+                    for nested in ("reasoningContent", "toolUse"):
+                        if isinstance(block.get(nested), dict):
+                            block[nested] = _omit_generated_fields(block[nested])
+                    event[field] = block
+            filtered[key] = event
+    if isinstance(filtered.get("toolCall"), dict):
+        filtered["toolCall"] = _omit_generated_fields(filtered["toolCall"])
+    if filtered.get("type") in {"text_end", "thinking_end"} and "content" in filtered:
+        filtered["content"] = _OMITTED_PLACEHOLDER
+    for key in ("answers", "decisions", "predictions"):
+        if key in filtered:
+            filtered[key] = _OMITTED_PLACEHOLDER
     return filtered
 
 
@@ -228,6 +251,31 @@ def _filter_payload_content(
         for k in _TOOLS_PAYLOAD_KEYS:
             if k in filtered:
                 filtered[k] = _OMITTED_PLACEHOLDER
+        context = filtered.get("context")
+        if isinstance(context, dict):
+            context = dict(context)
+            if "tools" in context:
+                context["tools"] = _OMITTED_PLACEHOLDER
+            if isinstance(context.get("messages"), list):
+                context["messages"] = [
+                    (
+                        {
+                            key: (
+                                _OMITTED_PLACEHOLDER
+                                if key in {"toolsAdded", "toolsRemoved"}
+                                else value
+                            )
+                            for key, value in message.items()
+                        }
+                        if isinstance(message, dict)
+                        else message
+                    )
+                    for message in context["messages"]
+                ]
+            filtered["context"] = context
+        options = filtered.get("options")
+        if isinstance(options, dict) and "toolChoice" in options:
+            filtered["options"] = {**options, "toolChoice": _OMITTED_PLACEHOLDER}
 
     if not log_output:
         filtered = _omit_response_output(filtered)

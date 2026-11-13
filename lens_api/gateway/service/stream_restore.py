@@ -12,6 +12,8 @@ from .runtime_context import (
     json,
 )
 from ..converters._chat_stream import ChatToolCalls
+from ...core.protocol_reachability import wire_protocol
+from .provider_stream_restore import restore_bedrock_events, restore_pi_events
 from .payload_serialization import _dump_log_json
 from .usage import _parse_ndjson_payloads, _parse_sse_payloads
 
@@ -171,6 +173,65 @@ def _distill_stream_response_content(
     """
     if not raw_content:
         return None
+    if protocol == ProtocolKind.MISTRAL_CONVERSATIONS:
+        from ..converters.provider_variants import (
+            mistral_response_to_chat,
+            chat_response_to_mistral,
+        )
+
+        events = _parse_sse_payloads(raw_content)
+        ordered: dict[int, list[dict[str, Any]]] = {}
+        array_choices: set[int] = set()
+        projected = deepcopy(events)
+        for event in projected:
+            if "error" in event:
+                raise ValueError(f"Mistral stream error: {event['error']}")
+            for choice in event.get("choices") or []:
+                index = choice.get("index", 0)
+                delta = choice.get("delta")
+                if not isinstance(delta, dict):
+                    continue
+                content = delta.get("content")
+                if isinstance(content, list):
+                    array_choices.add(index)
+                    ordered.setdefault(index, []).extend(deepcopy(content))
+                elif isinstance(content, str):
+                    ordered.setdefault(index, []).append(
+                        {"type": "text", "text": content}
+                    )
+                choice["delta"] = mistral_response_to_chat(
+                    {"choices": [{"message": delta}]}
+                )["choices"][0]["message"]
+        restored = _restore_openai_chat_stream(
+            projected, allow_incomplete=allow_incomplete
+        )
+        if restored is None:
+            return None
+        native = chat_response_to_mistral(restored)
+        for choice in native.get("choices") or []:
+            index = choice.get("index", 0)
+            if index in ordered:
+                choice["message"]["content"] = (
+                    ordered[index]
+                    if index in array_choices
+                    else "".join(part["text"] for part in ordered[index])
+                )
+        return _dump_log_json(native, log_output=log_output)
+    protocol = wire_protocol(protocol)
+    if protocol in {ProtocolKind.PI_MESSAGES, ProtocolKind.BEDROCK_CONVERSE_STREAM}:
+        restore = (
+            restore_pi_events
+            if protocol == ProtocolKind.PI_MESSAGES
+            else restore_bedrock_events
+        )
+        restored = restore(
+            _parse_sse_payloads(raw_content), allow_incomplete=allow_incomplete
+        )
+        return (
+            _dump_log_json(restored, log_output=log_output)
+            if restored is not None
+            else None
+        )
 
     if protocol == ProtocolKind.OPENAI_CHAT:
         restored = _restore_openai_chat_stream(

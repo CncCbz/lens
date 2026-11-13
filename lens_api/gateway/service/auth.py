@@ -63,6 +63,8 @@ async def get_current_gateway_key(request: Request) -> GatewayApiKey:
     authorization = request.headers.get("authorization", "")
     x_api_key = request.headers.get("x-api-key", "")
     x_goog_api_key = request.headers.get("x-goog-api-key", "")
+    azure_api_key = request.headers.get("api-key", "")
+    query_api_key = request.query_params.get("key", "")
 
     secret = ""
     if authorization.lower().startswith("bearer "):
@@ -71,6 +73,10 @@ async def get_current_gateway_key(request: Request) -> GatewayApiKey:
         secret = x_api_key.strip()
     elif x_goog_api_key:
         secret = x_goog_api_key.strip()
+    elif azure_api_key:
+        secret = azure_api_key.strip()
+    elif query_api_key:
+        secret = query_api_key.strip()
 
     if not secret:
         raise HTTPException(

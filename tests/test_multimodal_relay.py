@@ -208,12 +208,7 @@ async def test_helper_failure_is_logged_as_attempt(
         content=b'{"error": "helper exploded"}',
     )
 
-    class _FakeClient:
-        async def request(self, *_args: object, **_kwargs: object) -> httpx.Response:
-            return response
-
-        async def aclose(self) -> None:
-            return None
+    client = httpx.AsyncClient(transport=httpx.MockTransport(lambda _request: response))
 
     async def _fake_get_group(_group_id: str) -> SimpleNamespace:
         return SimpleNamespace(
@@ -243,9 +238,7 @@ async def test_helper_failure_is_logged_as_attempt(
         SimpleNamespace(group_repo=SimpleNamespace(get_group=_fake_get_group)),
     )
     monkeypatch.setattr(relay, "_resolve_routing_plan", _fake_plan)
-    monkeypatch.setattr(
-        relay, "_resolve_http_client", lambda _proxy: (_FakeClient(), True)
-    )
+    monkeypatch.setattr(relay, "_resolve_http_client", lambda _proxy: (client, True))
     monkeypatch.setattr(
         relay,
         "build_upstream_request",

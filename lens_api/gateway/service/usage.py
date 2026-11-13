@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from ...core.protocol_reachability import CLASSIFIER_PROTOCOLS, wire_protocol
+
 from .runtime_context import (
     Any,
     Mapping,
@@ -154,6 +156,7 @@ def _extract_stream_usage(
     raw_content: str | None,
     parse_errors: list[str] | None = None,
 ) -> dict[str, int | str | None]:
+    protocol = wire_protocol(protocol)
     if (
         protocol == ProtocolKind.OPENAI_EMBEDDING
         or protocol == ProtocolKind.RERANK
@@ -245,6 +248,7 @@ def _describe_stream_capture_issue(
     capture: StreamCapture | None,
     raw_content: str | None,
 ) -> str | None:
+    protocol = wire_protocol(protocol)
     if capture is not None and capture.verification_cancelled:
         # A verification timeout is the whole story; the dropped stream is not
         # a separate upstream problem worth reporting.
@@ -269,6 +273,21 @@ def _describe_stream_capture_issue(
                 issues.append(error)
         issues.extend(error for error in capture.parse_errors if error)
 
+    if protocol in {ProtocolKind.PI_MESSAGES, ProtocolKind.BEDROCK_CONVERSE_STREAM}:
+        has_terminal = (
+            capture.saw_response_completed
+            if capture is not None
+            else any(
+                (
+                    payload.get("type") == "done"
+                    if protocol == ProtocolKind.PI_MESSAGES
+                    else isinstance(payload.get("messageStop"), dict)
+                )
+                for payload in _parse_sse_payloads(raw_content or "")
+            )
+        )
+        if not has_terminal:
+            issues.append("stream ended before a provider terminal event")
     if protocol == ProtocolKind.OPENAI_RESPONSES:
         if capture is not None:
             if not capture.saw_response_completed:
@@ -306,6 +325,70 @@ def _describe_stream_capture_issue(
 def _extract_usage_from_payload(
     protocol: ProtocolKind, payload: dict[str, Any]
 ) -> dict[str, int | str | None]:
+    protocol = wire_protocol(protocol)
+    if protocol == ProtocolKind.PI_MESSAGES:
+        usage = _usage_mapping(payload.get("usage"))
+        cache_read = _usage_int(usage, "cacheRead")
+        cache_write = _usage_int(usage, "cacheWrite")
+        incoming = _usage_int(usage, "input") + cache_read + cache_write
+        output = _usage_int(usage, "output")
+        return {
+            "resolved_model": payload.get("responseModel") or payload.get("model"),
+            "input_tokens": incoming,
+            "output_tokens": output,
+            "cache_read_input_tokens": cache_read,
+            "cache_write_input_tokens": cache_write,
+            "total_tokens": (
+                _usage_int(usage, "totalTokens")
+                if "totalTokens" in usage
+                else incoming + output
+            ),
+        }
+    if protocol == ProtocolKind.BEDROCK_CONVERSE_STREAM:
+        source = payload.get("metadata", payload)
+        usage = _usage_mapping(source.get("usage")) if isinstance(source, dict) else {}
+        cache_read = _usage_int(usage, "cacheReadInputTokens")
+        cache_write = _usage_int(usage, "cacheWriteInputTokens")
+        incoming = _usage_int(usage, "inputTokens") + cache_read + cache_write
+        output = _usage_int(usage, "outputTokens")
+        return {
+            "resolved_model": payload.get("model"),
+            "input_tokens": incoming,
+            "output_tokens": output,
+            "cache_read_input_tokens": cache_read,
+            "cache_write_input_tokens": cache_write,
+            "total_tokens": (
+                _usage_int(usage, "totalTokens")
+                if "totalTokens" in usage
+                else incoming + output
+            ),
+        }
+    if protocol in CLASSIFIER_PROTOCOLS:
+        source = payload
+        if protocol == ProtocolKind.CLOUDFLARE_WORKERS_AI_SYSTEM_ONE:
+            from ..converters.classifier_protocols import classifier_output
+
+            source = classifier_output(protocol, payload)
+        usage = _usage_mapping(source.get("usage")) if isinstance(source, dict) else {}
+        incoming = _usage_int(usage, "input_tokens")
+        output = _usage_int(usage, "output_tokens")
+        if protocol == ProtocolKind.LLAMA_CPP_CLASSIFY and source.get("usage") is None:
+            incoming = source.get("tokens_evaluated", 0)
+            output = source.get("tokens_predicted", 0)
+            if any(
+                isinstance(value, bool) or not isinstance(value, int) or value < 0
+                for value in (incoming, output)
+            ):
+                raise ValueError("Invalid llama.cpp token usage")
+        return {
+            **_EMPTY_USAGE,
+            "resolved_model": source.get("model") or payload.get("model"),
+            "input_tokens": incoming,
+            "output_tokens": output,
+            "total_tokens": incoming + output,
+        }
+    if protocol == ProtocolKind.OPENROUTER_IMAGES:
+        return _openai_chat_usage(payload)
     if protocol == ProtocolKind.OPENAI_CHAT:
         return _openai_chat_usage(payload)
     if protocol == ProtocolKind.OPENAI_RESPONSES:
@@ -335,6 +418,7 @@ def _extract_usage_from_payload(
 def _extract_response_usage(
     protocol: ProtocolKind, response: httpx.Response, fallback_model: Any = None
 ) -> dict[str, int | str | None]:
+    protocol = wire_protocol(protocol)
     if protocol == ProtocolKind.RERANK:
         empty = dict(_EMPTY_USAGE)
         if isinstance(fallback_model, str) and fallback_model.strip():
@@ -343,6 +427,12 @@ def _extract_response_usage(
     payload = response.json()
     if not isinstance(payload, dict):
         raise ValueError("Upstream response JSON must be an object")
+    if protocol in CLASSIFIER_PROTOCOLS | {
+        ProtocolKind.PI_MESSAGES,
+        ProtocolKind.BEDROCK_CONVERSE_STREAM,
+        ProtocolKind.OPENROUTER_IMAGES,
+    }:
+        return _extract_usage_from_payload(protocol, payload)
     if protocol == ProtocolKind.OPENAI_CHAT:
         return _openai_chat_usage(payload)
     if protocol == ProtocolKind.OPENAI_RESPONSES:

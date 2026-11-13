@@ -1,6 +1,14 @@
 from __future__ import annotations
 
 from ...core.auth import redact_sensitive_headers
+from ...core.protocol_reachability import (
+    CHAT_PROTOCOLS,
+    CLASSIFIER_PROTOCOLS,
+    wire_protocol,
+)
+from ..converters import convert_request, convert_response
+from .provider_streams import normalize_provider_stream
+from .proxy_upstream import _send_upstream
 from .runtime_context import (
     Any,
     ChannelConfig,
@@ -35,14 +43,7 @@ from .payload_serialization import (
 )
 from .stream_restore import _distill_stream_response_content
 
-_STREAMING_SITE_MODEL_TEST_PROTOCOLS = frozenset(
-    {
-        ProtocolKind.OPENAI_CHAT,
-        ProtocolKind.OPENAI_RESPONSES,
-        ProtocolKind.ANTHROPIC,
-        ProtocolKind.GEMINI,
-    }
-)
+_STREAMING_SITE_MODEL_TEST_PROTOCOLS = CHAT_PROTOCOLS
 
 
 def _site_model_probe_channel(payload: SiteModelTestRequest) -> ChannelConfig:
@@ -128,12 +129,20 @@ async def _run_site_model_probe_request(
     upstream_headers = redact_sensitive_headers(upstream.headers)
     request_content = _dump_log_json(upstream.json_body)
     try:
-        response = await client.request(
-            upstream.method,
-            upstream.url,
-            headers=upstream.headers,
-            json=upstream.json_body,
+        from .payload_serialization import _json_body_bytes
+
+        body_bytes = _json_body_bytes(upstream.json_body)
+        response = await _send_upstream(
+            client,
+            upstream,
+            body_bytes=body_bytes,
+            timeout=client.timeout,
         )
+        response = normalize_provider_stream(response, channel.protocol)
+        try:
+            await response.aread()
+        finally:
+            await response.aclose()
         latency_ms = _elapsed_ms(started_at)
         upstream_response_headers = redact_sensitive_headers(dict(response.headers))
         try:
@@ -204,6 +213,58 @@ async def _run_site_model_probe_request(
 
 
 def _site_model_probe_output_text(protocol: ProtocolKind, raw_payload: Any) -> str:
+    if protocol in CHAT_PROTOCOLS and protocol not in {
+        ProtocolKind.OPENAI_CHAT,
+        ProtocolKind.OPENAI_RESPONSES,
+        ProtocolKind.ANTHROPIC,
+        ProtocolKind.GEMINI,
+    }:
+        import json
+
+        raw_payload = json.loads(
+            convert_response(
+                ProtocolKind.OPENAI_CHAT, protocol, json.dumps(raw_payload).encode()
+            )
+        )
+        protocol = ProtocolKind.OPENAI_CHAT
+    if protocol in CLASSIFIER_PROTOCOLS:
+        import json
+        from ..converters.classifier_protocols import (
+            convert_classifier_request,
+            convert_classifier_response,
+        )
+
+        validation_protocol = (
+            ProtocolKind.OPENAI_DECISIONS
+            if protocol == ProtocolKind.TYPESAFE_SYSTEM_ONE
+            else ProtocolKind.TYPESAFE_SYSTEM_ONE
+        )
+        probe_request = convert_classifier_request(
+            ProtocolKind.TYPESAFE_SYSTEM_ONE,
+            validation_protocol,
+            {
+                "state": {},
+                "questions": {
+                    "check": {
+                        "type": "choice",
+                        "instructions": "Does the input contain text?",
+                        "criteria": {"yes": "Contains text", "no": "Empty"},
+                    }
+                },
+            },
+        )
+        if not isinstance(raw_payload, dict):
+            raise ValueError("Classifier response must be an object")
+        convert_classifier_response(
+            validation_protocol, protocol, raw_payload, request_body=probe_request
+        )
+        return json.dumps(raw_payload, ensure_ascii=False)
+    if protocol == ProtocolKind.OPENROUTER_IMAGES:
+        return (
+            "image"
+            if isinstance(raw_payload, dict) and raw_payload.get("choices")
+            else ""
+        )
     output_text = ""
     if protocol == ProtocolKind.OPENAI_CHAT:
         choices = raw_payload.get("choices")
@@ -300,6 +361,16 @@ def _site_model_probe_output_text(protocol: ProtocolKind, raw_payload: Any) -> s
 def _site_model_probe_stream_output_text(
     protocol: ProtocolKind, raw_content: str
 ) -> str:
+    if protocol in {ProtocolKind.PI_MESSAGES, ProtocolKind.BEDROCK_CONVERSE_STREAM}:
+        import json
+
+        restored = _distill_stream_response_content(protocol, raw_content)
+        return (
+            _site_model_probe_output_text(protocol, json.loads(restored))
+            if restored
+            else ""
+        )
+    protocol = wire_protocol(protocol)
     parts: list[str] = []
     payloads = _parse_sse_payloads(raw_content)
     if protocol == ProtocolKind.GEMINI and not payloads:
@@ -379,6 +450,47 @@ def _append_gemini_stream_text(parts: list[str], payload: dict[str, Any]) -> Non
 
 def _site_model_probe_body(payload: SiteModelTestRequest) -> dict[str, Any]:
     text = payload.prompt.strip()
+    if payload.protocol in CHAT_PROTOCOLS and payload.protocol not in {
+        ProtocolKind.OPENAI_CHAT,
+        ProtocolKind.OPENAI_RESPONSES,
+        ProtocolKind.ANTHROPIC,
+        ProtocolKind.GEMINI,
+    }:
+        return convert_request(
+            ProtocolKind.OPENAI_CHAT,
+            payload.protocol,
+            {
+                "model": payload.model_name,
+                "messages": [{"role": "user", "content": text}],
+                "max_tokens": 64,
+                "stream": True,
+            },
+        )
+    if payload.protocol == ProtocolKind.OPENROUTER_IMAGES:
+        return {
+            "model": payload.model_name,
+            "messages": [{"role": "user", "content": text}],
+            "modalities": ["image", "text"],
+            "stream": False,
+        }
+    if payload.protocol in CLASSIFIER_PROTOCOLS:
+        from ..converters.classifier_protocols import convert_classifier_request
+
+        return convert_classifier_request(
+            ProtocolKind.TYPESAFE_SYSTEM_ONE,
+            payload.protocol,
+            {
+                "model": payload.model_name,
+                "state": {"text": text},
+                "questions": {
+                    "check": {
+                        "type": "choice",
+                        "instructions": "Does the input contain text?",
+                        "criteria": {"yes": "Contains text", "no": "Empty"},
+                    }
+                },
+            },
+        )
     if payload.protocol == ProtocolKind.OPENAI_CHAT:
         return {
             "model": payload.model_name,

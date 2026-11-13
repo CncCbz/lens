@@ -18,6 +18,7 @@ import {
 } from "@/lib/api";
 import { useAppTimeZone } from "@/hooks/use-app-time-zone";
 import { useI18n } from "@/lib/i18n";
+import { protocolOptions } from "@/lib/protocols";
 import { cn } from "@/lib/utils";
 import {
   buildModelPrefixOptions,
@@ -601,18 +602,11 @@ export function RequestsScreen() {
                               "All protocols",
                             )}
                           </SelectItem>
-                          <SelectItem value="openai_chat">
-                            OpenAI Chat
-                          </SelectItem>
-                          <SelectItem value="openai_responses">
-                            OpenAI Responses
-                          </SelectItem>
-                          <SelectItem value="openai_embedding">
-                            OpenAI Embedding
-                          </SelectItem>
-                          <SelectItem value="rerank">Rerank</SelectItem>
-                          <SelectItem value="anthropic">Anthropic</SelectItem>
-                          <SelectItem value="gemini">Gemini</SelectItem>
+                          {protocolOptions(locale).map((option) => (
+                            <SelectItem key={option.value} value={option.value}>
+                              {option.label}
+                            </SelectItem>
+                          ))}
                         </SelectContent>
                       </Select>
                     </Field>

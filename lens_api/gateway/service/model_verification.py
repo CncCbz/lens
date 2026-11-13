@@ -5,9 +5,13 @@ import json
 import logging
 import re
 import time
+from collections.abc import AsyncIterator
 from typing import Any
 from uuid import uuid4
 
+from ...core.protocol_reachability import CHAT_PROTOCOLS
+from ..converters import convert_request, convert_response, convert_stream_iterator
+from ..converters.chat_to_bedrock import bedrock_eventstream_to_sse
 from ...models import (
     ModelGroup,
     ModelVerificationCandidate,
@@ -34,14 +38,7 @@ from .upstream_http import _verification_user_agent
 logger = logging.getLogger(__name__)
 
 # Only these protocols can carry the challenge: they return plain text.
-SUPPORTED_PROTOCOLS = frozenset(
-    {
-        ProtocolKind.OPENAI_CHAT,
-        ProtocolKind.OPENAI_RESPONSES,
-        ProtocolKind.ANTHROPIC,
-        ProtocolKind.GEMINI,
-    }
-)
+SUPPORTED_PROTOCOLS = CHAT_PROTOCOLS
 
 _SAMPLE_STATES = frozenset({"complete", "truncated", "failed", "cancelled"})
 
@@ -129,6 +126,24 @@ def _challenge_body(
     writing it; too small a budget leaves the reasoning unfinished and the
     answer empty.
     """
+    if protocol in CHAT_PROTOCOLS and protocol not in {
+        ProtocolKind.OPENAI_CHAT,
+        ProtocolKind.OPENAI_RESPONSES,
+        ProtocolKind.ANTHROPIC,
+        ProtocolKind.GEMINI,
+    }:
+        return convert_request(
+            ProtocolKind.OPENAI_CHAT,
+            protocol,
+            _challenge_body(
+                ProtocolKind.OPENAI_CHAT,
+                group_name,
+                prompt,
+                reasoning_effort,
+                expected_count,
+                max_tokens,
+            ),
+        )
     # A thinking model can burn the whole budget before writing anything, so
     # the answer length is only a floor: reasoning runs on top of it.
     budget = max_tokens if max_tokens > 0 else _default_budget(expected_count)
@@ -176,7 +191,7 @@ _TEXT_KEYS = ("choices", "content", "candidates", "output")
 
 
 def _response_text(payload: Any) -> str:
-    """Best-effort text extraction across the four verifiable protocols."""
+    """Best-effort text extraction from gateway responses."""
     if not isinstance(payload, dict):
         return ""
     choices = payload.get("choices")
@@ -284,12 +299,15 @@ def _collect_sse_text(raw: str) -> tuple[str, str | None]:
     return "".join(parts), model
 
 
-async def _drain_response(response: Any) -> tuple[str, str | None, int | None]:
+async def _drain_response(
+    response: Any,
+    protocol: ProtocolKind = ProtocolKind.OPENAI_CHAT,
+) -> tuple[str, str | None, int | None]:
     """Read a gateway response, streaming or not, into plain text."""
     if isinstance(response, StreamingResponse):
         # Consume through the ASGI interface: that is what runs the response's
         # finalizer, which settles the request log and releases the channel.
-        chunks: list[str] = []
+        chunks: list[bytes] = []
         first_byte_ms: int | None = None
         started = time.perf_counter()
 
@@ -302,9 +320,7 @@ async def _drain_response(response: Any) -> tuple[str, str | None, int | None]:
                 return
             if first_byte_ms is None:
                 first_byte_ms = int((time.perf_counter() - started) * 1000)
-            chunks.append(
-                body if isinstance(body, str) else body.decode("utf-8", "ignore")
-            )
+            chunks.append(body.encode("utf-8") if isinstance(body, str) else body)
 
         async def receive() -> dict[str, Any]:
             # Never report a disconnect: the response cancels this wait itself
@@ -326,10 +342,28 @@ async def _drain_response(response: Any) -> tuple[str, str | None, int | None]:
             "scheme": "http",
         }
         await response(scope, receive, send)
-        text, model = _collect_sse_text("".join(chunks))
+
+        async def raw_chunks() -> AsyncIterator[bytes]:
+            for chunk in chunks:
+                yield chunk
+
+        iterator = raw_chunks()
+        if (
+            protocol == ProtocolKind.BEDROCK_CONVERSE_STREAM
+            and "eventstream" in response.headers.get("content-type", "")
+        ):
+            iterator = bedrock_eventstream_to_sse(iterator)
+        if protocol != ProtocolKind.OPENAI_CHAT:
+            iterator = convert_stream_iterator(
+                ProtocolKind.OPENAI_CHAT, protocol, iterator
+            )
+        raw = b"".join([chunk async for chunk in iterator])
+        text, model = _collect_sse_text(raw.decode("utf-8", "ignore"))
         return text, model, first_byte_ms
 
     body = getattr(response, "body", b"")
+    if protocol != ProtocolKind.OPENAI_CHAT:
+        body = convert_response(ProtocolKind.OPENAI_CHAT, protocol, body)
     try:
         payload = json.loads(body.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError):
@@ -395,7 +429,7 @@ async def _probe_challenge(
             "",
             "",
         )
-    text, response_model, first_byte_ms = await _drain_response(response)
+    text, response_model, first_byte_ms = await _drain_response(response, protocol)
     import lmfpd
 
     count = len(lmfpd.parse_numbers(text))

@@ -24,13 +24,88 @@ def _inbound_request_headers(request: Request) -> dict[str, str]:
     return {key: value for key, value in request.headers.items()}
 
 
+async def _native_chat_protocol(
+    body: dict[str, Any], default: ProtocolKind
+) -> ProtocolKind:
+    if not isinstance(body, dict):
+        raise HTTPException(400, "Request body must be a JSON object")
+    if default == ProtocolKind.ANTHROPIC and isinstance(body.get("context"), dict):
+        return ProtocolKind.PI_MESSAGES
+    if default == ProtocolKind.OPENAI_CHAT:
+        modalities = body.get("modalities")
+        if isinstance(modalities, list) and "image" in modalities:
+            return ProtocolKind.OPENROUTER_IMAGES
+    model = body.get("model")
+    if not isinstance(model, str):
+        return default
+    group = await app_state.group_repo.find_group_by_name(model)
+    if group is None or default in group.protocols:
+        return default
+    families = {
+        ProtocolKind.OPENAI_CHAT: (ProtocolKind.MISTRAL_CONVERSATIONS,),
+        ProtocolKind.OPENAI_RESPONSES: (
+            ProtocolKind.AZURE_OPENAI_RESPONSES,
+            ProtocolKind.OPENAI_CODEX_RESPONSES,
+        ),
+    }
+    candidates = [p for p in families.get(default, ()) if p in group.protocols]
+    return candidates[0] if candidates else default
+
+
+async def proxy_provider_request(
+    request: Request,
+    gateway_key: GatewayApiKey,
+    *,
+    protocol: ProtocolKind,
+    stream: bool | None = None,
+    path_suffix: str | None = None,
+) -> Response:
+    body = await request.json()
+    if not isinstance(body, dict):
+        raise HTTPException(400, "Request body must be a JSON object")
+    body = dict(body)
+    model = request.path_params.get("model_name") or request.path_params.get(
+        "deployment"
+    )
+    if model:
+        body["model"] = model
+    if protocol == ProtocolKind.LLAMA_CPP_CLASSIFY and not body.get("model"):
+        model = request.headers.get("x-lens-model") or request.query_params.get("model")
+        if not model:
+            groups = await app_state.group_repo.list_groups()
+            names = _filtered_group_names(
+                groups, gateway_key, {ProtocolKind.LLAMA_CPP_CLASSIFY}
+            )
+            if len(names) == 1:
+                model = names[0]
+            else:
+                raise HTTPException(
+                    400,
+                    "llama.cpp requests require a model path, x-lens-model header, or a single accessible llama.cpp group",
+                )
+        body["model"] = model
+    if stream is not None:
+        body["stream"] = stream
+    headers = _inbound_request_headers(request)
+    return await _proxy_protocol(
+        protocol,
+        body,
+        gateway_key,
+        request.headers.get("user-agent"),
+        headers,
+        request_headers=headers,
+        path_suffix=path_suffix,
+    )
+
+
 async def proxy_openai_chat(
     request: Request, gateway_key: GatewayApiKey = Depends(get_current_gateway_key)
 ) -> Response:
     body = await request.json()
     headers = _inbound_request_headers(request)
+    protocol = await _native_chat_protocol(body, ProtocolKind.OPENAI_CHAT)
     return await _proxy_protocol(
-        ProtocolKind.OPENAI_CHAT,
+        protocol,
         body,
         gateway_key,
         request.headers.get("user-agent"),
@@ -44,8 +119,9 @@ async def proxy_openai_responses(
 ) -> Response:
     body = await request.json()
     headers = _inbound_request_headers(request)
+    protocol = await _native_chat_protocol(body, ProtocolKind.OPENAI_RESPONSES)
     return await _proxy_protocol(
-        ProtocolKind.OPENAI_RESPONSES,
+        protocol,
         body,
         gateway_key,
         request.headers.get("user-agent"),
@@ -59,8 +135,11 @@ async def proxy_anthropic_messages(
 ) -> Response:
     body = await request.json()
     headers = _inbound_request_headers(request)
+    protocol = await _native_chat_protocol(body, ProtocolKind.ANTHROPIC)
+    if protocol == ProtocolKind.PI_MESSAGES:
+        body = {**body, "stream": True}
     return await _proxy_protocol(
-        ProtocolKind.ANTHROPIC,
+        protocol,
         body,
         gateway_key,
         request.headers.get("user-agent"),
@@ -167,6 +246,10 @@ _OPENAI_LIST_PROTOCOLS: frozenset[ProtocolKind] = frozenset(
         ProtocolKind.OPENAI_EMBEDDING,
         ProtocolKind.OPENAI_IMAGE,
         ProtocolKind.RERANK,
+        ProtocolKind.MISTRAL_CONVERSATIONS,
+        ProtocolKind.AZURE_OPENAI_RESPONSES,
+        ProtocolKind.OPENAI_CODEX_RESPONSES,
+        ProtocolKind.OPENROUTER_IMAGES,
     }
 )
 

@@ -8,6 +8,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import type { RequestLogItem } from "@/lib/api";
+import { compactProtocolLabel } from "@/lib/protocols";
 import { cn } from "@/lib/utils";
 import { titleForLocale } from "./shared";
 
@@ -80,19 +81,11 @@ export function ProtocolBadge({
 }: {
   protocol: RequestLogItem["protocol"];
 }) {
-  const labelMap = {
-    openai_chat: "chat",
-    openai_responses: "responses",
-    openai_embedding: "embedding",
-    rerank: "rerank",
-    anthropic: "anthropic",
-    gemini: "gemini",
-    openai_image: "image",
-  } as const;
-
   return (
     <Badge variant="secondary" className="px-2.5 py-0.5 text-xs font-medium">
-      {labelMap[protocol] ?? protocol}
+      {protocol === "openai_embedding"
+        ? "embedding"
+        : compactProtocolLabel(protocol)}
     </Badge>
   );
 }

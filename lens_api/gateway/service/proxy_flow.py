@@ -692,8 +692,8 @@ async def _try_target(
     channel = target.channel
     attempt_started_at = perf_counter()
 
-    if needs_conversion(protocol, channel.protocol):
-        try:
+    try:
+        if needs_conversion(protocol, channel.protocol):
             upstream_body = convert_request(
                 protocol,
                 channel.protocol,
@@ -701,26 +701,26 @@ async def _try_target(
                 target.model_name,
                 preserve_reasoning=_should_replay_reasoning(channel, target.model_name),
             )
-        except ValueError as exc:
-            return await _record_target_failure(
-                target=target,
-                channel=channel,
-                runtime=runtime,
-                log_ctx=log_ctx,
-                plan=plan,
-                errors=errors,
-                failure_status_codes=failure_status_codes,
-                attempt_started_at=attempt_started_at,
-                effective_user_agent=upstream_user_agent,
-                upstream_body=body,
-                exc=UpstreamRequestError(
-                    status_code=400,
-                    detail=str(exc),
-                    router_status_code=None,
-                ),
-            )
-    else:
-        upstream_body = _prepare_upstream_body(protocol, body, target.model_name)
+        else:
+            upstream_body = _prepare_upstream_body(protocol, body, target.model_name)
+    except ValueError as exc:
+        return await _record_target_failure(
+            target=target,
+            channel=channel,
+            runtime=runtime,
+            log_ctx=log_ctx,
+            plan=plan,
+            errors=errors,
+            failure_status_codes=failure_status_codes,
+            attempt_started_at=attempt_started_at,
+            effective_user_agent=upstream_user_agent,
+            upstream_body=body,
+            exc=UpstreamRequestError(
+                status_code=400,
+                detail=str(exc),
+                router_status_code=None,
+            ),
+        )
     try:
         upstream_body = _apply_param_override(channel, upstream_body)
         match_rules = []
@@ -880,6 +880,7 @@ async def _try_target(
             model_name=target.model_name,
             pricing_group_name=plan.requested_group_name or plan.resolved_group_name,
             client_protocol=protocol,
+            original_request_body=body,
             log_body_enabled=log_response_body,
             log_response_headers_enabled=log_response_headers,
             log_debug_enabled=log_debug_enabled,

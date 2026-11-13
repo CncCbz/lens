@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from ...core.protocol_reachability import wire_protocol
 from .runtime_context import (
     Any,
     Awaitable,
@@ -106,6 +107,10 @@ def _error_response(
 def _request_error_protocol(request: Request | None) -> ProtocolKind | None:
     if request is None:
         return None
+    route_name = getattr(request.scope.get("route"), "name", "")
+    for protocol in ProtocolKind:
+        if route_name.startswith(f"proxy_{protocol.value}_"):
+            return protocol
     path = request.url.path.rstrip("/")
     if path.startswith("/v1beta/"):
         return ProtocolKind.GEMINI
@@ -164,6 +169,50 @@ def _protocol_error_payload(
     metadata = _protocol_error_metadata(
         request_id=request_id, attempt_count=attempt_count, retryable=retryable
     )
+    protocol = wire_protocol(protocol)
+    if protocol == ProtocolKind.BEDROCK_CONVERSE_STREAM:
+        exception_type = {
+            400: "ValidationException",
+            401: "AccessDeniedException",
+            403: "AccessDeniedException",
+            404: "ResourceNotFoundException",
+            422: "ValidationException",
+            429: "ThrottlingException",
+            503: "ServiceUnavailableException",
+        }.get(status_code, "InternalServerException")
+        return {"message": message, "__type": exception_type, **metadata}
+    if protocol == ProtocolKind.PI_MESSAGES:
+        return {
+            "type": "error",
+            "reason": "error",
+            "errorMessage": message,
+            "error": {
+                "role": "assistant",
+                "content": [],
+                "api": "pi-messages",
+                "provider": "lens",
+                "model": "",
+                "stopReason": "error",
+                "errorMessage": message,
+                "timestamp": 0,
+                "usage": {
+                    "input": 0,
+                    "output": 0,
+                    "cacheRead": 0,
+                    "cacheWrite": 0,
+                    "totalTokens": 0,
+                    "cost": {
+                        "input": 0,
+                        "output": 0,
+                        "cacheRead": 0,
+                        "cacheWrite": 0,
+                        "total": 0,
+                    },
+                },
+                **metadata,
+            },
+            **metadata,
+        }
     if protocol == ProtocolKind.ANTHROPIC:
         return {
             "type": "error",

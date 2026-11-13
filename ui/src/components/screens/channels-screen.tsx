@@ -1711,7 +1711,30 @@ export function ChannelsScreen() {
     setFetchingProtocolConfigIndex(protocolConfigIndex);
     try {
       const activeBaseUrl = activeBaseUrlValue(form, protocolConfig);
+      const configuredProtocols = [
+        ...(form.base_urls.find(
+          (item) => item.id === protocolConfig.base_url_id,
+        )?.supported_protocols ?? []),
+        ...protocolConfig.models.flatMap((model) => model.protocols),
+      ];
       const payload: SiteModelFetchPayload = {
+        protocol:
+          configuredProtocols.find((protocol) =>
+            [
+              "openai_chat",
+              "openai_responses",
+              "openai_embedding",
+              "openai_image",
+              "rerank",
+              "anthropic",
+              "gemini",
+              "mistral_conversations",
+              "openrouter_images",
+              "llama_cpp_classify",
+            ].includes(protocol),
+          ) ??
+          configuredProtocols[0] ??
+          "openai_chat",
         base_url: safeText(activeBaseUrl).trim(),
         headers: formHeaders(protocolConfig),
         proxy_mode: protocolConfig.proxy_mode,

@@ -8,6 +8,7 @@ import type {
   RequestLogDetail,
   RequestLogItem,
 } from "@/lib/api";
+import { protocolLabel } from "@/lib/protocols";
 import { cn } from "@/lib/utils";
 import { ProtocolBadge, RequestOutcomeBadge } from "./components";
 import {
@@ -99,17 +100,7 @@ const TRACE_DEFINITIONS: TraceDefinition[] = [
   },
 ];
 
-const PROTOCOL_LABELS: Record<RequestLogItem["protocol"], [string, string]> = {
-  openai_chat: ["Chat", "Chat"],
-  openai_responses: ["Responses", "Responses"],
-  openai_embedding: ["Embedding", "Embedding"],
-  openai_image: ["Image", "Image"],
-  rerank: ["Rerank", "Rerank"],
-  anthropic: ["Anthropic", "Anthropic"],
-  gemini: ["Gemini", "Gemini"],
-};
-
-const PROTOCOL_ROUTES: Partial<Record<RequestLogItem["protocol"], string>> = {
+const PROTOCOL_ROUTES: Record<RequestLogItem["protocol"], string> = {
   openai_chat: "/v1/chat/completions",
   openai_responses: "/v1/responses",
   openai_embedding: "/v1/embeddings",
@@ -117,6 +108,17 @@ const PROTOCOL_ROUTES: Partial<Record<RequestLogItem["protocol"], string>> = {
   rerank: "/v1/rerank",
   anthropic: "/v1/messages",
   gemini: "/v1beta/models/{model}:generateContent",
+  mistral_conversations: "/mistral/v1/chat/completions",
+  azure_openai_responses: "/openai/v1/responses",
+  openai_codex_responses: "/backend-api/codex/responses",
+  google_vertex: "/v1/publishers/google/models/{model}:generateContent",
+  bedrock_converse_stream: "/model/{model}/converse{|-stream}",
+  pi_messages: "/messages",
+  openrouter_images: "/openrouter/v1/chat/completions",
+  typesafe_system_one: "/systemone",
+  cloudflare_workers_ai_system_one: "/accounts/{account}/ai/run",
+  llama_cpp_classify: "/llama/{model}/{tokenize|apply-template|completion}",
+  openai_decisions: "/v1/decisions",
 };
 
 const ATTEMPT_SEGMENTS: {
@@ -180,13 +182,6 @@ function responseTraceDefinition(
     tone: isRelay ? "relay" : attempt.success ? "responses" : "error",
     request: false,
   };
-}
-
-function protocolLabel(
-  protocol: RequestLogItem["protocol"],
-  locale: "zh-CN" | "en-US",
-) {
-  return titleForLocale(locale, ...PROTOCOL_LABELS[protocol]);
 }
 
 function traceProtocolLabel(

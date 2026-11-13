@@ -1,8 +1,15 @@
 from __future__ import annotations
 
+from urllib.parse import urlsplit
+
 from starlette.background import BackgroundTask
 from starlette.responses import ContentStream
 from starlette.types import Receive, Scope, Send
+
+from ...core.protocol_reachability import CHAT_PROTOCOLS, wire_protocol
+from ..provider_http import sign_upstream_headers
+from ..converters.chat_to_bedrock import bedrock_sse_to_eventstream
+from .provider_streams import normalize_provider_stream
 
 from .runtime_context import (
     AttemptLog,
@@ -89,8 +96,28 @@ async def _build_sse_to_json_result(
     log_debug_enabled: bool = False,
     log_response_headers_enabled: bool = True,
     log_output: bool = True,
+    deadline: _RequestDeadline | None = None,
 ) -> UpstreamResult:
-    content = await response.aread()
+    if deadline is None:
+        content = await response.aread()
+    else:
+        capture = StreamCapture(
+            capture_body=False, upstream_response=response, deadline=deadline
+        )
+        content = b"".join(
+            [
+                chunk
+                async for chunk in _stream_upstream_iterator(
+                    response, channel.protocol, capture, perf_counter()
+                )
+            ]
+        )
+        if capture.errors:
+            raise UpstreamRequestError(
+                status_code=capture.error_status_code or 502,
+                detail="; ".join(capture.errors),
+                router_status_code=capture.error_status_code or 502,
+            )
     raw_content = _decode_content_bytes(content)
     try:
         parsed = _extract_stream_usage(channel.protocol, raw_content)
@@ -290,6 +317,10 @@ async def _build_stream_result(
         converted = False
 
     converted_iter = _stream_client_iterator(converted_iter, capture)
+    if client_protocol == ProtocolKind.BEDROCK_CONVERSE_STREAM:
+        converted_iter = bedrock_sse_to_eventstream(converted_iter)
+        stream_media = "application/vnd.amazon.eventstream"
+        converted = True
 
     upstream_response_headers = _passthrough_headers(response.headers)
     response_headers = dict(upstream_response_headers)
@@ -351,6 +382,7 @@ async def _build_json_result(
     log_debug_enabled: bool = False,
     log_response_headers_enabled: bool = True,
     log_output: bool = True,
+    original_request_body: dict[str, Any] | None = None,
 ) -> UpstreamResult:
     content = await response.aread()
     raw_content = _decode_content_bytes(content)
@@ -369,7 +401,15 @@ async def _build_json_result(
     ):
         try:
             content = convert_response(
-                client_protocol, channel.protocol, content, body.get("model", "")
+                client_protocol,
+                channel.protocol,
+                content,
+                (
+                    original_request_body if original_request_body is not None else body
+                ).get("model", ""),
+                request_body=(
+                    original_request_body if original_request_body is not None else body
+                ),
             )
         except ValueError as exc:
             raise UpstreamRequestError(
@@ -677,6 +717,7 @@ async def _call_channel(
     model_name: str | None = None,
     pricing_group_name: str | None = None,
     client_protocol: ProtocolKind | None = None,
+    original_request_body: dict[str, Any] | None = None,
     log_body_enabled: bool = False,
     log_debug_enabled: bool = False,
     log_response_headers_enabled: bool = True,
@@ -699,6 +740,7 @@ async def _call_channel(
                 body_bytes=body_bytes,
                 timeout=send_timeout,
             )
+        response = normalize_provider_stream(response, channel.protocol)
         response.raise_for_status()
         # Time to upstream response headers: DNS, TCP, TLS, request upload and
         # the upstream queue up to its first header byte.
@@ -707,14 +749,7 @@ async def _call_channel(
         is_event_stream = (
             "text/event-stream" in (response.headers.get("content-type") or "").lower()
         )
-        chat_protocols = frozenset(
-            {
-                ProtocolKind.OPENAI_CHAT,
-                ProtocolKind.OPENAI_RESPONSES,
-                ProtocolKind.ANTHROPIC,
-                ProtocolKind.GEMINI,
-            }
-        )
+        chat_protocols = CHAT_PROTOCOLS
         if (
             is_event_stream
             and not is_stream_request
@@ -731,6 +766,7 @@ async def _call_channel(
                 log_debug_enabled,
                 log_response_headers_enabled,
                 log_output=log_output,
+                deadline=deadline,
             )
         elif is_event_stream:
             result = await _build_stream_result(
@@ -776,6 +812,7 @@ async def _call_channel(
                 log_debug_enabled,
                 log_response_headers_enabled,
                 log_output=log_output,
+                original_request_body=original_request_body,
             )
         if not result.is_stream:
             result.headers_ms = headers_ms
@@ -800,6 +837,13 @@ async def _call_channel(
             provider_error_code=_provider_error_code(exc.response),
             retry_after_seconds=parse_retry_after_seconds(exc.response.headers),
             policy_key=policy_key_for_status(status_code),
+        ) from exc
+    except ValueError as exc:
+        raise UpstreamRequestError(
+            status_code=502,
+            detail=f"Invalid upstream response: {exc}",
+            router_status_code=502,
+            decision=decide_route_error(502),
         ) from exc
     except httpx.HTTPError as exc:
         raise UpstreamRequestError(
@@ -830,12 +874,18 @@ async def _send_upstream(
     body_bytes: bytes,
     timeout: httpx.Timeout | None = None,
 ) -> httpx.Response:
+    if "_lens_classifier" in upstream.json_body and urlsplit(upstream.url).path.rstrip(
+        "/"
+    ).endswith("/classify"):
+        from ..classifier_http import send_classifier_request
+
+        return await send_classifier_request(client, upstream, body_bytes, timeout)
     # Always take the response unbuffered so the moment the headers land is
     # observable; callers read the body themselves.
     request = client.build_request(
         upstream.method,
         upstream.url,
-        headers=upstream.headers,
+        headers=sign_upstream_headers(upstream, body_bytes),
         content=body_bytes,
         timeout=timeout,
     )

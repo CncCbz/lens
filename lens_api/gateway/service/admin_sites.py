@@ -162,7 +162,20 @@ async def fetch_site_models(
         channel = ChannelConfig(
             id="preview",
             name=preview["credential_name"] or "preview",
-            protocol=ProtocolKind.OPENAI_CHAT,
+            protocol=(
+                payload.protocol
+                if payload.protocol
+                not in {
+                    ProtocolKind.OPENAI_CHAT,
+                    ProtocolKind.OPENAI_RESPONSES,
+                    ProtocolKind.OPENAI_EMBEDDING,
+                    ProtocolKind.OPENAI_IMAGE,
+                    ProtocolKind.RERANK,
+                    ProtocolKind.ANTHROPIC,
+                    ProtocolKind.GEMINI,
+                }
+                else ProtocolKind.OPENAI_CHAT
+            ),
             base_url=payload.base_url,
             api_key=credential.api_key,
             headers=payload.headers,

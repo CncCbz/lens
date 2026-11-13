@@ -7,7 +7,18 @@ export type ProtocolKind =
   | "openai_image"
   | "rerank"
   | "anthropic"
-  | "gemini";
+  | "gemini"
+  | "mistral_conversations"
+  | "azure_openai_responses"
+  | "openai_codex_responses"
+  | "google_vertex"
+  | "bedrock_converse_stream"
+  | "pi_messages"
+  | "openrouter_images"
+  | "typesafe_system_one"
+  | "cloudflare_workers_ai_system_one"
+  | "llama_cpp_classify"
+  | "openai_decisions";
 
 export type ChannelProxyMode = "inherit" | "direct" | "custom";
 
@@ -507,6 +518,7 @@ export type SiteBatchImportResult = {
 };
 
 export type SiteModelFetchPayload = {
+  protocol?: ProtocolKind;
   base_url: string;
   headers: Record<string, string>;
   proxy_mode: ChannelProxyMode;

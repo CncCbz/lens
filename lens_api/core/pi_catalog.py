@@ -22,6 +22,8 @@ from urllib.parse import urlsplit
 import httpx
 
 from ..core import multimodal_modes
+from .protocol_reachability import CHAT_PROTOCOLS, CLASSIFIER_PROTOCOLS, IMAGE_PROTOCOLS
+from ..models import ProtocolKind
 
 logger = logging.getLogger(__name__)
 
@@ -272,6 +274,24 @@ async def fetch_pi_catalog(limit: int = 0) -> list[PiCatalogEntry]:
 
 _PLACEHOLDER_API_KEY = "YOUR_API_KEY"
 
+_PI_API_PROTOCOLS: dict[str, ProtocolKind] = {
+    "openai-completions": ProtocolKind.OPENAI_CHAT,
+    "openai-responses": ProtocolKind.OPENAI_RESPONSES,
+    "anthropic-messages": ProtocolKind.ANTHROPIC,
+    "google-generative-ai": ProtocolKind.GEMINI,
+    "mistral-conversations": ProtocolKind.MISTRAL_CONVERSATIONS,
+    "azure-openai-responses": ProtocolKind.AZURE_OPENAI_RESPONSES,
+    "openai-codex-responses": ProtocolKind.OPENAI_CODEX_RESPONSES,
+    "google-vertex": ProtocolKind.GOOGLE_VERTEX,
+    "bedrock-converse-stream": ProtocolKind.BEDROCK_CONVERSE_STREAM,
+    "pi-messages": ProtocolKind.PI_MESSAGES,
+    "openrouter-images": ProtocolKind.OPENROUTER_IMAGES,
+    "typesafe-system-one": ProtocolKind.TYPESAFE_SYSTEM_ONE,
+    "cloudflare-workers-ai-system-one": ProtocolKind.CLOUDFLARE_WORKERS_AI_SYSTEM_ONE,
+    "llama-cpp-classify": ProtocolKind.LLAMA_CPP_CLASSIFY,
+    "openai-decisions": ProtocolKind.OPENAI_DECISIONS,
+}
+
 
 def host_of(url: str) -> str:
     try:
@@ -476,6 +496,11 @@ def build_group_pi_config_json(
             model = _matched_model(entry, name)
             if model is None:
                 continue
+            model = _model_with_api(
+                model, provider, catalog_entries, getattr(group, "protocols", None)
+            )
+            if model is None:
+                continue
             model = apply_media_inputs(model, group, relay_image_group_id)
             return json.dumps(model, indent=2, ensure_ascii=False)
     return "{}"
@@ -493,13 +518,36 @@ def _model_with_api(
     model: dict[str, object],
     provider: str,
     catalog_entries: list[PiCatalogEntry],
-) -> dict[str, object]:
-    """Inject the provider api into the model when it differs from the
-    pi default (openai-responses) and the model does not set one."""
-    if "api" in model:
-        return model
-    api = _provider_api(provider, catalog_entries)
-    if api and api != "openai-responses":
+    protocols: list[ProtocolKind] | None = None,
+) -> dict[str, object] | None:
+    """Use a pi API accepted by the group within the model's family."""
+    api = str(
+        model.get("api")
+        or _provider_api(provider, catalog_entries)
+        or "openai-responses"
+    )
+    if protocols is not None:
+        native = _PI_API_PROTOCOLS.get(api)
+        kind = model.get("type") or (
+            "image"
+            if native in IMAGE_PROTOCOLS
+            else "classifier" if native in CLASSIFIER_PROTOCOLS else "chat"
+        )
+        family = {
+            "chat": CHAT_PROTOCOLS,
+            "image": IMAGE_PROTOCOLS,
+            "classifier": CLASSIFIER_PROTOCOLS,
+        }.get(str(kind), frozenset())
+        supported = {
+            name: protocol
+            for name, protocol in _PI_API_PROTOCOLS.items()
+            if protocol in protocols and protocol in family
+        }
+        if api not in supported:
+            api = next(iter(supported), "")
+        if not api:
+            return None
+    if api != "openai-responses" or "api" in model:
         return {**model, "api": api}
     return model
 
@@ -530,9 +578,17 @@ def collect_group_models(
         model_id = str(model["id"])
         if model_id in seen_ids:
             return
+        protocols = getattr(group, "protocols", None)
+        target_protocols = getattr(target, "protocols", None)
+        if protocols is not None and target_protocols is not None:
+            protocols = [
+                protocol for protocol in protocols if protocol in target_protocols
+            ]
+        model = _model_with_api(model, provider, catalog_entries, protocols)
+        if model is None:
+            return
         seen_ids.add(model_id)
-        model = apply_media_inputs(model, target, relay_image_group_id)
-        models.append(_model_with_api(model, provider, catalog_entries))
+        models.append(apply_media_inputs(model, target, relay_image_group_id))
 
     groups_by_id = {getattr(g, "id", ""): g for g in groups}
 

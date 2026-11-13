@@ -16,6 +16,7 @@ from . import (
     overview,
     playground,
     proxy,
+    provider_proxy,
     public,
     request_logs,
     routing,
@@ -45,6 +46,7 @@ def include_routes(app: FastAPI, service_module: ModuleType) -> None:
         settings,
         playground,
         proxy,
+        provider_proxy,
         ui_static,
     ):
         module.register(app, service_module)

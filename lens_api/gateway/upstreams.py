@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from collections.abc import Iterable, Mapping
 from typing import Any
 from urllib.parse import urlsplit
@@ -9,6 +9,7 @@ from ..core.auth import is_sensitive_credential_name
 from ..core.config import Settings
 from ..core.url_utils import normalize_base_url, append_url_path
 from ..models import ChannelConfig, ChannelProxyMode, ProtocolKind
+from .provider_http import provider_request
 
 
 @dataclass(frozen=True, slots=True)
@@ -17,6 +18,7 @@ class UpstreamRequest:
     url: str
     headers: dict[str, str]
     json_body: dict[str, Any]
+    signing_credentials: dict[str, str] | None = field(default=None, repr=False)
 
 
 _OPENAI_LIKE_PATH = {
@@ -66,6 +68,7 @@ _INBOUND_HEADER_ALLOWLIST_PREFIXES = (
 _SYSTEM_HEADER_NAMES = frozenset(
     {
         "authorization",
+        "api-key",
         "x-api-key",
         "x-goog-api-key",
         "host",
@@ -95,6 +98,23 @@ def build_upstream_request(
     path_suffix: str | None = None,
 ) -> UpstreamRequest:
     api_key = resolve_channel_api_key(channel, credential_id=credential_id)
+    provider = provider_request(channel, body, api_key, path_suffix)
+    if provider is not None:
+        url, defaults, payload, signing = provider
+        return UpstreamRequest(
+            method="POST",
+            url=url,
+            headers=build_upstream_headers(
+                defaults,
+                channel.headers,
+                user_agent=user_agent,
+                model_group_headers=model_group_headers,
+                inbound_headers=forwarded_headers,
+                extra_headers=extra_headers,
+            ),
+            json_body=payload,
+            signing_credentials=signing,
+        )
 
     if channel.protocol == ProtocolKind.GEMINI:
         model_name = str(body.get("model") or "")
@@ -282,4 +302,40 @@ def resolve_upstream_proxy_url(
 
 
 def resolve_channel_model_list_url(channel: ChannelConfig) -> str:
+    if channel.protocol in {
+        ProtocolKind.AZURE_OPENAI_RESPONSES,
+        ProtocolKind.OPENAI_CODEX_RESPONSES,
+        ProtocolKind.GOOGLE_VERTEX,
+        ProtocolKind.BEDROCK_CONVERSE_STREAM,
+        ProtocolKind.PI_MESSAGES,
+        ProtocolKind.TYPESAFE_SYSTEM_ONE,
+        ProtocolKind.CLOUDFLARE_WORKERS_AI_SYSTEM_ONE,
+        ProtocolKind.OPENAI_DECISIONS,
+    }:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Model discovery is unavailable for {channel.protocol.value}; configure channel models explicitly",
+        )
+    if channel.protocol in {
+        ProtocolKind.MISTRAL_CONVERSATIONS,
+        ProtocolKind.OPENROUTER_IMAGES,
+        ProtocolKind.LLAMA_CPP_CLASSIFY,
+    }:
+        root = str(channel.base_url)
+        parsed = urlsplit(root)
+        path = parsed.path.rstrip("/")
+        for suffix in (
+            "/chat/completions",
+            "/completion",
+            "/classify",
+            "/tokenize",
+            "/apply-template",
+        ):
+            if path.endswith(suffix):
+                path = path[: -len(suffix)]
+                break
+        root = parsed._replace(path=path).geturl()
+        if not path.endswith("/v1"):
+            root = append_url_path(root, "v1")
+        return append_url_path(root, "models")
     return append_url_path(_protocol_base_url(channel), "models")

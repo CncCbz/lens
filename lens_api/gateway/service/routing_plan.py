@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+from ...core.protocol_reachability import wire_protocol
+from ..converters.provider_variants import (
+    chat_request_to_mistral,
+    mistral_request_to_chat,
+)
 from ..converters.chat_to_responses import normalize_openai_responses_request
 from ..converters.openai_chat_compat import normalize_openai_chat_request
 from .runtime_context import (
@@ -106,9 +111,11 @@ def _prepare_upstream_body(
     protocol: ProtocolKind, body: dict[str, Any], target_model_name: str | None
 ) -> dict[str, Any]:
     payload = deepcopy(body)
-    if protocol == ProtocolKind.OPENAI_CHAT:
+    if protocol == ProtocolKind.MISTRAL_CONVERSATIONS:
+        payload = chat_request_to_mistral(mistral_request_to_chat(payload))
+    elif wire_protocol(protocol) == ProtocolKind.OPENAI_CHAT:
         payload = normalize_openai_chat_request(payload)
-    elif protocol == ProtocolKind.OPENAI_RESPONSES:
+    elif wire_protocol(protocol) == ProtocolKind.OPENAI_RESPONSES:
         payload = normalize_openai_responses_request(payload)
         if "input" in payload:
             payload["input"] = _normalize_openai_responses_input(payload.get("input"))

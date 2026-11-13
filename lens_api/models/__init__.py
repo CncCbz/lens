@@ -131,6 +131,17 @@ class ProtocolKind(str, Enum):
     RERANK = "rerank"
     ANTHROPIC = "anthropic"
     GEMINI = "gemini"
+    MISTRAL_CONVERSATIONS = "mistral_conversations"
+    AZURE_OPENAI_RESPONSES = "azure_openai_responses"
+    OPENAI_CODEX_RESPONSES = "openai_codex_responses"
+    GOOGLE_VERTEX = "google_vertex"
+    BEDROCK_CONVERSE_STREAM = "bedrock_converse_stream"
+    PI_MESSAGES = "pi_messages"
+    OPENROUTER_IMAGES = "openrouter_images"
+    TYPESAFE_SYSTEM_ONE = "typesafe_system_one"
+    CLOUDFLARE_WORKERS_AI_SYSTEM_ONE = "cloudflare_workers_ai_system_one"
+    LLAMA_CPP_CLASSIFY = "llama_cpp_classify"
+    OPENAI_DECISIONS = "openai_decisions"
 
 
 class ChannelProxyMode(str, Enum):
@@ -583,6 +594,7 @@ class SiteBatchImportResult(StrictBaseModel):
 
 
 class SiteModelFetchRequest(StrictBaseModel):
+    protocol: ProtocolKind = ProtocolKind.OPENAI_CHAT
     base_url: HttpUrl
     headers: dict[str, str] = Field(default_factory=dict)
     proxy_mode: ChannelProxyMode = ChannelProxyMode.INHERIT

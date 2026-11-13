@@ -9,6 +9,11 @@ from typing import Any
 from sqlalchemy.exc import SQLAlchemyError
 
 from ...core import multimodal_modes
+from ...core.protocol_reachability import CHAT_PROTOCOLS, wire_protocol
+from .payload_serialization import _json_body_bytes
+from .provider_streams import normalize_provider_stream
+from .proxy_upstream import _send_upstream
+from .stream_restore import _distill_stream_response_content
 from .runtime_context import (
     AttemptLog,
     ChannelConfig,
@@ -47,11 +52,11 @@ _MediaItem = tuple[int, _ContentPath, dict[str, Any]]
 
 # The helper request is always built as an OPENAI_CHAT body and converted to the
 # target channel, so the helper group only has to support any one of these.
-MEDIA_RELAY_PROTOCOLS = (
-    ProtocolKind.OPENAI_CHAT,
-    ProtocolKind.OPENAI_RESPONSES,
-    ProtocolKind.ANTHROPIC,
-    ProtocolKind.GEMINI,
+MEDIA_RELAY_PROTOCOLS = tuple(
+    sorted(
+        CHAT_PROTOCOLS,
+        key=lambda protocol: (protocol != ProtocolKind.OPENAI_CHAT, protocol.value),
+    )
 )
 
 
@@ -472,12 +477,18 @@ async def _call_helper_group(
             try:
 
                 async def _send() -> httpx.Response:
-                    return await client.request(
-                        upstream.method,
-                        upstream.url,
-                        headers=upstream.headers,
-                        json=upstream.json_body,
+                    reply = await _send_upstream(
+                        client,
+                        upstream,
+                        body_bytes=_json_body_bytes(upstream.json_body),
+                        timeout=client.timeout,
                     )
+                    reply = normalize_provider_stream(reply, channel.protocol)
+                    try:
+                        await reply.aread()
+                    finally:
+                        await reply.aclose()
+                    return reply
 
                 remaining = deadline.remaining_seconds()
                 if remaining is not None and remaining <= 0:
@@ -493,6 +504,17 @@ async def _call_helper_group(
                 content = await response.aread()
                 response_headers = json.dumps(dict(response.headers), ensure_ascii=True)
                 response_body = content.decode("utf-8", errors="replace")
+                if (
+                    attempt_status < 300
+                    and "text/event-stream"
+                    in response.headers.get("content-type", "").lower()
+                ):
+                    restored = _distill_stream_response_content(
+                        channel.protocol, response_body
+                    )
+                    if not restored:
+                        raise ValueError("Incomplete helper response stream")
+                    content = restored.encode("utf-8")
                 if attempt_status >= 300:
                     attempt_error = _format_http_response_error(response)
                 elif needs_conversion(ProtocolKind.OPENAI_CHAT, channel.protocol):
@@ -581,6 +603,7 @@ async def _maybe_relay_multimodal(
     deadline: Any,
     log_ctx: Any = None,
 ) -> dict[str, Any]:
+    protocol = wire_protocol(protocol)
     if protocol not in {
         ProtocolKind.OPENAI_CHAT,
         ProtocolKind.OPENAI_RESPONSES,

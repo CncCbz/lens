@@ -13,7 +13,7 @@ import type {
   SiteBaseUrl,
 } from "@/lib/api";
 import { isGeneratedCredentialName } from "@/lib/utils";
-import { protocolLabel, protocolOptions } from "@/lib/protocols";
+import { PROTOCOL_LIST, protocolLabel, protocolOptions } from "@/lib/protocols";
 export { isGeneratedCredentialName, protocolLabel, protocolOptions };
 export { protocolBadgeClassName } from "@/lib/protocols";
 export type { MatchOp };
@@ -284,15 +284,9 @@ export function candidatePayloadToFormItems(
   });
 }
 
-export const PROTOCOL_SUFFIXES: ProtocolKind[] = [
-  "openai_chat",
-  "openai_responses",
-  "openai_embedding",
-  "openai_image",
-  "rerank",
-  "anthropic",
-  "gemini",
-];
+export const PROTOCOL_SUFFIXES: ProtocolKind[] = [...PROTOCOL_LIST].sort(
+  (a, b) => b.length - a.length,
+);
 
 export function channelProtocol(
   item: Pick<FormItem, "channel_id"> & { protocol?: ProtocolKind | null },
