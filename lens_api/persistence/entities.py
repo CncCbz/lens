@@ -620,3 +620,14 @@ class OverviewDimensionDailyStatsEntity(Base):
     input_cost_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     output_cost_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     total_cost_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+
+
+class MultimodalRelayCacheEntity(Base):
+    __tablename__ = "multimodal_relay_cache"
+
+    resource_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    media_kind: Mapped[str] = mapped_column(String(16), primary_key=True)
+    helper_group_id: Mapped[str] = mapped_column(String(80), primary_key=True)
+    result_text: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = timestamp_column()
+    expires_at: Mapped[datetime] = mapped_column(nullable=False, index=True)

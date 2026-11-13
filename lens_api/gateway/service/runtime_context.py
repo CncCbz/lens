@@ -169,6 +169,9 @@ from ...persistence.repositories import (
     RequestLogStore,
     SettingsRepository,
 )
+from ...persistence.repositories.multimodal_relay_cache_repository import (
+    MultimodalRelayCacheRepository,
+)
 from ...persistence.cronjob_store import CronjobSpec, CronjobStore
 from ...persistence.entities import AdminUserEntity
 from ..converters import (
@@ -198,6 +201,7 @@ from ..upstreams import (
 )
 
 TASK_REQUEST_LOG_PRUNE = "request_log_prune"
+TASK_MULTIMODAL_CACHE_PRUNE = "multimodal_cache_prune"
 TASK_MODEL_PRICE_SYNC = "model_price_sync"
 TASK_PI_CATALOG_SYNC = "pi_catalog_sync"
 TASK_REQUEST_LOG_STATS_PERSIST = "request_log_stats_persist"
@@ -243,6 +247,12 @@ CRONJOB_SPECS = (
         id=TASK_REQUEST_LOG_PRUNE,
         name="请求日志清理",
         description="按日志保留天数清理过期请求日志",
+        default_interval_hours=1,
+    ),
+    CronjobSpec(
+        id=TASK_MULTIMODAL_CACHE_PRUNE,
+        name="多模态缓存清理",
+        description="清理已过期的多模态降级缓存",
         default_interval_hours=1,
     ),
     CronjobSpec(
@@ -362,6 +372,9 @@ class AppState:
         self.group_repo = GroupRepository(self.session_factory)
         self.model_price_repo = ModelPriceRepository(self.session_factory)
         self.pi_catalog_repo = PiCatalogRepository(self.session_factory)
+        self.multimodal_relay_cache_repo = MultimodalRelayCacheRepository(
+            self.session_factory
+        )
         self.request_log_store = RequestLogStore(
             self.session_factory,
             settings_repo=self.settings_repo,
@@ -380,6 +393,7 @@ class AppState:
             specs=CRONJOB_SPECS,
             handlers={
                 TASK_REQUEST_LOG_PRUNE: self.request_log_store.prune_request_logs,
+                TASK_MULTIMODAL_CACHE_PRUNE: self.multimodal_relay_cache_repo.prune_expired,
                 TASK_MODEL_PRICE_SYNC: self._sync_model_prices,
                 TASK_PI_CATALOG_SYNC: self._sync_pi_catalog,
                 TASK_REQUEST_LOG_STATS_PERSIST: self.request_log_store.persist_request_log_stats,
